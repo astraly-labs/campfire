@@ -1,0 +1,107 @@
+name: Release (campfire fork)
+
+# Internal Pragma release workflow. Triggered on `v*-campfire.*` tags so it
+# never collides with the upstream t3code release pipeline.
+#
+# Builds an unsigned macOS arm64 .dmg and publishes it to a GitHub Release
+# on the EvolveArt/campfire fork. Teammates download and install manually.
+#
+# Future improvements (when needed):
+#   - Add x64 / universal builds
+#   - Code-sign + notarize (requires Apple Developer Account secrets)
+#   - Auto-update server channel "campfire-internal"
+
+on:
+  push:
+    tags:
+      - "v*-campfire.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version override (e.g. 0.0.24-campfire.1)"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build-mac-arm64:
+    name: Build macOS arm64 .dmg
+    runs-on: macos-14  # Apple Silicon
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve version
+        id: version
+        run: |
+          if [[ -n "${{ inputs.version }}" ]]; then
+            version="${{ inputs.version }}"
+          else
+            version="${GITHUB_REF_NAME#v}"
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "Resolved version: ${version}"
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build desktop bundle
+        run: bun run build:desktop
+
+      - name: Build unsigned .dmg (arm64)
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: bun run dist:desktop:dmg:arm64
+
+      - name: Locate artifact
+        id: artifact
+        run: |
+          dmg=$(find release -maxdepth 2 -name "*.dmg" | head -n 1)
+          if [[ -z "$dmg" ]]; then
+            echo "No .dmg artifact found under release/" >&2
+            ls -la release || true
+            exit 1
+          fi
+          echo "dmg=${dmg}" >> "$GITHUB_OUTPUT"
+          echo "Found: ${dmg}"
+
+      - name: Upload artifact (workflow run)
+        uses: actions/upload-artifact@v4
+        with:
+          name: campfire-${{ steps.version.outputs.version }}-mac-arm64
+          path: ${{ steps.artifact.outputs.dmg }}
+          retention-days: 30
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: campfire ${{ steps.version.outputs.version }}
+          body: |
+            Internal Pragma build of [campfire](https://github.com/EvolveArt/campfire), the
+            collaborative AI engineering fork of [t3code](https://github.com/pingdotgg/t3code).
+
+            ## Install (macOS arm64)
+            1. Download the `.dmg` below.
+            2. Open it, drag the app to `~/Applications/`.
+            3. **First launch only**: right-click the app → **Open** → confirm in the
+               Gatekeeper dialog (the build is currently unsigned).
+            4. Pair to a tailnet-served campfire instance (e.g. Mac mini).
+
+            ## Reporting issues
+            Ping `@matthias` on Slack with: the version above, OS version, and the
+            failing flow.
+          draft: false
+          prerelease: true
+          generate_release_notes: true
+          files: ${{ steps.artifact.outputs.dmg }}
