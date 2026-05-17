@@ -50,6 +50,13 @@ import {
 } from "./orchestration.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 import {
+  SIDETHREAD_WS_METHODS,
+  SideThreadCommand,
+  SideThreadDispatchCommandError,
+  SideThreadGetSnapshotError,
+  SideThreadRpcSchemas,
+} from "./sidethread.ts";
+import {
   ProjectSearchEntriesError,
   ProjectSearchEntriesInput,
   ProjectSearchEntriesResult,
@@ -447,6 +454,19 @@ export const WsOrchestrationSubscribeThreadRpc = Rpc.make(
   },
 );
 
+export const WsSideThreadDispatchCommandRpc = Rpc.make(SIDETHREAD_WS_METHODS.dispatchCommand, {
+  payload: SideThreadCommand,
+  success: SideThreadRpcSchemas.dispatchCommand.output,
+  error: SideThreadDispatchCommandError,
+});
+
+export const WsSideThreadSubscribeRpc = Rpc.make(SIDETHREAD_WS_METHODS.subscribeSideThread, {
+  payload: SideThreadRpcSchemas.subscribeSideThread.input,
+  success: SideThreadRpcSchemas.subscribeSideThread.output,
+  error: SideThreadGetSnapshotError,
+  stream: true,
+});
+
 export const WsSubscribeTerminalEventsRpc = Rpc.make(WS_METHODS.subscribeTerminalEvents, {
   payload: Schema.Struct({}),
   success: TerminalEvent,
@@ -521,4 +541,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationGetArchivedShellSnapshotRpc,
   WsOrchestrationSubscribeShellRpc,
   WsOrchestrationSubscribeThreadRpc,
+  WsSideThreadDispatchCommandRpc,
+  WsSideThreadSubscribeRpc,
 );

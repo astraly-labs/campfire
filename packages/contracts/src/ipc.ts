@@ -62,6 +62,12 @@ import type {
   OrchestrationSubscribeThreadInput,
   OrchestrationThreadStreamItem,
 } from "./orchestration.ts";
+import type {
+  SideThreadCommand,
+  SideThreadDispatchResult,
+  SideThreadStreamItem,
+  SideThreadSubscribeInput,
+} from "./sidethread.ts";
 import { EnvironmentId } from "./baseSchemas.ts";
 import { AuthBearerBootstrapResult, AuthSessionState, AuthWebSocketTokenResult } from "./auth.ts";
 import { AdvertisedEndpoint } from "./remoteAccess.ts";
@@ -560,6 +566,16 @@ export interface EnvironmentApi {
     subscribeThread: (
       input: OrchestrationSubscribeThreadInput,
       callback: (event: OrchestrationThreadStreamItem) => void,
+      options?: {
+        onResubscribe?: () => void;
+      },
+    ) => () => void;
+  };
+  sideThread: {
+    dispatchCommand: (command: SideThreadCommand) => Promise<SideThreadDispatchResult>;
+    subscribe: (
+      input: SideThreadSubscribeInput,
+      callback: (event: SideThreadStreamItem) => void,
       options?: {
         onResubscribe?: () => void;
       },
