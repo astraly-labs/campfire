@@ -2,6 +2,7 @@ import {
   type EnvironmentId,
   type MessageId,
   type ServerProviderSkill,
+  type ThreadId,
   type TurnId,
 } from "@t3tools/contracts";
 import {
@@ -40,6 +41,7 @@ import { ProposedPlanCard } from "./ProposedPlanCard";
 import { ChangedFilesTree } from "./ChangedFilesTree";
 import { DiffStatLabel, hasNonZeroStat } from "./DiffStatLabel";
 import { MessageCopyButton } from "./MessageCopyButton";
+import { SideThreadAnchorButton } from "../../sidethread/SideThreadAnchorButton";
 import {
   computeStableMessagesTimelineRows,
   MAX_VISIBLE_WORK_LOG_ENTRIES,
@@ -445,6 +447,10 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
             )}
           </p>
           <AssistantCopyButton row={row} />
+          <SideThreadAnchorButton
+            threadId={ctx.routeThreadKey as ThreadId}
+            messageId={row.message.id}
+          />
         </div>
       </div>
     </>

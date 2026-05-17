@@ -228,6 +228,7 @@ function createMockEnvironmentApi(input: {
       subscribeThread: (() => () =>
         undefined) as EnvironmentApi["orchestration"]["subscribeThread"],
     },
+    sideThread: {} as EnvironmentApi["sideThread"],
   };
 }
 

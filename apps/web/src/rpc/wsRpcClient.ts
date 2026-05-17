@@ -7,6 +7,7 @@ import {
   type LocalApi,
   ORCHESTRATION_WS_METHODS,
   type ServerSettingsPatch,
+  SIDETHREAD_WS_METHODS,
   WS_METHODS,
 } from "@t3tools/contracts";
 import { applyGitStatusStreamEvent } from "@t3tools/shared/git";
@@ -152,6 +153,10 @@ export interface WsRpcClient {
     >;
     readonly subscribeShell: RpcStreamMethod<typeof ORCHESTRATION_WS_METHODS.subscribeShell>;
     readonly subscribeThread: RpcInputStreamMethod<typeof ORCHESTRATION_WS_METHODS.subscribeThread>;
+  };
+  readonly sideThread: {
+    readonly dispatchCommand: RpcUnaryMethod<typeof SIDETHREAD_WS_METHODS.dispatchCommand>;
+    readonly subscribe: RpcInputStreamMethod<typeof SIDETHREAD_WS_METHODS.subscribeSideThread>;
   };
 }
 
@@ -317,6 +322,16 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
           (client) => client[ORCHESTRATION_WS_METHODS.subscribeThread](input),
           listener,
           { ...options, tag: ORCHESTRATION_WS_METHODS.subscribeThread },
+        ),
+    },
+    sideThread: {
+      dispatchCommand: (input) =>
+        transport.request((client) => client[SIDETHREAD_WS_METHODS.dispatchCommand](input)),
+      subscribe: (input, listener, options) =>
+        transport.subscribe(
+          (client) => client[SIDETHREAD_WS_METHODS.subscribeSideThread](input),
+          listener,
+          { ...options, tag: SIDETHREAD_WS_METHODS.subscribeSideThread },
         ),
     },
   };

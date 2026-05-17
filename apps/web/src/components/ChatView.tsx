@@ -146,6 +146,7 @@ import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
+import { SideThreadDrawer } from "../sidethread/SideThreadDrawer";
 import { ChatHeader } from "./chat/ChatHeader";
 import { type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { NoActiveThreadState } from "./NoActiveThreadState";
@@ -3736,6 +3737,9 @@ export default function ChatView(props: ChatViewProps) {
             onClose={closePlanSidebar}
           />
         ) : null}
+
+        {/* Side thread (Slack-style anchored conversation) */}
+        <SideThreadDrawer environmentId={environmentId} />
       </div>
       {/* end horizontal flex container */}
 
