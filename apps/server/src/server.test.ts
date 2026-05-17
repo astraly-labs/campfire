@@ -68,6 +68,7 @@ import {
   OrchestrationEngineService,
   type OrchestrationEngineShape,
 } from "./orchestration/Services/OrchestrationEngine.ts";
+import { SideThreadEngineService } from "./sidethreads/Services/SideThreadEngine.ts";
 import { OrchestrationListenerCallbackError } from "./orchestration/Errors.ts";
 import {
   ProjectionSnapshotQuery,
@@ -634,6 +635,14 @@ const buildAppUnderTest = (options?: {
           dispatch: () => Effect.succeed({ sequence: 0 }),
           streamDomainEvents: Stream.empty,
           ...options?.layers?.orchestrationEngine,
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(SideThreadEngineService)({
+          readEvents: () => Stream.empty,
+          dispatch: () => Effect.succeed({ sequence: 0 }),
+          streamDomainEvents: Stream.empty,
+          getSnapshot: () => Effect.succeed(Option.none()),
         }),
       ),
       Layer.provide(

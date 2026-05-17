@@ -28,6 +28,9 @@ import {
   ProjectWriteFileError,
   OrchestrationReplayEventsError,
   FilesystemBrowseError,
+  SIDETHREAD_WS_METHODS,
+  SideThreadDispatchCommandError,
+  SideThreadGetSnapshotError,
   ThreadId,
   type TerminalEvent,
   WS_METHODS,
@@ -44,6 +47,7 @@ import * as ExternalLauncher from "./process/externalLauncher.ts";
 import { normalizeDispatchCommand } from "./orchestration/Normalizer.ts";
 import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery.ts";
+import { SideThreadEngineService } from "./sidethreads/Services/SideThreadEngine.ts";
 import {
   observeRpcEffect,
   observeRpcStream,
@@ -162,6 +166,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
     Effect.gen(function* () {
       const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
       const orchestrationEngine = yield* OrchestrationEngineService;
+      const sideThreadEngine = yield* SideThreadEngineService;
       const checkpointDiffQuery = yield* CheckpointDiffQuery;
       const keybindings = yield* Keybindings;
       const externalLauncher = yield* ExternalLauncher.ExternalLauncher;
@@ -832,6 +837,50 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
               );
             }),
             { "rpc.aggregate": "orchestration" },
+          ),
+        [SIDETHREAD_WS_METHODS.dispatchCommand]: (command) =>
+          observeRpcEffect(
+            SIDETHREAD_WS_METHODS.dispatchCommand,
+            Effect.gen(function* () {
+              yield* sideThreadEngine.dispatch(command);
+              const acceptedAt = yield* nowIso;
+              return { acceptedAt, events: [] as const };
+            }).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new SideThreadDispatchCommandError({
+                    message: "Failed to dispatch side thread command",
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "sidethread" },
+          ),
+        [SIDETHREAD_WS_METHODS.subscribeSideThread]: (input) =>
+          observeRpcStreamEffect(
+            SIDETHREAD_WS_METHODS.subscribeSideThread,
+            Effect.gen(function* () {
+              const snapshotOpt = yield* sideThreadEngine.getSnapshot(input.sideThreadId);
+              if (Option.isNone(snapshotOpt)) {
+                return yield* new SideThreadGetSnapshotError({
+                  message: `SideThread ${input.sideThreadId} was not found`,
+                });
+              }
+
+              const liveStream = sideThreadEngine.streamDomainEvents.pipe(
+                Stream.filter((event) => event.aggregateId === input.sideThreadId),
+                Stream.map((event) => ({ kind: "event" as const, event })),
+              );
+
+              return Stream.concat(
+                Stream.make({
+                  kind: "snapshot" as const,
+                  snapshot: snapshotOpt.value,
+                }),
+                liveStream,
+              );
+            }),
+            { "rpc.aggregate": "sidethread" },
           ),
         [WS_METHODS.serverGetConfig]: (_input) =>
           observeRpcEffect(WS_METHODS.serverGetConfig, loadServerConfig, {
