@@ -39,10 +39,19 @@ const FALLBACK_PROJECT_FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" vi
 const OTLP_TRACES_PROXY_PATH = "/api/observability/v1/traces";
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "::1", "localhost"]);
 
+// POC: explicit Origin allowlist via `T3CODE_CORS_ORIGIN` for credentialed
+// remote dev access (Mac mini over tailnet). Falls back to wildcard when unset.
+const corsOriginEnv = process.env.T3CODE_CORS_ORIGIN?.trim() || "";
 export const browserApiCorsLayer = HttpRouter.cors({
   allowedMethods: [...browserApiCorsAllowedMethods],
   allowedHeaders: [...browserApiCorsAllowedHeaders],
   maxAge: 600,
+  ...(corsOriginEnv
+    ? {
+        allowedOrigins: corsOriginEnv.split(",").map((o) => o.trim()).filter(Boolean),
+        credentials: true,
+      }
+    : {}),
 });
 
 export function isLoopbackHostname(hostname: string): boolean {

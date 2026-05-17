@@ -83,7 +83,7 @@ const TOAST_ICONS = {
 } as const;
 
 /** Visually shorten long error bodies; clipboard copy still uses the full `description` string. */
-const ERROR_DESCRIPTION_CLAMP_MIN_CHARS = 180;
+const ERROR_DESCRIPTION_CLAMP_MIN_CHARS = 500;
 function errorDescriptionClampClass(type: unknown, description: unknown): string | undefined {
   if (type !== "error" || typeof description !== "string") {
     return undefined;
@@ -91,7 +91,7 @@ function errorDescriptionClampClass(type: unknown, description: unknown): string
   if (description.length < ERROR_DESCRIPTION_CLAMP_MIN_CHARS) {
     return undefined;
   }
-  return "line-clamp-4";
+  return "line-clamp-8";
 }
 
 /** Dismiss-only: circular control overlapping the card corner (iOS notification–style). */

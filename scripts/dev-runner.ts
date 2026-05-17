@@ -168,8 +168,21 @@ export function createDevRunnerEnv({
 
     if (!isDesktopMode) {
       output.T3CODE_PORT = String(serverPort);
-      output.VITE_HTTP_URL = `http://localhost:${serverPort}`;
-      output.VITE_WS_URL = `ws://localhost:${serverPort}`;
+      // Allow overriding the host advertised to the browser bundle. Useful
+      // when serving the dev backend over Tailscale / LAN so collaborators
+      // can connect from another device. Falls back to "localhost" otherwise.
+      // If the caller supplied explicit VITE_HTTP_URL / VITE_WS_URL (e.g.
+      // to point at a tailscale-serve HTTPS endpoint), preserve them.
+      const publicHost =
+        host && host !== "0.0.0.0" && host !== "::" && host !== "[::]" && host !== ""
+          ? host
+          : "localhost";
+      if (!baseEnv.VITE_HTTP_URL) {
+        output.VITE_HTTP_URL = `http://${publicHost}:${serverPort}`;
+      }
+      if (!baseEnv.VITE_WS_URL) {
+        output.VITE_WS_URL = `ws://${publicHost}:${serverPort}`;
+      }
     } else {
       output.T3CODE_PORT = String(serverPort);
       output.VITE_HTTP_URL = `http://${DESKTOP_DEV_LOOPBACK_HOST}:${serverPort}`;

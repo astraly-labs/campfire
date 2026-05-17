@@ -92,6 +92,9 @@ export default defineConfig({
     host,
     port,
     strictPort: true,
+    // Allow Tailscale MagicDNS names (*.ts.net) for remote dev access.
+    // Without this, Vite's host check rejects requests with unknown Host headers.
+    allowedHosts: [".ts.net", "localhost", "127.0.0.1"],
     ...(devProxyTarget
       ? {
           proxy: {
