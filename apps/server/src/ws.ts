@@ -1474,13 +1474,25 @@ export const websocketRpcRouteLayer = Layer.unwrap(
         const userIdentity = yield* UserIdentityService;
         const session = yield* serverAuth.authenticateWebSocketUpgrade(request);
         const remoteAddress = readRemoteAddressFromSource(request.source);
-        const initialIdentity = yield* userIdentity.resolveByRequestIp(remoteAddress).pipe(
-          Effect.catch((cause) =>
-            Effect.logWarning("[🆔 Identity] failed to resolve initial identity", {
-              detail: cause instanceof Error ? cause.message : String(cause),
-            }).pipe(Effect.flatMap(() => userIdentity.resolveByRequestIp(undefined))),
-          ),
-        );
+        // When the request comes through `tailscale serve`, the daemon
+        // terminates TLS and forwards over loopback, so the peer's tailnet
+        // IP is invisible on the socket. The daemon ships these headers as
+        // the authoritative identity signal — prefer them, fall back to IP
+        // resolution otherwise.
+        const tsLogin = request.headers["tailscale-user-login"];
+        const tsName = request.headers["tailscale-user-name"];
+        const headerIdentity = yield* userIdentity
+          .resolveFromTailscaleHeaders({ login: tsLogin, displayName: tsName })
+          .pipe(Effect.catch(() => Effect.succeed(Option.none<ResolvedIdentity>())));
+        const initialIdentity = yield* (Option.isSome(headerIdentity)
+          ? Effect.succeed(headerIdentity.value)
+          : userIdentity.resolveByRequestIp(remoteAddress).pipe(
+              Effect.catch((cause) =>
+                Effect.logWarning("[🆔 Identity] failed to resolve initial identity", {
+                  detail: cause instanceof Error ? cause.message : String(cause),
+                }).pipe(Effect.flatMap(() => userIdentity.resolveByRequestIp(undefined))),
+              ),
+            ));
         const rpcWebSocketHttpEffect = yield* RpcServer.toHttpEffectWebsocket(WsRpcGroup, {
           disableTracing: true,
         }).pipe(

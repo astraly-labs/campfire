@@ -327,6 +327,47 @@ const makeUserIdentity = Effect.gen(function* () {
       return yield* resolveLocalFallback();
     });
 
+  // When TLS is terminated by the local Tailscale daemon (e.g. `tailscale
+  // serve`), the socket-level remote IP is always 127.0.0.1 — so the
+  // IP-based path tips into local-fallback and every peer gets the same
+  // identity (the Mac mini's OS user). Tailscale daemons ship the peer's
+  // login + display name as request headers; we trust them because the
+  // request can only reach this code via the local daemon socket.
+  const resolveFromTailscaleHeaders: UserIdentityShape["resolveFromTailscaleHeaders"] = ({
+    login,
+    displayName,
+  }) =>
+    Effect.gen(function* () {
+      const loginTrimmed = login?.trim();
+      const displayTrimmed = displayName?.trim();
+      if (!loginTrimmed || !displayTrimmed) return Option.none<ResolvedIdentity>();
+
+      const userId = loginTrimmed as unknown as UserId;
+      const cacheKey = `ts-header:${loginTrimmed}`;
+      const nowMs = yield* Clock.currentTimeMillis;
+      const cached = cache.get(cacheKey);
+      if (cached && cached.expiresAtMs > nowMs) {
+        return Option.some(cached.identity);
+      }
+
+      yield* upsertUserRow({ userId, canonicalDisplayName: displayTrimmed });
+      const row = yield* readUserRow(userId);
+      const override = row?.display_name_override ?? null;
+      const identity = buildResolvedIdentity({
+        userId,
+        canonicalDisplayName: displayTrimmed,
+        override,
+        source: "tailscale-whois",
+      });
+
+      cache.set(cacheKey, {
+        identity,
+        nodeId: null,
+        expiresAtMs: nowMs + CACHE_TTL_MS,
+      });
+      return Option.some(identity);
+    });
+
   const setDisplayNameOverride: UserIdentityShape["setDisplayNameOverride"] = (userId, override) =>
     Effect.gen(function* () {
       const now = yield* nowIso;
@@ -366,6 +407,7 @@ const makeUserIdentity = Effect.gen(function* () {
   return {
     resolveByTailnetIp,
     resolveByRequestIp,
+    resolveFromTailscaleHeaders,
     setDisplayNameOverride,
   } satisfies UserIdentityShape;
 });

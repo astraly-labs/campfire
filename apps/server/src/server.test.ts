@@ -676,6 +676,7 @@ const buildAppUnderTest = (options?: {
                 canonicalDisplayName: "test",
                 hasOverride: false,
               }),
+            resolveFromTailscaleHeaders: () => Effect.succeed(Option.none()),
             setDisplayNameOverride: () =>
               Effect.succeed({
                 user: { id: "local:test" as never, displayName: "test" },
