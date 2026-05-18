@@ -315,8 +315,8 @@ export const makeRoutesLayer = Layer.mergeAll(
   otlpTracesProxyRouteLayer,
   projectFaviconRouteLayer,
   serverEnvironmentRouteLayer,
-  staticAndDevRouteLayer,
   workspaceFileRouteLayer,
+  staticAndDevRouteLayer,
   websocketRpcRouteLayer,
 ).pipe(Layer.provide(browserApiCorsLayer));
 
