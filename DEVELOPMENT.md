@@ -49,6 +49,14 @@ bun run test    # vitest (NOT `bun test`)
 
 ## 2. Remote dev on the Mac mini (peer-prompting setup)
 
+> **Daily TL;DR**: after `git push origin campfire/v0`, run
+> `bun run deploy:mac-mini` from your laptop. It pulls the new commits on the
+> Mac mini, restarts the dev server with the right env vars, and copies the
+> pairing URL to your clipboard. `bun run mac-mini:status` prints what's
+> running.
+
+
+
 The Pragma Mac mini (`jeffs-mac-mini` on the tailnet, IPv4 `100.110.28.83`) hosts the shared
 campfire server. Teammates connect from their MacBook via Tailscale.
 
