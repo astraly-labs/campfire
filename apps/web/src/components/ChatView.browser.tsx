@@ -229,6 +229,9 @@ function createMockEnvironmentApi(input: {
         undefined) as EnvironmentApi["orchestration"]["subscribeThread"],
     },
     sideThread: {} as EnvironmentApi["sideThread"],
+    identity: {} as EnvironmentApi["identity"],
+    inbox: {} as EnvironmentApi["inbox"],
+    users: {} as EnvironmentApi["users"],
   };
 }
 

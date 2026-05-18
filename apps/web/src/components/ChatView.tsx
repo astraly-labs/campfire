@@ -104,6 +104,7 @@ import { BranchToolbar } from "./BranchToolbar";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import PlanSidebar from "./PlanSidebar";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
+import { InlineSlideDrawer } from "./ui/inline-slide-drawer";
 import { ChevronDownIcon, TriangleAlertIcon, WifiOffIcon } from "lucide-react";
 import { cn, randomUUID } from "~/lib/utils";
 import { stackedThreadToast, toastManager } from "./ui/toast";
@@ -147,6 +148,7 @@ import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
 import { SideThreadDrawer } from "../sidethread/SideThreadDrawer";
+import { ParentSideThreadSubscription } from "../sidethread/useParentSideThreadSubscription";
 import { ChatHeader } from "./chat/ChatHeader";
 import { type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { NoActiveThreadState } from "./NoActiveThreadState";
@@ -3724,7 +3726,7 @@ export default function ChatView(props: ChatViewProps) {
         {/* end chat column */}
 
         {/* Plan sidebar */}
-        {planSidebarOpen && !shouldUsePlanSidebarSheet ? (
+        <InlineSlideDrawer open={planSidebarOpen && !shouldUsePlanSidebarSheet} width={340}>
           <PlanSidebar
             activePlan={activePlan}
             activeProposedPlan={sidebarProposedPlan}
@@ -3736,9 +3738,15 @@ export default function ChatView(props: ChatViewProps) {
             mode="sidebar"
             onClose={closePlanSidebar}
           />
-        ) : null}
+        </InlineSlideDrawer>
 
         {/* Side thread (Slack-style anchored conversation) */}
+        {routeThreadKey ? (
+          <ParentSideThreadSubscription
+            environmentId={environmentId}
+            parentThreadId={routeThreadKey as ThreadId}
+          />
+        ) : null}
         <SideThreadDrawer environmentId={environmentId} />
       </div>
       {/* end horizontal flex container */}

@@ -14,6 +14,13 @@ import {
   AuthSessionId,
   CommandId,
   EventId,
+  IDENTITY_WS_METHODS,
+  IdentityServiceError,
+  INBOX_WS_METHODS,
+  InboxListError,
+  InboxSubscribeError,
+  USERS_WS_METHODS,
+  UsersDirectoryError,
   type OrchestrationCommand,
   type GitActionProgressEvent,
   type GitManagerServiceError,
@@ -48,6 +55,9 @@ import { normalizeDispatchCommand } from "./orchestration/Normalizer.ts";
 import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import { SideThreadEngineService } from "./sidethreads/Services/SideThreadEngine.ts";
+import { InboxReadModelService } from "./sidethreads/Services/InboxReadModel.ts";
+import { UserDirectoryService } from "./sidethreads/Services/UserDirectory.ts";
+import { UserIdentityService, type ResolvedIdentity } from "./sidethreads/Services/UserIdentity.ts";
 import {
   observeRpcEffect,
   observeRpcStream,
@@ -92,6 +102,7 @@ import {
   type SessionCredentialChange,
 } from "./auth/Services/SessionCredentialService.ts";
 import { respondToAuthError } from "./auth/http.ts";
+import { readRemoteAddressFromSource } from "./auth/utils.ts";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
 const isWorkspacePathOutsideRootError = Schema.is(WorkspacePathOutsideRootError);
 
@@ -161,12 +172,16 @@ function toAuthAccessStreamEvent(
   }
 }
 
-const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
+const makeWsRpcLayer = (currentSessionId: AuthSessionId, initialIdentity: ResolvedIdentity) =>
   WsRpcGroup.toLayer(
     Effect.gen(function* () {
       const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
       const orchestrationEngine = yield* OrchestrationEngineService;
       const sideThreadEngine = yield* SideThreadEngineService;
+      const inboxReadModel = yield* InboxReadModelService;
+      const userDirectory = yield* UserDirectoryService;
+      const userIdentity = yield* UserIdentityService;
+      const currentIdentityRef = yield* Ref.make<ResolvedIdentity>(initialIdentity);
       const checkpointDiffQuery = yield* CheckpointDiffQuery;
       const keybindings = yield* Keybindings;
       const externalLauncher = yield* ExternalLauncher.ExternalLauncher;
@@ -882,6 +897,165 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             }),
             { "rpc.aggregate": "sidethread" },
           ),
+        [SIDETHREAD_WS_METHODS.subscribeParentSideThreads]: (input) =>
+          observeRpcStreamEffect(
+            SIDETHREAD_WS_METHODS.subscribeParentSideThreads,
+            Effect.gen(function* () {
+              const snapshot = yield* sideThreadEngine.getParentSnapshot(input.parentThreadId);
+
+              const liveStream = sideThreadEngine.streamDomainEvents.pipe(
+                Stream.flatMap((event) => {
+                  const summaryOpt = sideThreadEngine.summarizeForEvent(event);
+                  if (Option.isNone(summaryOpt)) return Stream.empty;
+                  if (summaryOpt.value.parentThreadId !== input.parentThreadId) {
+                    return Stream.empty;
+                  }
+                  return Stream.make({
+                    kind: "upsert" as const,
+                    summary: summaryOpt.value,
+                  });
+                }),
+              );
+
+              return Stream.concat(
+                Stream.make({ kind: "snapshot" as const, snapshot }),
+                liveStream,
+              );
+            }),
+            { "rpc.aggregate": "sidethread" },
+          ),
+        [IDENTITY_WS_METHODS.getCurrentUser]: (_input) =>
+          observeRpcEffect(IDENTITY_WS_METHODS.getCurrentUser, Ref.get(currentIdentityRef), {
+            "rpc.aggregate": "identity",
+          }),
+        [IDENTITY_WS_METHODS.setDisplayName]: (input) =>
+          observeRpcEffect(
+            IDENTITY_WS_METHODS.setDisplayName,
+            Effect.gen(function* () {
+              const current = yield* Ref.get(currentIdentityRef);
+              const updated = yield* userIdentity.setDisplayNameOverride(
+                current.user.id,
+                input.displayName,
+              );
+              yield* Ref.set(currentIdentityRef, updated);
+              return updated;
+            }).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new IdentityServiceError({
+                    message: "Failed to update display name",
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "identity" },
+          ),
+        [IDENTITY_WS_METHODS.clearDisplayName]: (_input) =>
+          observeRpcEffect(
+            IDENTITY_WS_METHODS.clearDisplayName,
+            Effect.gen(function* () {
+              const current = yield* Ref.get(currentIdentityRef);
+              const updated = yield* userIdentity.setDisplayNameOverride(current.user.id, null);
+              yield* Ref.set(currentIdentityRef, updated);
+              return updated;
+            }).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new IdentityServiceError({
+                    message: "Failed to clear display name override",
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "identity" },
+          ),
+        [INBOX_WS_METHODS.list]: (_input) =>
+          observeRpcEffect(
+            INBOX_WS_METHODS.list,
+            Effect.gen(function* () {
+              const identity = yield* Ref.get(currentIdentityRef);
+              const items = yield* inboxReadModel.listForUser(identity.user.id);
+              return { items };
+            }).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new InboxListError({
+                    message: "Failed to load inbox",
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "inbox" },
+          ),
+        [INBOX_WS_METHODS.subscribe]: (_input) =>
+          observeRpcStreamEffect(
+            INBOX_WS_METHODS.subscribe,
+            Effect.gen(function* () {
+              const identity = yield* Ref.get(currentIdentityRef);
+              const userId = identity.user.id;
+              const initialItems = yield* inboxReadModel.listForUser(userId);
+
+              // We piggy-back on the side-thread engine's domain event stream:
+              // every `sidethread.message-posted` that mentions the current
+              // user re-queries the inbox and emits an `upserted` event so the
+              // client store stays in sync without polling.
+              const liveStream = sideThreadEngine.streamDomainEvents.pipe(
+                Stream.filter(
+                  (event) =>
+                    event.type === "sidethread.message-posted" &&
+                    event.payload.mentions.some((m) => m.id === userId),
+                ),
+                Stream.mapEffect((event) =>
+                  inboxReadModel.listForUser(userId).pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new InboxSubscribeError({
+                          message: "Failed to refresh inbox after mention",
+                          cause,
+                        }),
+                    ),
+                    Effect.map((items) =>
+                      items.find((item) => item.sideThreadId === event.aggregateId),
+                    ),
+                  ),
+                ),
+                Stream.flatMap((maybeItem) =>
+                  maybeItem
+                    ? Stream.make({ kind: "upserted" as const, item: maybeItem })
+                    : Stream.empty,
+                ),
+              );
+
+              return Stream.concat(
+                Stream.make({ kind: "snapshot" as const, items: initialItems }),
+                liveStream,
+              );
+            }).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new InboxSubscribeError({
+                    message: "Failed to subscribe to inbox",
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "inbox" },
+          ),
+        [USERS_WS_METHODS.directory]: (_input) =>
+          observeRpcEffect(
+            USERS_WS_METHODS.directory,
+            userDirectory.listUsers().pipe(
+              Effect.map((users) => ({ users })),
+              Effect.mapError(
+                (cause) =>
+                  new UsersDirectoryError({
+                    message: "Failed to load user directory",
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "users" },
+          ),
         [WS_METHODS.serverGetConfig]: (_input) =>
           observeRpcEffect(WS_METHODS.serverGetConfig, loadServerConfig, {
             "rpc.aggregate": "server",
@@ -1297,12 +1471,21 @@ export const websocketRpcRouteLayer = Layer.unwrap(
         const request = yield* HttpServerRequest.HttpServerRequest;
         const serverAuth = yield* ServerAuth;
         const sessions = yield* SessionCredentialService;
+        const userIdentity = yield* UserIdentityService;
         const session = yield* serverAuth.authenticateWebSocketUpgrade(request);
+        const remoteAddress = readRemoteAddressFromSource(request.source);
+        const initialIdentity = yield* userIdentity.resolveByRequestIp(remoteAddress).pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("[🆔 Identity] failed to resolve initial identity", {
+              detail: cause instanceof Error ? cause.message : String(cause),
+            }).pipe(Effect.flatMap(() => userIdentity.resolveByRequestIp(undefined))),
+          ),
+        );
         const rpcWebSocketHttpEffect = yield* RpcServer.toHttpEffectWebsocket(WsRpcGroup, {
           disableTracing: true,
         }).pipe(
           Effect.provide(
-            makeWsRpcLayer(session.sessionId).pipe(
+            makeWsRpcLayer(session.sessionId, initialIdentity).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               Layer.provide(ProviderMaintenanceRunner.layer),
               Layer.provide(

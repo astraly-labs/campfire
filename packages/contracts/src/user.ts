@@ -29,3 +29,29 @@ export const UserRef = Schema.Struct({
   displayName: TrimmedNonEmptyString,
 });
 export type UserRef = typeof UserRef.Type;
+
+/**
+ * Directory of users known to the backend — drives mention autocomplete in
+ * side-thread composers. Sourced from the `users` table that
+ * `UserIdentityService` upserts on Tailscale pairing.
+ */
+export const UsersDirectoryInput = Schema.Struct({});
+export type UsersDirectoryInput = typeof UsersDirectoryInput.Type;
+
+export const UsersDirectoryResult = Schema.Struct({
+  users: Schema.Array(UserRef),
+});
+export type UsersDirectoryResult = typeof UsersDirectoryResult.Type;
+
+export const USERS_WS_METHODS = {
+  directory: "users.directory",
+} as const;
+export type UsersWsMethod = (typeof USERS_WS_METHODS)[keyof typeof USERS_WS_METHODS];
+
+export class UsersDirectoryError extends Schema.TaggedErrorClass<UsersDirectoryError>()(
+  "UsersDirectoryError",
+  {
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {}

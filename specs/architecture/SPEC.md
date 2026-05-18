@@ -16,7 +16,7 @@ Two humans (Matthias, Matteo) each run a thin client (browser or desktop app) on
 their MacBook. The thin client talks WebSocket + HTTP to a **single shared backend**
 that runs on a Mac mini sitting on the Pragma Tailscale tailnet. The backend hosts
 the agent processes (Claude Code / Codex), the SQLite event store, and the file
-worktrees the agents edit. Because both humans connect to the *same* backend, they
+worktrees the agents edit. Because both humans connect to the _same_ backend, they
 see the same threads in real time (broadcasts via PubSub) and can comment in
 side-threads anchored to specific agent messages.
 
@@ -56,12 +56,14 @@ side-threads anchored to specific agent messages.
 
 A private VPN mesh between devices. Members of the `EvolveArt` tailnet get a
 stable `100.x.x.x` IP and an HTTPS-able MagicDNS hostname:
+
 ```
 matthias laptop  → 100.70.148.102  macbook-pro-de-0xevolve
 matteo laptop    → 100.113.214.61  matteos-macbook-pro
 mac mini         → 100.110.28.83   jeffs-mac-mini.tail289246.ts.net
 ```
-The tailnet is the *only* network path between the laptops and the Mac mini. No
+
+The tailnet is the _only_ network path between the laptops and the Mac mini. No
 public internet exposure, no firewall rules to maintain.
 
 ### 2.2 Tailscale Serve (the HTTPS proxy on the Mac mini)
@@ -70,17 +72,21 @@ public internet exposure, no firewall rules to maintain.
 because that's where the loopback proxy in Vite expects it. Browsers reject
 several APIs (clipboard, service workers, mixed-content) when the page is loaded
 over plain HTTP outside of `localhost`. We need a TLS terminator that:
+
 1. accepts HTTPS connections from tailnet peers,
 2. holds a valid certificate (no "your connection is not private" prompts),
 3. proxies plaintext to the backend on `127.0.0.1`.
 
 Tailscale Serve does all three, gratis, with certificates auto-issued for the
 MagicDNS hostname. Setup is two commands on the Mac mini:
+
 ```bash
 tailscale serve --bg --https=8443 http://127.0.0.1:5733  # web (Vite)
 tailscale serve --bg --https=8444 http://127.0.0.1:13773 # backend (HTTP + WS)
 ```
+
 Yields:
+
 ```
 https://jeffs-mac-mini.tail289246.ts.net:8443/    → Vite frontend
 https://jeffs-mac-mini.tail289246.ts.net:8444/    → backend HTTP + WS
@@ -138,7 +144,7 @@ The agents (Claude Code / Codex CLI) are spawned by the backend on demand —
 ~/.t3/dev/...                 Runtime state (per-thread caches, attachments, …)
 ```
 
-Convention: **one worktree per thread**, *not* per user. Both Matthias and
+Convention: **one worktree per thread**, _not_ per user. Both Matthias and
 Matteo prompt against the same worktree because they're collaborating on the
 same task. Worktrees decouple parallel threads from each other (no branch
 collisions, no "you're on the wrong branch").
@@ -156,6 +162,7 @@ called **SideThread**. We mirror the existing `Orchestration*` modules so
 upstream rebases stay clean.
 
 ### 5.1 Contracts (`packages/contracts/`)
+
 ```
 src/user.ts              UserId, UserRef (denormalized into events)
 src/sidethread.ts        SideThreadId, anchor, commands, events, RPCs, errors
@@ -165,6 +172,7 @@ src/ipc.ts               EnvironmentApi.sideThread wire interface
 ```
 
 ### 5.2 Server aggregate (`apps/server/src/sidethreads/`)
+
 ```
 readModel.ts             SideThreadReadModel: in-memory state
 decider.ts               (cmd, readModel) → planned event (pure)
@@ -182,6 +190,7 @@ runtimeLayer.ts          Composes the SideThread Live layers
 ```
 
 Plus an EventStore in `apps/server/src/persistence/`:
+
 ```
 Services/SideThreadEventStore.ts  Tag
 Layers/SideThreadEventStore.ts    Live (SQLite append + replay)
@@ -194,7 +203,9 @@ The Layer composition gets merged into `RuntimeCoreDependenciesLive` in
 `apps/server/src/server.ts`, alongside `OrchestrationLayerLive`.
 
 ### 5.3 WebSocket RPC handlers (`apps/server/src/ws.ts`)
+
 Two new handlers:
+
 - `sidethread.dispatchCommand` — delegate to `sideThreadEngine.dispatch`, return
   `{ acceptedAt, events: [] }` (client subscribes to receive the actual event).
 - `sidethread.subscribeSideThread` — emit initial snapshot from
@@ -202,6 +213,7 @@ Two new handlers:
   `event.aggregateId === input.sideThreadId` from `streamDomainEvents` PubSub.
 
 ### 5.4 Web client (`apps/web/src/sidethread/`)
+
 ```
 identity.ts              localStorage prompt for displayName + stable client id
 sideThreadStore.ts       zustand store: { anchor, open, close } + deriveSideThreadId
@@ -211,6 +223,7 @@ SideThreadDrawer.tsx     Inline panel, mounted as flex sibling of the chat colum
 ```
 
 The drawer:
+
 1. Computes a deterministic `sideThreadId = "st-<threadId>-<messageId>"` so
    both ends converge on the same aggregate without a server-side discovery
    round trip.
@@ -221,6 +234,7 @@ The drawer:
    on send.
 
 ### 5.5 Identity model (v0)
+
 - Client side: `UserRef` is prompted on first post and cached in
   `localStorage` (`campfire.sidethread.userRef.v1`).
 - Server side: `UserIdentityService` exists and works (talks `tailscale whois`,
@@ -279,6 +293,7 @@ to the same `sideThreadId` each receive their own copy of the event stream
 ## 7. Dev workflow
 
 ### 7.1 Local-only loop (your own laptop)
+
 ```bash
 git clone https://github.com/EvolveArt/campfire.git
 cd campfire
@@ -286,10 +301,12 @@ git checkout campfire/v0
 bun install
 bun run dev
 ```
+
 Open the printed pairing URL. Edits in `apps/server/`, `apps/web/`, or
 `packages/` hot-reload.
 
 Invariants while editing:
+
 ```bash
 bun typecheck   # whole monorepo
 bun lint        # oxlint
@@ -298,7 +315,9 @@ bun run test    # vitest (never `bun test`)
 ```
 
 ### 7.2 Mac mini loop (POC mode, for peer-prompting)
+
 **Today (manual `rsync`)**: faster iteration because no commit/push round-trip.
+
 ```bash
 rsync -az \
   --exclude node_modules --exclude .git --exclude .turbo \
@@ -323,19 +342,23 @@ to GitHub just to deploy them.
 
 **Tomorrow (clean `git pull`)**: once commits land in `origin/campfire/v0`,
 the Mac mini deploys via:
+
 ```bash
 ssh macmini "cd agent-host/repos/campfire && git pull && bun install && <restart>"
 ```
+
 Same restart command. Or, when we wire it, a tag-triggered GHA can `ssh macmini`
 and do this automatically.
 
 ### 7.3 Tailscale Serve setup (one-time, persists across reboots)
+
 ```bash
 ssh macmini '/Applications/Tailscale.app/Contents/MacOS/Tailscale serve --bg --https=8443 http://127.0.0.1:5733'
 ssh macmini '/Applications/Tailscale.app/Contents/MacOS/Tailscale serve --bg --https=8444 http://127.0.0.1:13773'
 ```
 
 Verify:
+
 ```bash
 ssh macmini '/Applications/Tailscale.app/Contents/MacOS/Tailscale serve status'
 ```
@@ -344,10 +367,11 @@ ssh macmini '/Applications/Tailscale.app/Contents/MacOS/Tailscale serve status'
 the tailnet via the Tailscale admin console.)
 
 ### 7.4 Pairing teammates
+
 1. Capture the latest token: `ssh macmini "grep pairingUrl /tmp/campfire-mac.log | tail -1"`.
 2. The log prints `pairingUrl: http://localhost:5733/pair#token=…`. **Rewrite
    `localhost:5733` → `jeffs-mac-mini.tail289246.ts.net:8443`** before sending.
-3. Tokens are *single-use*. Either:
+3. Tokens are _single-use_. Either:
    - Restart the dev server for a fresh token (invalidates current session).
    - Or generate additional links from **Settings → Connections → Create Link**
      in the already-paired client.
@@ -357,6 +381,7 @@ the tailnet via the Tailscale admin console.)
 ## 8. Release workflow
 
 ### 8.1 Tag-based release (`v*-campfire.*`)
+
 ```bash
 git checkout campfire/v0
 git tag v0.0.24-campfire.1 -m "campfire build 1"
@@ -364,6 +389,7 @@ git push origin v0.0.24-campfire.1
 ```
 
 Triggers `.github/workflows/release-campfire.yml`:
+
 1. Boots `macos-14` (Apple Silicon) runner.
 2. `bun install --frozen-lockfile`.
 3. `bun run build:desktop` (compiles `apps/server` + `apps/desktop` to a bundle).
@@ -377,6 +403,7 @@ The Release is private to the `EvolveArt/campfire` fork. Share the direct
 download URL with teammates.
 
 ### 8.2 First install on a teammate's Mac
+
 1. Download `T3-Code-<version>-arm64.dmg` from the GitHub Release.
 2. Open the DMG, drag the app to `~/Applications/`.
 3. **First launch only**: right-click → **Open** → confirm in the Gatekeeper
@@ -384,8 +411,10 @@ download URL with teammates.
 4. In the app, paste a pairing URL or scan a QR code from the Mac mini.
 
 ### 8.3 Why unsigned for now
+
 Apple code-signing + notarization removes the right-click step and unlocks
 auto-update, but it requires:
+
 - An Apple Developer Account (~$99/yr) tied to Pragma.
 - `CSC_LINK`, `CSC_KEY_PASSWORD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`
   GitHub secrets in the fork.
@@ -398,15 +427,15 @@ signing until the dogfood graduates.
 
 ## 9. Known caveats / things to fix soon
 
-| Area | What's hacky | What clean looks like |
-|------|--------------|------------------------|
-| Identity | Client localStorage prompt is trustable nowhere. | Wire `UserIdentityService` (already implemented) into `ws.ts` so the server stamps `UserRef` from `tailscale whois`. |
-| Deployment | `rsync` from a laptop. | `git pull` (or GHA push-to-deploy when we tag). |
-| Pairing URL | Log prints `localhost:5733`, share requires manual rewrite. | Use `t3 serve --tailscale-serve` (or env-driven host advertise) so the URL is share-ready. |
-| Side-thread anchoring | Per-message only. | Per-block (tool call, file diff, plan item) — see grill-me roadmap. |
-| Worktrees | Threads run against repo root in v0. | Auto `git worktree add` per thread on creation. |
-| Updates | Teammates re-download `.dmg` manually. | Electron auto-updater + `campfire-internal` channel + a tiny update server (Cloudflare R2 / Tailscale Serve / VM). |
-| Notifications | Browser tab only. | Desktop notifications (already supported by Electron) tied to `@user` mentions. |
+| Area                  | What's hacky                                                | What clean looks like                                                                                                |
+| --------------------- | ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Identity              | Client localStorage prompt is trustable nowhere.            | Wire `UserIdentityService` (already implemented) into `ws.ts` so the server stamps `UserRef` from `tailscale whois`. |
+| Deployment            | `rsync` from a laptop.                                      | `git pull` (or GHA push-to-deploy when we tag).                                                                      |
+| Pairing URL           | Log prints `localhost:5733`, share requires manual rewrite. | Use `t3 serve --tailscale-serve` (or env-driven host advertise) so the URL is share-ready.                           |
+| Side-thread anchoring | Per-message only.                                           | Per-block (tool call, file diff, plan item) — see grill-me roadmap.                                                  |
+| Worktrees             | Threads run against repo root in v0.                        | Auto `git worktree add` per thread on creation.                                                                      |
+| Updates               | Teammates re-download `.dmg` manually.                      | Electron auto-updater + `campfire-internal` channel + a tiny update server (Cloudflare R2 / Tailscale Serve / VM).   |
+| Notifications         | Browser tab only.                                           | Desktop notifications (already supported by Electron) tied to `@user` mentions.                                      |
 
 ---
 
@@ -417,7 +446,7 @@ signing until the dogfood graduates.
   t3code) and `SideThread` (this fork's addition).
 - **Decider** — Pure function `(state, command) → events`. No I/O.
 - **Projector** — Pure function `(state, event) → state` (in-memory). The
-  *projection pipeline* mirrors this into SQL for queries.
+  _projection pipeline_ mirrors this into SQL for queries.
 - **Event store** — Append-only SQLite table per aggregate
   (`orchestration_events`, `side_thread_events`).
 - **PubSub** — Effect's in-process publish/subscribe primitive. We broadcast

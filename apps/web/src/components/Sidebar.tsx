@@ -4,6 +4,7 @@ import {
   ChevronRightIcon,
   CloudIcon,
   FolderPlusIcon,
+  InboxIcon,
   SearchIcon,
   SettingsIcon,
   SquarePenIcon,
@@ -75,6 +76,7 @@ import {
 } from "../store";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { useUiStateStore } from "../uiStateStore";
+import { useInboxUnreadCount } from "../inbox/inboxStore";
 import {
   resolveShortcutCommand,
   shortcutLabelForCommand,
@@ -2489,11 +2491,18 @@ const SidebarChromeHeader = memo(function SidebarChromeHeader({
 const SidebarChromeFooter = memo(function SidebarChromeFooter() {
   const navigate = useNavigate();
   const { isMobile, setOpenMobile } = useSidebar();
+  const inboxUnreadCount = useInboxUnreadCount();
   const handleSettingsClick = useCallback(() => {
     if (isMobile) {
       setOpenMobile(false);
     }
     void navigate({ to: "/settings" });
+  }, [isMobile, navigate, setOpenMobile]);
+  const handleInboxClick = useCallback(() => {
+    if (isMobile) {
+      setOpenMobile(false);
+    }
+    void navigate({ to: "/inbox" });
   }, [isMobile, navigate, setOpenMobile]);
 
   return (
@@ -2501,6 +2510,24 @@ const SidebarChromeFooter = memo(function SidebarChromeFooter() {
       <SidebarProviderUpdatePill />
       <SidebarUpdatePill />
       <SidebarMenu>
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            size="sm"
+            className="gap-2 px-2 py-1.5 text-muted-foreground/70 hover:bg-accent hover:text-foreground"
+            onClick={handleInboxClick}
+          >
+            <InboxIcon className="size-3.5" />
+            <span className="text-xs">Inbox</span>
+            {inboxUnreadCount > 0 ? (
+              <span
+                className="ml-auto rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-500"
+                aria-label={`${inboxUnreadCount} mentions non lues`}
+              >
+                {inboxUnreadCount}
+              </span>
+            ) : null}
+          </SidebarMenuButton>
+        </SidebarMenuItem>
         <SidebarMenuItem>
           <SidebarMenuButton
             size="sm"

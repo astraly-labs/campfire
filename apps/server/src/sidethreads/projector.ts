@@ -54,6 +54,7 @@ export const projectSideThreadEvent = (
             text: event.payload.text,
             createdAt: event.occurredAt,
             updatedAt: event.occurredAt,
+            mentions: event.payload.mentions ?? [],
           },
         ],
       };

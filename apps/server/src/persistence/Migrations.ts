@@ -46,6 +46,8 @@ import Migration0030 from "./Migrations/030_ProjectionThreadShellArchiveIndexes.
 import Migration0031 from "./Migrations/031_Users.ts";
 import Migration0032 from "./Migrations/032_SideThreadEvents.ts";
 import Migration0033 from "./Migrations/033_ProjectionSideThreads.ts";
+import Migration0034 from "./Migrations/034_UserDisplayNameOverride.ts";
+import Migration0035 from "./Migrations/035_SideThreadMessageMentions.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -91,6 +93,8 @@ export const migrationEntries = [
   [31, "Users", Migration0031],
   [32, "SideThreadEvents", Migration0032],
   [33, "ProjectionSideThreads", Migration0033],
+  [34, "UserDisplayNameOverride", Migration0034],
+  [35, "SideThreadMessageMentions", Migration0035],
 ] as const;
 
 export const makeMigrationLoader = (throughId?: number) =>

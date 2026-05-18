@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import {
@@ -10,6 +11,13 @@ import {
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 import { UserId, UserRef } from "./user.ts";
+
+/**
+ * Default-empty array of {@link UserRef} mentions. We use
+ * `withDecodingDefaultKey` so events persisted before the mention feature
+ * decode cleanly with `mentions = []`.
+ */
+const MentionsField = Schema.Array(UserRef).pipe(Schema.withDecodingDefaultKey(Effect.succeed([])));
 
 /**
  * Slack-style side conversation anchored to a parent agent thread. Lets
@@ -42,12 +50,19 @@ export type SideThreadMessageAnchor = typeof SideThreadMessageAnchor.Type;
 export const SideThreadAnchor = Schema.Union([SideThreadMessageAnchor]);
 export type SideThreadAnchor = typeof SideThreadAnchor.Type;
 
+/**
+ * Mentions denormalized into the message at write time. Each mention is a
+ * pinned {@link UserRef} so historical messages still render correctly if a
+ * user later renames themselves. Optional with default `[]` so messages
+ * persisted before the inbox feature decode without errors.
+ */
 export const SideThreadMessage = Schema.Struct({
   id: SideThreadMessageId,
   author: UserRef,
   text: TrimmedNonEmptyString,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
+  mentions: MentionsField,
 });
 export type SideThreadMessage = typeof SideThreadMessage.Type;
 
@@ -93,6 +108,13 @@ export const SideThreadMessagePostCommand = Schema.Struct({
   messageId: SideThreadMessageId,
   author: UserRef,
   text: TrimmedNonEmptyString,
+  /**
+   * Users explicitly tagged by the author. The composer resolves the
+   * autocomplete selection into a {@link UserRef} list and ships it alongside
+   * the text — we don't reparse `@handles` server-side so a user with `@`
+   * in their handle can't be spoofed. Optional for older clients.
+   */
+  mentions: MentionsField,
 });
 export type SideThreadMessagePostCommand = typeof SideThreadMessagePostCommand.Type;
 
@@ -150,6 +172,7 @@ export const SideThreadMessagePostedPayload = Schema.Struct({
   messageId: SideThreadMessageId,
   author: UserRef,
   text: TrimmedNonEmptyString,
+  mentions: MentionsField,
 });
 export type SideThreadMessagePostedPayload = typeof SideThreadMessagePostedPayload.Type;
 
@@ -225,6 +248,45 @@ export const SideThreadSubscribeInput = Schema.Struct({
 });
 export type SideThreadSubscribeInput = typeof SideThreadSubscribeInput.Type;
 
+/**
+ * Lightweight view of a side thread used for parent-thread indexes. Avoids
+ * shipping the full message list when the UI only needs to know "is there a
+ * thread here, and how active is it?".
+ */
+export const SideThreadSummary = Schema.Struct({
+  sideThreadId: SideThreadId,
+  parentThreadId: ThreadId,
+  anchor: SideThreadAnchor,
+  messageCount: NonNegativeInt,
+  lastActivityAt: IsoDateTime,
+  archivedAt: Schema.NullOr(IsoDateTime),
+});
+export type SideThreadSummary = typeof SideThreadSummary.Type;
+
+export const SideThreadParentIndexSnapshot = Schema.Struct({
+  snapshotSequence: NonNegativeInt,
+  parentThreadId: ThreadId,
+  entries: Schema.Array(SideThreadSummary),
+});
+export type SideThreadParentIndexSnapshot = typeof SideThreadParentIndexSnapshot.Type;
+
+export const SideThreadParentIndexStreamItem = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal("snapshot"),
+    snapshot: SideThreadParentIndexSnapshot,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("upsert"),
+    summary: SideThreadSummary,
+  }),
+]);
+export type SideThreadParentIndexStreamItem = typeof SideThreadParentIndexStreamItem.Type;
+
+export const SideThreadParentSubscribeInput = Schema.Struct({
+  parentThreadId: ThreadId,
+});
+export type SideThreadParentSubscribeInput = typeof SideThreadParentSubscribeInput.Type;
+
 export const SideThreadRpcSchemas = {
   dispatchCommand: {
     input: SideThreadCommand,
@@ -234,11 +296,16 @@ export const SideThreadRpcSchemas = {
     input: SideThreadSubscribeInput,
     output: SideThreadStreamItem,
   },
+  subscribeParentSideThreads: {
+    input: SideThreadParentSubscribeInput,
+    output: SideThreadParentIndexStreamItem,
+  },
 } as const;
 
 export const SIDETHREAD_WS_METHODS = {
   dispatchCommand: "sidethread.dispatchCommand",
   subscribeSideThread: "sidethread.subscribeSideThread",
+  subscribeParentSideThreads: "sidethread.subscribeParentSideThreads",
 } as const;
 export type SideThreadWsMethod = (typeof SIDETHREAD_WS_METHODS)[keyof typeof SIDETHREAD_WS_METHODS];
 

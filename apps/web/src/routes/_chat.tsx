@@ -2,6 +2,9 @@ import { Outlet, createFileRoute, redirect } from "@tanstack/react-router";
 import { useEffect } from "react";
 
 import { useCommandPaletteStore } from "../commandPaletteStore";
+import { readEnvironmentApi } from "../environmentApi";
+import { usePrimaryEnvironmentId } from "../environments/primary";
+import { useInboxLiveSync, useInboxStore } from "../inbox/inboxStore";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import {
   startNewLocalThreadFromContext,
@@ -97,10 +100,28 @@ function ChatRouteGlobalShortcuts() {
   return null;
 }
 
+function ChatInboxLifecycle() {
+  // Wire the cross-route inbox feed so the sidebar badge stays live even
+  // when the user isn't on `/inbox`. Mounted under `_chat` because the
+  // route is auth-gated, so we never hit `inbox.list` before the WS upgrade.
+  const environmentId = usePrimaryEnvironmentId();
+  const api = environmentId ? readEnvironmentApi(environmentId) : undefined;
+  const refresh = useInboxStore((state) => state.refresh);
+
+  useEffect(() => {
+    if (!api) return;
+    void refresh(api);
+  }, [api, refresh]);
+
+  useInboxLiveSync(api);
+  return null;
+}
+
 function ChatRouteLayout() {
   return (
     <>
       <ChatRouteGlobalShortcuts />
+      <ChatInboxLifecycle />
       <Outlet />
     </>
   );

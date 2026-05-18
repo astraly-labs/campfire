@@ -65,9 +65,14 @@ import type {
 import type {
   SideThreadCommand,
   SideThreadDispatchResult,
+  SideThreadParentIndexStreamItem,
+  SideThreadParentSubscribeInput,
   SideThreadStreamItem,
   SideThreadSubscribeInput,
 } from "./sidethread.ts";
+import type { IdentityCurrentUser, IdentitySetDisplayNameInput } from "./identity.ts";
+import type { InboxListResult, InboxStreamEvent } from "./inbox.ts";
+import type { UsersDirectoryResult } from "./user.ts";
 import { EnvironmentId } from "./baseSchemas.ts";
 import { AuthBearerBootstrapResult, AuthSessionState, AuthWebSocketTokenResult } from "./auth.ts";
 import { AdvertisedEndpoint } from "./remoteAccess.ts";
@@ -580,5 +585,29 @@ export interface EnvironmentApi {
         onResubscribe?: () => void;
       },
     ) => () => void;
+    subscribeParent: (
+      input: SideThreadParentSubscribeInput,
+      callback: (event: SideThreadParentIndexStreamItem) => void,
+      options?: {
+        onResubscribe?: () => void;
+      },
+    ) => () => void;
+  };
+  identity: {
+    getCurrentUser: () => Promise<IdentityCurrentUser>;
+    setDisplayName: (input: IdentitySetDisplayNameInput) => Promise<IdentityCurrentUser>;
+    clearDisplayName: () => Promise<IdentityCurrentUser>;
+  };
+  inbox: {
+    list: () => Promise<InboxListResult>;
+    subscribe: (
+      callback: (event: InboxStreamEvent) => void,
+      options?: {
+        onResubscribe?: () => void;
+      },
+    ) => () => void;
+  };
+  users: {
+    directory: () => Promise<UsersDirectoryResult>;
   };
 }

@@ -48,7 +48,10 @@ export const browserApiCorsLayer = HttpRouter.cors({
   maxAge: 600,
   ...(corsOriginEnv
     ? {
-        allowedOrigins: corsOriginEnv.split(",").map((o) => o.trim()).filter(Boolean),
+        allowedOrigins: corsOriginEnv
+          .split(",")
+          .map((o) => o.trim())
+          .filter(Boolean),
         credentials: true,
       }
     : {}),

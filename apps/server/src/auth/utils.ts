@@ -98,7 +98,7 @@ function inferOs(userAgent: string | undefined): string | undefined {
   return undefined;
 }
 
-function readRemoteAddressFromSource(source: unknown): string | undefined {
+export function readRemoteAddressFromSource(source: unknown): string | undefined {
   if (!source || typeof source !== "object") {
     return undefined;
   }

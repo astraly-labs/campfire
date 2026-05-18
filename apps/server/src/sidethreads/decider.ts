@@ -126,6 +126,7 @@ const decidePost = ({
         messageId: command.messageId,
         author: command.author,
         text: command.text,
+        mentions: command.mentions,
       },
     };
   });

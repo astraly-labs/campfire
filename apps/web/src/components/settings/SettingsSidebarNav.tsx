@@ -7,6 +7,7 @@ import {
   KeyboardIcon,
   Link2Icon,
   Settings2Icon,
+  UserIcon,
 } from "lucide-react";
 import { useCanGoBack, useNavigate } from "@tanstack/react-router";
 
@@ -23,6 +24,7 @@ import {
 
 export type SettingsSectionPath =
   | "/settings/general"
+  | "/settings/identity"
   | "/settings/keybindings"
   | "/settings/providers"
   | "/settings/source-control"
@@ -35,6 +37,7 @@ export const SETTINGS_NAV_ITEMS: ReadonlyArray<{
   icon: ComponentType<{ className?: string }>;
 }> = [
   { label: "General", to: "/settings/general", icon: Settings2Icon },
+  { label: "Identity", to: "/settings/identity", icon: UserIcon },
   { label: "Keybindings", to: "/settings/keybindings", icon: KeyboardIcon },
   { label: "Providers", to: "/settings/providers", icon: BotIcon },
   { label: "Source Control", to: "/settings/source-control", icon: GitBranchIcon },

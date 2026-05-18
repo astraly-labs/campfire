@@ -1,6 +1,10 @@
 import type { MessageId, ThreadId } from "@t3tools/contracts";
+import { MessageCircleIcon, MessageCirclePlusIcon } from "lucide-react";
 
-import { useSideThreadStore } from "./sideThreadStore";
+import { cn } from "~/lib/utils";
+import { isInboxItemUnread, useInboxStore } from "../inbox/inboxStore";
+import { useUiStateStore } from "../uiStateStore";
+import { deriveSideThreadId, useSideThreadStore, useSideThreadSummaryFor } from "./sideThreadStore";
 
 interface Props {
   readonly threadId: ThreadId;
@@ -8,19 +12,72 @@ interface Props {
 }
 
 /**
- * Small inline action attached to an agent message. Opens (or focuses)
- * the side-thread anchored on that message.
+ * Inline anchor attached to each agent message. Renders one of two
+ * affordances based on whether a side thread already exists on that
+ * message:
+ *
+ *  - **Create** — `MessageCirclePlus`, hover-revealed and muted. The
+ *    parent timeline groups itself as `group/assistant`, so the button
+ *    stays out of the way until the user hovers the message.
+ *  - **Open** — `MessageCircle` with the live message count, always
+ *    visible so unread/active discussions are surfaced.
+ *
+ * The button always calls `open(anchor)` — the drawer is responsible for
+ * idempotently creating the aggregate on first activation (server enforces
+ * uniqueness by deterministic id).
  */
 export function SideThreadAnchorButton({ threadId, messageId }: Props) {
   const open = useSideThreadStore((state) => state.open);
+  const summary = useSideThreadSummaryFor(messageId);
+  const exists = summary !== null && summary.archivedAt === null;
+  const messageCount = summary?.messageCount ?? 0;
+
+  const sideThreadId = deriveSideThreadId({ parentThreadId: threadId, anchorMessageId: messageId });
+  // Show a red dot when the inbox knows about a mention on this side thread
+  // that the current user has not yet seen (visited timestamp older than the
+  // last mention). The inbox stream keeps this live without polling.
+  const inboxItem = useInboxStore((state) =>
+    state.items.find((it) => it.sideThreadId === sideThreadId),
+  );
+  const lastVisitedAtById = useUiStateStore((state) => state.threadLastVisitedAtById);
+  const hasUnreadMention = inboxItem ? isInboxItemUnread(inboxItem, lastVisitedAtById) : false;
+
   return (
     <button
       type="button"
-      title="Discuter (side thread)"
+      title={
+        exists
+          ? `Voir la discussion (${messageCount} message${messageCount > 1 ? "s" : ""})${
+              hasUnreadMention ? " — tu as une mention non lue" : ""
+            }`
+          : "Démarrer une discussion"
+      }
+      aria-label={exists ? "Ouvrir le side thread" : "Démarrer un side thread"}
       onClick={() => open({ parentThreadId: threadId, anchorMessageId: messageId })}
-      className="rounded p-1 text-xs text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:hover:bg-zinc-800"
+      className={cn(
+        "relative inline-flex items-center gap-1 rounded p-1 text-[10px] transition-opacity duration-200",
+        "hover:bg-muted hover:text-foreground",
+        exists
+          ? "text-muted-foreground/70 opacity-100"
+          : "text-muted-foreground/45 opacity-0 group-hover/assistant:opacity-100 focus-visible:opacity-100",
+      )}
     >
-      💬
+      {exists ? (
+        <>
+          <MessageCircleIcon className="size-3.5" aria-hidden />
+          {messageCount > 0 ? (
+            <span className="font-medium tabular-nums">{messageCount}</span>
+          ) : null}
+        </>
+      ) : (
+        <MessageCirclePlusIcon className="size-3.5" aria-hidden />
+      )}
+      {hasUnreadMention ? (
+        <span
+          aria-hidden
+          className="absolute -right-0.5 -top-0.5 size-1.5 rounded-full bg-red-500 ring-2 ring-background"
+        />
+      ) : null}
     </button>
   );
 }

@@ -49,6 +49,7 @@ import {
   OrchestrationRpcSchemas,
 } from "./orchestration.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
+import { IDENTITY_WS_METHODS, IdentityRpcSchemas, IdentityServiceError } from "./identity.ts";
 import {
   SIDETHREAD_WS_METHODS,
   SideThreadCommand,
@@ -56,6 +57,13 @@ import {
   SideThreadGetSnapshotError,
   SideThreadRpcSchemas,
 } from "./sidethread.ts";
+import { INBOX_WS_METHODS, InboxListError, InboxRpcSchemas, InboxSubscribeError } from "./inbox.ts";
+import {
+  USERS_WS_METHODS,
+  UsersDirectoryError,
+  UsersDirectoryInput,
+  UsersDirectoryResult,
+} from "./user.ts";
 import {
   ProjectSearchEntriesError,
   ProjectSearchEntriesInput,
@@ -454,6 +462,24 @@ export const WsOrchestrationSubscribeThreadRpc = Rpc.make(
   },
 );
 
+export const WsIdentityGetCurrentUserRpc = Rpc.make(IDENTITY_WS_METHODS.getCurrentUser, {
+  payload: IdentityRpcSchemas.getCurrentUser.input,
+  success: IdentityRpcSchemas.getCurrentUser.output,
+  error: IdentityServiceError,
+});
+
+export const WsIdentitySetDisplayNameRpc = Rpc.make(IDENTITY_WS_METHODS.setDisplayName, {
+  payload: IdentityRpcSchemas.setDisplayName.input,
+  success: IdentityRpcSchemas.setDisplayName.output,
+  error: IdentityServiceError,
+});
+
+export const WsIdentityClearDisplayNameRpc = Rpc.make(IDENTITY_WS_METHODS.clearDisplayName, {
+  payload: IdentityRpcSchemas.clearDisplayName.input,
+  success: IdentityRpcSchemas.clearDisplayName.output,
+  error: IdentityServiceError,
+});
+
 export const WsSideThreadDispatchCommandRpc = Rpc.make(SIDETHREAD_WS_METHODS.dispatchCommand, {
   payload: SideThreadCommand,
   success: SideThreadRpcSchemas.dispatchCommand.output,
@@ -465,6 +491,35 @@ export const WsSideThreadSubscribeRpc = Rpc.make(SIDETHREAD_WS_METHODS.subscribe
   success: SideThreadRpcSchemas.subscribeSideThread.output,
   error: SideThreadGetSnapshotError,
   stream: true,
+});
+
+export const WsSideThreadSubscribeParentRpc = Rpc.make(
+  SIDETHREAD_WS_METHODS.subscribeParentSideThreads,
+  {
+    payload: SideThreadRpcSchemas.subscribeParentSideThreads.input,
+    success: SideThreadRpcSchemas.subscribeParentSideThreads.output,
+    error: SideThreadGetSnapshotError,
+    stream: true,
+  },
+);
+
+export const WsInboxListRpc = Rpc.make(INBOX_WS_METHODS.list, {
+  payload: InboxRpcSchemas.list.input,
+  success: InboxRpcSchemas.list.output,
+  error: InboxListError,
+});
+
+export const WsInboxSubscribeRpc = Rpc.make(INBOX_WS_METHODS.subscribe, {
+  payload: InboxRpcSchemas.subscribe.input,
+  success: InboxRpcSchemas.subscribe.output,
+  error: InboxSubscribeError,
+  stream: true,
+});
+
+export const WsUsersDirectoryRpc = Rpc.make(USERS_WS_METHODS.directory, {
+  payload: UsersDirectoryInput,
+  success: UsersDirectoryResult,
+  error: UsersDirectoryError,
 });
 
 export const WsSubscribeTerminalEventsRpc = Rpc.make(WS_METHODS.subscribeTerminalEvents, {
@@ -543,4 +598,11 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationSubscribeThreadRpc,
   WsSideThreadDispatchCommandRpc,
   WsSideThreadSubscribeRpc,
+  WsSideThreadSubscribeParentRpc,
+  WsIdentityGetCurrentUserRpc,
+  WsIdentitySetDisplayNameRpc,
+  WsIdentityClearDisplayNameRpc,
+  WsInboxListRpc,
+  WsInboxSubscribeRpc,
+  WsUsersDirectoryRpc,
 );

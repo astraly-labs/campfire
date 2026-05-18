@@ -24,6 +24,20 @@ import {
 const SideThreadJson = Schema.fromJsonString(SideThread);
 const encodeSnapshot = Schema.encodeUnknownEffect(SideThreadJson);
 const decodeSnapshot = Schema.decodeUnknownEffect(SideThreadJson);
+
+const PREVIEW_MAX_CHARS = 240;
+/**
+ * Single-line, length-capped preview of a side-thread message stored
+ * alongside each mention so the inbox can render rows without re-fetching
+ * the full message. Stays > 1 char so the contract's
+ * `TrimmedNonEmptyString` decoder doesn't reject it on read.
+ */
+const truncateForPreview = (text: string): string => {
+  const singleLine = text.replace(/\s+/g, " ").trim();
+  if (singleLine.length === 0) return "…";
+  if (singleLine.length <= PREVIEW_MAX_CHARS) return singleLine;
+  return `${singleLine.slice(0, PREVIEW_MAX_CHARS - 1).trimEnd()}…`;
+};
 import { SideThreadEventStore } from "../../persistence/Services/SideThreadEventStore.ts";
 import {
   SideThreadProjectionPipeline,
@@ -140,6 +154,7 @@ const makeSideThreadProjectionPipeline = Effect.gen(function* () {
           `.pipe(Effect.mapError(toPersistenceSqlError("SideThreadProjection.insertMessage")));
 
           const current = yield* loadSnapshot(event.payload.sideThreadId);
+          const mentionsForMessage = event.payload.mentions ?? [];
           if (current) {
             const updated: SideThread = {
               ...current,
@@ -152,10 +167,61 @@ const makeSideThreadProjectionPipeline = Effect.gen(function* () {
                   text: event.payload.text,
                   createdAt: event.occurredAt,
                   updatedAt: event.occurredAt,
+                  mentions: mentionsForMessage,
                 },
               ],
             };
             yield* updateSnapshot(event.payload.sideThreadId, updated);
+          }
+
+          // Inbox projection: one row per (message, mentioned user). The
+          // (message_id, user_id) PK makes bootstrap replay idempotent and
+          // de-duplicates if a buggy command ships the same user twice.
+          if (mentionsForMessage.length > 0) {
+            const anchorMessageId =
+              current?.anchor.kind === "message" ? current.anchor.messageId : null;
+            const parentThreadId = current?.parentThreadId;
+            // We need parentThreadId to power the inbox. If the snapshot
+            // hasn't materialised yet (out-of-order replay), skip — bootstrap
+            // will redo the insert after the SideThread snapshot lands.
+            if (parentThreadId) {
+              const textPreview = truncateForPreview(event.payload.text);
+              for (const mention of mentionsForMessage) {
+                yield* sql`
+                  INSERT INTO projection_side_thread_message_mentions (
+                    message_id,
+                    user_id,
+                    side_thread_id,
+                    parent_thread_id,
+                    anchor_message_id,
+                    author_user_id,
+                    author_display_name,
+                    text_preview,
+                    occurred_at
+                  ) VALUES (
+                    ${event.payload.messageId},
+                    ${mention.id},
+                    ${event.payload.sideThreadId},
+                    ${parentThreadId},
+                    ${anchorMessageId},
+                    ${event.payload.author.id},
+                    ${event.payload.author.displayName},
+                    ${textPreview},
+                    ${event.occurredAt}
+                  )
+                  ON CONFLICT(message_id, user_id) DO UPDATE SET
+                    side_thread_id = excluded.side_thread_id,
+                    parent_thread_id = excluded.parent_thread_id,
+                    anchor_message_id = excluded.anchor_message_id,
+                    author_user_id = excluded.author_user_id,
+                    author_display_name = excluded.author_display_name,
+                    text_preview = excluded.text_preview,
+                    occurred_at = excluded.occurred_at
+                `.pipe(
+                  Effect.mapError(toPersistenceSqlError("SideThreadProjection.insertMention")),
+                );
+              }
+            }
           }
           break;
         }
@@ -176,6 +242,9 @@ const makeSideThreadProjectionPipeline = Effect.gen(function* () {
     });
 
   const bootstrap: Effect.Effect<void, ProjectionRepositoryError> = Effect.gen(function* () {
+    yield* sql`DELETE FROM projection_side_thread_message_mentions`.pipe(
+      Effect.mapError(toPersistenceSqlError("SideThreadProjection.bootstrap:truncateMentions")),
+    );
     yield* sql`DELETE FROM projection_side_thread_messages`.pipe(
       Effect.mapError(toPersistenceSqlError("SideThreadProjection.bootstrap:truncateMessages")),
     );

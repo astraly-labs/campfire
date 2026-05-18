@@ -57,6 +57,20 @@ export function createEnvironmentApi(rpcClient: WsRpcClient): EnvironmentApi {
       dispatchCommand: rpcClient.sideThread.dispatchCommand,
       subscribe: (input, callback, options) =>
         rpcClient.sideThread.subscribe(input, callback, options),
+      subscribeParent: (input, callback, options) =>
+        rpcClient.sideThread.subscribeParent(input, callback, options),
+    },
+    identity: {
+      getCurrentUser: rpcClient.identity.getCurrentUser,
+      setDisplayName: rpcClient.identity.setDisplayName,
+      clearDisplayName: rpcClient.identity.clearDisplayName,
+    },
+    inbox: {
+      list: rpcClient.inbox.list,
+      subscribe: (callback, options) => rpcClient.inbox.subscribe(callback, options),
+    },
+    users: {
+      directory: rpcClient.users.directory,
     },
   };
 }

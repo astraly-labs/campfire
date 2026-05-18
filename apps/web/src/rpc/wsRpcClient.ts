@@ -5,9 +5,12 @@ import {
   type VcsStatusResult,
   type VcsStatusStreamEvent,
   type LocalApi,
+  IDENTITY_WS_METHODS,
+  INBOX_WS_METHODS,
   ORCHESTRATION_WS_METHODS,
   type ServerSettingsPatch,
   SIDETHREAD_WS_METHODS,
+  USERS_WS_METHODS,
   WS_METHODS,
 } from "@t3tools/contracts";
 import { applyGitStatusStreamEvent } from "@t3tools/shared/git";
@@ -157,6 +160,21 @@ export interface WsRpcClient {
   readonly sideThread: {
     readonly dispatchCommand: RpcUnaryMethod<typeof SIDETHREAD_WS_METHODS.dispatchCommand>;
     readonly subscribe: RpcInputStreamMethod<typeof SIDETHREAD_WS_METHODS.subscribeSideThread>;
+    readonly subscribeParent: RpcInputStreamMethod<
+      typeof SIDETHREAD_WS_METHODS.subscribeParentSideThreads
+    >;
+  };
+  readonly identity: {
+    readonly getCurrentUser: RpcUnaryNoArgMethod<typeof IDENTITY_WS_METHODS.getCurrentUser>;
+    readonly setDisplayName: RpcUnaryMethod<typeof IDENTITY_WS_METHODS.setDisplayName>;
+    readonly clearDisplayName: RpcUnaryNoArgMethod<typeof IDENTITY_WS_METHODS.clearDisplayName>;
+  };
+  readonly inbox: {
+    readonly list: RpcUnaryNoArgMethod<typeof INBOX_WS_METHODS.list>;
+    readonly subscribe: RpcStreamMethod<typeof INBOX_WS_METHODS.subscribe>;
+  };
+  readonly users: {
+    readonly directory: RpcUnaryNoArgMethod<typeof USERS_WS_METHODS.directory>;
   };
 }
 
@@ -333,6 +351,31 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
           listener,
           { ...options, tag: SIDETHREAD_WS_METHODS.subscribeSideThread },
         ),
+      subscribeParent: (input, listener, options) =>
+        transport.subscribe(
+          (client) => client[SIDETHREAD_WS_METHODS.subscribeParentSideThreads](input),
+          listener,
+          { ...options, tag: SIDETHREAD_WS_METHODS.subscribeParentSideThreads },
+        ),
+    },
+    identity: {
+      getCurrentUser: () =>
+        transport.request((client) => client[IDENTITY_WS_METHODS.getCurrentUser]({})),
+      setDisplayName: (input) =>
+        transport.request((client) => client[IDENTITY_WS_METHODS.setDisplayName](input)),
+      clearDisplayName: () =>
+        transport.request((client) => client[IDENTITY_WS_METHODS.clearDisplayName]({})),
+    },
+    inbox: {
+      list: () => transport.request((client) => client[INBOX_WS_METHODS.list]({})),
+      subscribe: (listener, options) =>
+        transport.subscribe((client) => client[INBOX_WS_METHODS.subscribe]({}), listener, {
+          ...options,
+          tag: INBOX_WS_METHODS.subscribe,
+        }),
+    },
+    users: {
+      directory: () => transport.request((client) => client[USERS_WS_METHODS.directory]({})),
     },
   };
 }

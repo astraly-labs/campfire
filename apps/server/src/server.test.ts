@@ -69,6 +69,9 @@ import {
   type OrchestrationEngineShape,
 } from "./orchestration/Services/OrchestrationEngine.ts";
 import { SideThreadEngineService } from "./sidethreads/Services/SideThreadEngine.ts";
+import { InboxReadModelService } from "./sidethreads/Services/InboxReadModel.ts";
+import { UserDirectoryService } from "./sidethreads/Services/UserDirectory.ts";
+import { UserIdentityService } from "./sidethreads/Services/UserIdentity.ts";
 import { OrchestrationListenerCallbackError } from "./orchestration/Errors.ts";
 import {
   ProjectionSnapshotQuery,
@@ -643,7 +646,45 @@ const buildAppUnderTest = (options?: {
           dispatch: () => Effect.succeed({ sequence: 0 }),
           streamDomainEvents: Stream.empty,
           getSnapshot: () => Effect.succeed(Option.none()),
+          getParentSnapshot: (parentThreadId) =>
+            Effect.succeed({
+              snapshotSequence: 0,
+              parentThreadId,
+              entries: [],
+            }),
+          summarizeForEvent: () => Option.none(),
         }),
+      ),
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.mock(InboxReadModelService)({
+            listForUser: () => Effect.succeed([]),
+          }),
+          Layer.mock(UserDirectoryService)({
+            listUsers: () => Effect.succeed([]),
+          }),
+          Layer.mock(UserIdentityService)({
+            resolveByTailnetIp: () =>
+              Effect.succeed({
+                id: "local:test" as never,
+                displayName: "test",
+              }),
+            resolveByRequestIp: () =>
+              Effect.succeed({
+                user: { id: "local:test" as never, displayName: "test" },
+                source: "local-fallback" as const,
+                canonicalDisplayName: "test",
+                hasOverride: false,
+              }),
+            setDisplayNameOverride: () =>
+              Effect.succeed({
+                user: { id: "local:test" as never, displayName: "test" },
+                source: "local-fallback" as const,
+                canonicalDisplayName: "test",
+                hasOverride: false,
+              }),
+          }),
+        ),
       ),
       Layer.provide(
         Layer.mock(ProjectionSnapshotQuery)({
