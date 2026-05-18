@@ -16,6 +16,7 @@ import {
   parseDiffRouteSearch,
   stripDiffSearchParams,
 } from "../diffRouteSearch";
+import { retainThreadDetailSubscription } from "../environments/runtime/service";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
 import { selectEnvironmentState, selectThreadExistsByRef, useStore } from "../store";
@@ -223,12 +224,33 @@ function ChatThreadRouteView() {
   const threadRefEnvironmentId = threadRef?.environmentId ?? null;
   const threadRefThreadId = threadRef?.threadId ?? null;
 
+  // Pull the thread shell on-demand when we land on a thread URL that wasn't
+  // part of the bootstrap shell snapshot. The inbox links to parent threads
+  // we may not have hydrated yet (different project, archived, etc.) — without
+  // this the redirect below would fire before subscribeThread had a chance
+  // to deliver the snapshot.
+  useEffect(() => {
+    if (!threadRefEnvironmentId || !threadRefThreadId) return;
+    return retainThreadDetailSubscription(threadRefEnvironmentId, threadRefThreadId);
+  }, [threadRefEnvironmentId, threadRefThreadId]);
+
+  // Grace period before declaring a thread "missing" — gives subscribeThread
+  // time to deliver its snapshot when navigating to a thread we haven't
+  // hydrated yet.
+  const [missingThreadGraceElapsed, setMissingThreadGraceElapsed] = useState(false);
+  useEffect(() => {
+    setMissingThreadGraceElapsed(false);
+    if (!threadRefEnvironmentId || !threadRefThreadId) return;
+    const id = window.setTimeout(() => setMissingThreadGraceElapsed(true), 2_500);
+    return () => window.clearTimeout(id);
+  }, [threadRefEnvironmentId, threadRefThreadId]);
+
   useEffect(() => {
     if (!threadRef || !bootstrapComplete) {
       return;
     }
 
-    if (!routeThreadExists && environmentHasAnyThreads) {
+    if (!routeThreadExists && environmentHasAnyThreads && missingThreadGraceElapsed) {
       void navigate({ to: "/", replace: true });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -237,6 +259,7 @@ function ChatThreadRouteView() {
     environmentHasAnyThreads,
     navigate,
     routeThreadExists,
+    missingThreadGraceElapsed,
     threadRefEnvironmentId,
     threadRefThreadId,
   ]);
