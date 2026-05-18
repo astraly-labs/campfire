@@ -9,6 +9,7 @@ import {
   projectFaviconRouteLayer,
   serverEnvironmentRouteLayer,
   staticAndDevRouteLayer,
+  workspaceFileRouteLayer,
   browserApiCorsLayer,
 } from "./http.ts";
 import { fixPath } from "./os-jank.ts";
@@ -80,6 +81,7 @@ import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import { OrchestrationLayerLive } from "./orchestration/runtimeLayer.ts";
 import { SideThreadLayerLive } from "./sidethreads/runtimeLayer.ts";
+import { PresenceLive } from "./presence/Layers/PresenceLive.ts";
 import {
   clearPersistedServerRuntimeState,
   makePersistedServerRuntimeState,
@@ -250,6 +252,7 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   Layer.provideMerge(VcsLayerLive),
   Layer.provideMerge(ProviderRuntimeLayerLive),
   Layer.provideMerge(SideThreadLayerLive),
+  Layer.provideMerge(PresenceLive),
   Layer.provideMerge(TerminalLayerLive),
   Layer.provideMerge(PersistenceLayerLive),
   Layer.provideMerge(KeybindingsLive),
@@ -313,6 +316,7 @@ export const makeRoutesLayer = Layer.mergeAll(
   projectFaviconRouteLayer,
   serverEnvironmentRouteLayer,
   staticAndDevRouteLayer,
+  workspaceFileRouteLayer,
   websocketRpcRouteLayer,
 ).pipe(Layer.provide(browserApiCorsLayer));
 

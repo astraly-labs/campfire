@@ -19,6 +19,8 @@ import {
   INBOX_WS_METHODS,
   InboxListError,
   InboxSubscribeError,
+  PRESENCE_WS_METHODS,
+  PresenceError,
   USERS_WS_METHODS,
   UsersDirectoryError,
   type OrchestrationCommand,
@@ -56,6 +58,7 @@ import { OrchestrationEngineService } from "./orchestration/Services/Orchestrati
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import { SideThreadEngineService } from "./sidethreads/Services/SideThreadEngine.ts";
 import { InboxReadModelService } from "./sidethreads/Services/InboxReadModel.ts";
+import { PresenceService } from "./presence/Services/PresenceService.ts";
 import { UserDirectoryService } from "./sidethreads/Services/UserDirectory.ts";
 import { UserIdentityService, type ResolvedIdentity } from "./sidethreads/Services/UserIdentity.ts";
 import {
@@ -179,6 +182,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId, initialIdentity: Resolv
       const orchestrationEngine = yield* OrchestrationEngineService;
       const sideThreadEngine = yield* SideThreadEngineService;
       const inboxReadModel = yield* InboxReadModelService;
+      const presence = yield* PresenceService;
       const userDirectory = yield* UserDirectoryService;
       const userIdentity = yield* UserIdentityService;
       const currentIdentityRef = yield* Ref.make<ResolvedIdentity>(initialIdentity);
@@ -1056,6 +1060,51 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId, initialIdentity: Resolv
             ),
             { "rpc.aggregate": "users" },
           ),
+        [PRESENCE_WS_METHODS.heartbeat]: (input) =>
+          observeRpcEffect(
+            PRESENCE_WS_METHODS.heartbeat,
+            Effect.gen(function* () {
+              const identity = yield* Ref.get(currentIdentityRef);
+              yield* presence.touch({
+                user: identity.user,
+                parentThreadId: input.parentThreadId,
+                sideThreadId: input.sideThreadId,
+                typingIn: input.typingIn,
+              });
+              const serverTime = yield* nowIso;
+              return { serverTime };
+            }).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new PresenceError({
+                    message: "Failed to record presence heartbeat",
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "presence" },
+          ),
+        [PRESENCE_WS_METHODS.subscribe]: (_input) =>
+          observeRpcStreamEffect(
+            PRESENCE_WS_METHODS.subscribe,
+            Effect.gen(function* () {
+              // Snapshot first so the client renders existing viewers before
+              // any new update arrives. The live stream then carries every
+              // mutation as a fresh full snapshot — see PresenceLive for the
+              // "publish iff changed" filter.
+              const initial = yield* presence.snapshot;
+              return Stream.concat(Stream.make(initial), presence.stream);
+            }).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new PresenceError({
+                    message: "Failed to subscribe to presence",
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "presence" },
+          ),
         [WS_METHODS.serverGetConfig]: (_input) =>
           observeRpcEffect(WS_METHODS.serverGetConfig, loadServerConfig, {
             "rpc.aggregate": "server",
@@ -1484,7 +1533,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
         const headerIdentity = yield* userIdentity
           .resolveFromTailscaleHeaders({ login: tsLogin, displayName: tsName })
           .pipe(Effect.catch(() => Effect.succeed(Option.none<ResolvedIdentity>())));
-        const initialIdentity = yield* (Option.isSome(headerIdentity)
+        const initialIdentity = yield* Option.isSome(headerIdentity)
           ? Effect.succeed(headerIdentity.value)
           : userIdentity.resolveByRequestIp(remoteAddress).pipe(
               Effect.catch((cause) =>
@@ -1492,7 +1541,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
                   detail: cause instanceof Error ? cause.message : String(cause),
                 }).pipe(Effect.flatMap(() => userIdentity.resolveByRequestIp(undefined))),
               ),
-            ));
+            );
         const rpcWebSocketHttpEffect = yield* RpcServer.toHttpEffectWebsocket(WsRpcGroup, {
           disableTracing: true,
         }).pipe(

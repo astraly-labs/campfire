@@ -62,6 +62,8 @@ import {
   type SidebarThreadSortOrder,
 } from "@t3tools/contracts/settings";
 import { usePrimaryEnvironmentId } from "../environments/primary";
+import { AvatarStack } from "../presence/AvatarStack";
+import { useViewersOfParentThread } from "../presence/presenceStore";
 import { isElectron } from "../env";
 import { APP_STAGE_LABEL, APP_VERSION } from "../branding";
 import { isTerminalFocused } from "../lib/terminalFocus";
@@ -276,6 +278,18 @@ function buildThreadJumpLabelMap(input: {
     }
   }
   return mapping.size > 0 ? mapping : EMPTY_THREAD_JUMP_LABELS;
+}
+
+/**
+ * Tiny adapter that selects the viewers for a thread row from the global
+ * presence store. Pulled into its own component so each row subscribes
+ * independently — when one teammate moves between threads, only the two
+ * affected rows re-render instead of the whole sidebar.
+ */
+function SidebarThreadViewers({ threadId }: { threadId: ThreadId }) {
+  const viewers = useViewersOfParentThread(threadId);
+  if (viewers.length === 0) return null;
+  return <AvatarStack viewers={viewers} maxVisible={3} size="sm" />;
 }
 
 interface SidebarThreadRowProps {
@@ -676,6 +690,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             ) : null}
             <span className={threadMetaClassName}>
               <span className="inline-flex items-center gap-1">
+                <SidebarThreadViewers threadId={thread.id} />
                 {isRemoteThread && (
                   <Tooltip>
                     <TooltipTrigger

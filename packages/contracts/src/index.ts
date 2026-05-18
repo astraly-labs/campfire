@@ -20,6 +20,7 @@ export * from "./user.ts";
 export * from "./identity.ts";
 export * from "./sidethread.ts";
 export * from "./inbox.ts";
+export * from "./presence.ts";
 export * from "./editor.ts";
 export * from "./project.ts";
 export * from "./filesystem.ts";

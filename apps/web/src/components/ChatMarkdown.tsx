@@ -1,5 +1,5 @@
 import { DiffsHighlighter, getSharedHighlighter, SupportedLanguages } from "@pierre/diffs";
-import { CheckIcon, CopyIcon } from "lucide-react";
+import { CheckIcon, CopyIcon, DownloadIcon, ExternalLinkIcon, EyeIcon } from "lucide-react";
 import type { ServerProviderSkill } from "@t3tools/contracts";
 import React, {
   Children,
@@ -34,6 +34,11 @@ import {
   rewriteMarkdownFileUriHref,
 } from "../markdown-links";
 import { readLocalApi } from "../localApi";
+import { useFilePreviewStore } from "../preview/filePreviewStore";
+import {
+  buildWorkspaceFileDownloadUrl,
+  buildWorkspaceFilePreviewUrl,
+} from "../workspaceFileUrl";
 import { cn } from "../lib/utils";
 
 class CodeHighlightErrorBoundary extends React.Component<
@@ -284,6 +289,7 @@ interface MarkdownFileLinkProps {
   label: string;
   theme: "light" | "dark";
   className?: string | undefined;
+  cwd?: string | undefined;
 }
 
 const MARKDOWN_LINK_HREF_PATTERN = /\[[^\]]*]\(([^)\s]+)(?:\s+["'][^"']*["'])?\)/g;
@@ -375,10 +381,35 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
   label,
   theme,
   className,
+  cwd,
 }: MarkdownFileLinkProps) {
-  const handleOpen = useCallback(() => {
+  const openPreview = useFilePreviewStore((state) => state.open);
+  const canPreview = typeof cwd === "string" && cwd.length > 0;
+  const previewUrl = canPreview
+    ? buildWorkspaceFilePreviewUrl({ cwd: cwd as string, path: filePath })
+    : null;
+  const downloadUrl = canPreview
+    ? buildWorkspaceFileDownloadUrl({ cwd: cwd as string, path: filePath })
+    : null;
+  const baseName = (() => {
+    const sepIndex = Math.max(filePath.lastIndexOf("/"), filePath.lastIndexOf("\\"));
+    return sepIndex >= 0 ? filePath.slice(sepIndex + 1) : filePath;
+  })();
+
+  const handlePreview = useCallback(() => {
+    if (!canPreview) return;
+    openPreview({ cwd: cwd as string, filePath });
+  }, [canPreview, cwd, filePath, openPreview]);
+
+  const handleOpenInEditor = useCallback(() => {
     const api = readLocalApi();
     if (!api) {
+      // No native editor bridge (e.g. remote Tailscale Serve) — fall back to
+      // the in-app preview drawer instead of surfacing a useless error.
+      if (canPreview) {
+        handlePreview();
+        return;
+      }
       toastManager.add({
         type: "error",
         title: "Open in editor is unavailable",
@@ -395,7 +426,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
         }),
       );
     });
-  }, [targetPath]);
+  }, [canPreview, handlePreview, targetPath]);
 
   const handleCopy = useCallback((value: string, title: string) => {
     if (typeof window === "undefined" || !navigator.clipboard?.writeText) {
@@ -437,17 +468,43 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
       const api = readLocalApi();
       if (!api) return;
 
-      const clicked = await api.contextMenu.show(
-        [
-          { id: "open", label: "Open in editor" },
-          { id: "copy-relative", label: "Copy relative path" },
-          { id: "copy-full", label: "Copy full path" },
-        ] as const,
-        { x: event.clientX, y: event.clientY },
-      );
+      const menuItems = [
+        { id: "open" as const, label: "Open in editor" },
+        ...(canPreview
+          ? [
+              { id: "preview" as const, label: "Preview in drawer" },
+              { id: "open-tab" as const, label: "Open in new tab" },
+              { id: "download" as const, label: "Download" },
+            ]
+          : []),
+        { id: "copy-relative" as const, label: "Copy relative path" },
+        { id: "copy-full" as const, label: "Copy full path" },
+      ];
+      const clicked = await api.contextMenu.show(menuItems, {
+        x: event.clientX,
+        y: event.clientY,
+      });
 
       if (clicked === "open") {
-        handleOpen();
+        handleOpenInEditor();
+        return;
+      }
+      if (clicked === "preview") {
+        handlePreview();
+        return;
+      }
+      if (clicked === "open-tab" && previewUrl) {
+        window.open(previewUrl, "_blank", "noopener,noreferrer");
+        return;
+      }
+      if (clicked === "download" && downloadUrl) {
+        // Synthesize a click on a hidden anchor so we get a proper file save.
+        const anchor = document.createElement("a");
+        anchor.href = downloadUrl;
+        anchor.download = baseName;
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
         return;
       }
       if (clicked === "copy-relative") {
@@ -458,42 +515,100 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
         handleCopy(targetPath, "Full path");
       }
     },
-    [displayPath, handleCopy, handleOpen, targetPath],
+    [
+      baseName,
+      canPreview,
+      displayPath,
+      downloadUrl,
+      handleCopy,
+      handleOpenInEditor,
+      handlePreview,
+      previewUrl,
+      targetPath,
+    ],
   );
 
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <a
-            href={href}
-            className={cn(MARKDOWN_FILE_LINK_CLASS_NAME, className)}
+    <span
+      className={cn(
+        "chat-markdown-file-link-wrapper group/file-link inline-flex max-w-full items-center gap-1",
+        className,
+      )}
+    >
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <a
+              href={href}
+              className={MARKDOWN_FILE_LINK_CLASS_NAME}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                handleOpenInEditor();
+              }}
+              onContextMenu={handleContextMenu}
+            >
+              <VscodeEntryIcon
+                pathValue={filePath}
+                kind="file"
+                theme={theme}
+                className={cn(MARKDOWN_FILE_LINK_ICON_CLASS_NAME, "text-current")}
+              />
+              <span className={MARKDOWN_FILE_LINK_LABEL_CLASS_NAME}>{label}</span>
+            </a>
+          }
+        />
+        <TooltipPopup
+          side="top"
+          className="max-w-[min(40rem,calc(100vw-2rem))] font-mono text-[11px] leading-tight"
+        >
+          <div className="markdown-file-link-tooltip-scroll overflow-x-auto whitespace-nowrap">
+            {displayPath}
+          </div>
+        </TooltipPopup>
+      </Tooltip>
+      {canPreview && previewUrl && downloadUrl ? (
+        <span
+          className="inline-flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity duration-100 group-hover/file-link:opacity-100 focus-within:opacity-100"
+          aria-label="File actions"
+        >
+          <button
+            type="button"
             onClick={(event) => {
               event.preventDefault();
               event.stopPropagation();
-              handleOpen();
+              handlePreview();
             }}
-            onContextMenu={handleContextMenu}
+            title="Preview in drawer"
+            aria-label="Preview in drawer"
+            className="rounded p-0.5 text-muted-foreground/70 hover:bg-accent hover:text-foreground"
           >
-            <VscodeEntryIcon
-              pathValue={filePath}
-              kind="file"
-              theme={theme}
-              className={cn(MARKDOWN_FILE_LINK_ICON_CLASS_NAME, "text-current")}
-            />
-            <span className={MARKDOWN_FILE_LINK_LABEL_CLASS_NAME}>{label}</span>
+            <EyeIcon className="size-3" />
+          </button>
+          <a
+            href={previewUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(event) => event.stopPropagation()}
+            title="Open in new tab"
+            aria-label="Open in new tab"
+            className="rounded p-0.5 text-muted-foreground/70 hover:bg-accent hover:text-foreground"
+          >
+            <ExternalLinkIcon className="size-3" />
           </a>
-        }
-      />
-      <TooltipPopup
-        side="top"
-        className="max-w-[min(40rem,calc(100vw-2rem))] font-mono text-[11px] leading-tight"
-      >
-        <div className="markdown-file-link-tooltip-scroll overflow-x-auto whitespace-nowrap">
-          {displayPath}
-        </div>
-      </TooltipPopup>
-    </Tooltip>
+          <a
+            href={downloadUrl}
+            download={baseName}
+            onClick={(event) => event.stopPropagation()}
+            title="Download"
+            aria-label="Download"
+            className="rounded p-0.5 text-muted-foreground/70 hover:bg-accent hover:text-foreground"
+          >
+            <DownloadIcon className="size-3" />
+          </a>
+        </span>
+      ) : null}
+    </span>
   );
 }, areMarkdownFileLinkPropsEqual);
 
@@ -508,7 +623,8 @@ function areMarkdownFileLinkPropsEqual(
     previous.filePath === next.filePath &&
     previous.label === next.label &&
     previous.theme === next.theme &&
-    previous.className === next.className
+    previous.className === next.className &&
+    previous.cwd === next.cwd
   );
 }
 
@@ -577,6 +693,7 @@ function ChatMarkdown({
             label={labelParts.join(" · ")}
             theme={resolvedTheme}
             className={props.className}
+            cwd={cwd}
           />
         );
       },
@@ -603,6 +720,7 @@ function ChatMarkdown({
       },
     }),
     [
+      cwd,
       diffThemeName,
       fileLinkParentSuffixByPath,
       isStreaming,

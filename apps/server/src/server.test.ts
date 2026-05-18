@@ -71,6 +71,7 @@ import {
 import { SideThreadEngineService } from "./sidethreads/Services/SideThreadEngine.ts";
 import { InboxReadModelService } from "./sidethreads/Services/InboxReadModel.ts";
 import { UserDirectoryService } from "./sidethreads/Services/UserDirectory.ts";
+import { PresenceService } from "./presence/Services/PresenceService.ts";
 import { UserIdentityService } from "./sidethreads/Services/UserIdentity.ts";
 import { OrchestrationListenerCallbackError } from "./orchestration/Errors.ts";
 import {
@@ -662,6 +663,12 @@ const buildAppUnderTest = (options?: {
           }),
           Layer.mock(UserDirectoryService)({
             listUsers: () => Effect.succeed([]),
+          }),
+          Layer.mock(PresenceService)({
+            touch: () => Effect.void,
+            dropUser: () => Effect.void,
+            snapshot: Effect.succeed({ kind: "snapshot", entries: [] }),
+            stream: Stream.empty,
           }),
           Layer.mock(UserIdentityService)({
             resolveByTailnetIp: () =>

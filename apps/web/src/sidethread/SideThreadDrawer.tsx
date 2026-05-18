@@ -7,11 +7,10 @@ import {
   type SideThreadStreamItem,
   type UserRef,
 } from "@t3tools/contracts";
-import { XIcon } from "lucide-react";
+import { CornerUpLeftIcon, XIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ensureEnvironmentApi } from "../environmentApi";
-import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { InlineSlideDrawer } from "../components/ui/inline-slide-drawer";
 import { cn } from "~/lib/utils";
@@ -33,6 +32,7 @@ import {
   useUserDirectoryStore,
 } from "../inbox/userDirectoryStore";
 import { useUiStateStore } from "../uiStateStore";
+import { clearTyping, notifyTyping } from "../presence/usePresenceHeartbeat";
 import { deriveSideThreadId, useSideThreadStore, type SideThreadAnchor } from "./sideThreadStore";
 
 interface Props {
@@ -41,6 +41,21 @@ interface Props {
 }
 
 const SIDEBAR_WIDTH = 380;
+
+// Scroll the main timeline to the anchor message and briefly flash a ring
+// around it. We rely on `data-message-id` set by MessagesTimeline rows. The
+// timeline is virtualized (LegendList), so if the anchor isn't in the DOM
+// the lookup silently no-ops — acceptable for now since the anchor is
+// typically near the open side thread.
+function scrollToCheckpoint(messageId: string) {
+  const el = document.querySelector<HTMLElement>(`[data-message-id="${messageId}"]`);
+  if (!el) return;
+  el.scrollIntoView({ behavior: "smooth", block: "center" });
+  el.classList.add("ring-2", "ring-amber-500/50", "rounded-md");
+  window.setTimeout(() => {
+    el.classList.remove("ring-2", "ring-amber-500/50", "rounded-md");
+  }, 1400);
+}
 
 /**
  * Side-thread inline panel. Mounted as a flex sibling of the chat column so it
@@ -205,6 +220,11 @@ function DrawerBody({
     const next = event.target.value;
     setDraft(next);
     refreshMentionContext(next, event.target.selectionStart ?? next.length);
+    if (next.length > 0) {
+      notifyTyping("side");
+    } else {
+      clearTyping("side");
+    }
   };
 
   const selectMentionCandidate = useCallback(
@@ -242,6 +262,7 @@ function DrawerBody({
     setDraft("");
     setPendingMentions([]);
     setActiveMention(null);
+    clearTyping("side");
     try {
       await api.sideThread.dispatchCommand({
         type: "sidethread.message.post",
@@ -255,7 +276,7 @@ function DrawerBody({
         mentions,
       });
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Échec d'envoi");
+      setError(cause instanceof Error ? cause.message : "Failed to send");
     }
   };
 
@@ -304,25 +325,21 @@ function DrawerBody({
       aria-label="Side thread"
     >
       <div className="flex h-12 shrink-0 items-center justify-between border-b border-border/60 px-3">
-        <div className="flex min-w-0 items-center gap-2">
-          <Badge
-            variant="secondary"
-            className="rounded-md bg-amber-500/10 px-1.5 py-0 text-[10px] font-semibold uppercase tracking-wide text-amber-500"
-          >
-            Side thread
-          </Badge>
-          <span
-            className="truncate text-[11px] text-muted-foreground/60"
-            title={anchor.anchorMessageId}
-          >
-            ancré sur message {anchor.anchorMessageId.slice(0, 8)}
-          </span>
-        </div>
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          onClick={() => scrollToCheckpoint(anchor.anchorMessageId)}
+          title="Go to thread checkpoint"
+          aria-label="Go to thread checkpoint"
+          className="text-muted-foreground/60 hover:text-foreground"
+        >
+          <CornerUpLeftIcon className="size-3.5" />
+        </Button>
         <Button
           variant="ghost"
           size="icon-xs"
           onClick={onClose}
-          aria-label="Fermer le side thread"
+          aria-label="Close side thread"
           className="text-muted-foreground/60 hover:text-foreground"
         >
           <XIcon className="size-3.5" />
@@ -362,7 +379,7 @@ function DrawerBody({
           </li>
         ))}
         {sideThread && sideThread.messages.length === 0 ? (
-          <li className="text-xs text-muted-foreground/50">Commence la discussion…</li>
+          <li className="text-xs text-muted-foreground/50">Start the discussion…</li>
         ) : null}
       </ul>
 
@@ -382,7 +399,7 @@ function DrawerBody({
         {activeMention && mentionCandidates.length > 0 ? (
           <ul
             role="listbox"
-            aria-label="Mentionner un coéquipier"
+            aria-label="Mention a teammate"
             className="absolute bottom-[calc(100%-0.25rem)] left-3 right-3 z-10 max-h-48 overflow-y-auto rounded-md border border-border/70 bg-popover shadow-lg"
           >
             {mentionCandidates.map((user, index) => (
@@ -418,14 +435,14 @@ function DrawerBody({
             const el = event.currentTarget;
             refreshMentionContext(el.value, el.selectionStart ?? el.value.length);
           }}
-          placeholder="Écrire un message…"
+          placeholder="Write a message…"
           rows={2}
           className="resize-none rounded border border-border/60 bg-background px-2 py-1.5 text-sm placeholder:text-muted-foreground/40 focus:border-border focus:outline-none"
           onKeyDown={onKeyDown}
         />
         <div className="flex justify-end">
           <Button type="submit" size="xs" disabled={!draft.trim() || !currentUser}>
-            Envoyer (⌘↩)
+            Send (⌘↩)
           </Button>
         </div>
       </form>

@@ -5,6 +5,8 @@ import { useCommandPaletteStore } from "../commandPaletteStore";
 import { readEnvironmentApi } from "../environmentApi";
 import { usePrimaryEnvironmentId } from "../environments/primary";
 import { useInboxLiveSync, useInboxStore } from "../inbox/inboxStore";
+import { usePresenceLiveSync } from "../presence/presenceStore";
+import { usePresenceHeartbeat } from "../presence/usePresenceHeartbeat";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import {
   startNewLocalThreadFromContext,
@@ -117,11 +119,26 @@ function ChatInboxLifecycle() {
   return null;
 }
 
+function ChatPresenceLifecycle() {
+  // Wire the live presence stream + outbound heartbeat under `_chat` so the
+  // ws upgrade has already happened. The hook below reads the current route
+  // thread independently — no prop drilling required.
+  const environmentId = usePrimaryEnvironmentId();
+  const api = environmentId ? readEnvironmentApi(environmentId) : undefined;
+  const { routeThreadRef } = useHandleNewThread();
+  const parentThreadId = routeThreadRef?.threadId ?? null;
+
+  usePresenceLiveSync(api);
+  usePresenceHeartbeat({ api, parentThreadId });
+  return null;
+}
+
 function ChatRouteLayout() {
   return (
     <>
       <ChatRouteGlobalShortcuts />
       <ChatInboxLifecycle />
+      <ChatPresenceLifecycle />
       <Outlet />
     </>
   );

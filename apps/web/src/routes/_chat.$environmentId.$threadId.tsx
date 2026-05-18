@@ -214,6 +214,15 @@ function ChatThreadRouteView() {
     });
   }, [markDiffOpened, navigate, threadRef]);
 
+  // Stable string deps — `threadRef` from `Route.useParams({ select })` is a
+  // new object each render, so depending on it directly retriggered the
+  // effect every render and looped `navigate("/")` until React aborted with
+  // "Maximum update depth exceeded" (reproducible via the inbox: clicking an
+  // item navigates here and re-renders the parent tree, which keeps minting
+  // fresh `threadRef` identities).
+  const threadRefEnvironmentId = threadRef?.environmentId ?? null;
+  const threadRefThreadId = threadRef?.threadId ?? null;
+
   useEffect(() => {
     if (!threadRef || !bootstrapComplete) {
       return;
@@ -222,14 +231,23 @@ function ChatThreadRouteView() {
     if (!routeThreadExists && environmentHasAnyThreads) {
       void navigate({ to: "/", replace: true });
     }
-  }, [bootstrapComplete, environmentHasAnyThreads, navigate, routeThreadExists, threadRef]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    bootstrapComplete,
+    environmentHasAnyThreads,
+    navigate,
+    routeThreadExists,
+    threadRefEnvironmentId,
+    threadRefThreadId,
+  ]);
 
   useEffect(() => {
     if (!threadRef || !serverThreadStarted || !draftThread?.promotedTo) {
       return;
     }
     finalizePromotedDraftThreadByRef(threadRef);
-  }, [draftThread?.promotedTo, serverThreadStarted, threadRef]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftThread?.promotedTo, serverThreadStarted, threadRefEnvironmentId, threadRefThreadId]);
 
   if (!threadRef || !bootstrapComplete || !routeThreadExists) {
     return null;

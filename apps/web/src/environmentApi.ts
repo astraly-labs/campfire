@@ -72,6 +72,10 @@ export function createEnvironmentApi(rpcClient: WsRpcClient): EnvironmentApi {
     users: {
       directory: rpcClient.users.directory,
     },
+    presence: {
+      heartbeat: rpcClient.presence.heartbeat,
+      subscribe: (callback, options) => rpcClient.presence.subscribe(callback, options),
+    },
   };
 }
 

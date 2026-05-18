@@ -78,7 +78,7 @@ function InboxRouteView() {
                 void refresh(ensureEnvironmentApi(environmentId));
               }}
             >
-              Rafraîchir
+              Refresh
             </Button>
           </div>
         </header>
@@ -91,7 +91,7 @@ function InboxRouteView() {
 
         {status === "loading" && items.length === 0 ? (
           <div className="flex-1 px-4 py-8 text-center text-sm text-muted-foreground/60">
-            Chargement…
+            Loading…
           </div>
         ) : items.length === 0 ? (
           <Empty className="flex-1">
@@ -99,13 +99,10 @@ function InboxRouteView() {
               <div className="mx-auto mb-5 flex size-11 items-center justify-center rounded-xl border border-border/70 bg-background/70 text-muted-foreground">
                 <InboxIcon className="size-5" />
               </div>
-              <EmptyTitle className="text-foreground text-xl">
-                Aucune mention pour l'instant
-              </EmptyTitle>
+              <EmptyTitle className="text-foreground text-xl">No mentions yet</EmptyTitle>
               <EmptyDescription className="mt-2 text-sm leading-relaxed text-muted-foreground/78">
-                Quand un coéquipier te tague <code className="px-1 text-foreground/80">@toi</code>{" "}
-                dans un side thread, le message apparaîtra ici avec un lien direct vers la
-                conversation.
+                When a teammate tags <code className="px-1 text-foreground/80">@you</code> in a side
+                thread, the message will appear here with a direct link to the conversation.
               </EmptyDescription>
             </EmptyHeader>
           </Empty>
@@ -134,7 +131,7 @@ function InboxRouteView() {
                               "mt-1 size-2 shrink-0 rounded-full",
                               unread ? "bg-amber-500" : "bg-transparent",
                             )}
-                            aria-label={unread ? "non lu" : "lu"}
+                            aria-label={unread ? "unread" : "read"}
                           />
                           <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                             <div className="flex items-baseline justify-between gap-2">
@@ -150,7 +147,7 @@ function InboxRouteView() {
                             </p>
                             {item.mentionsCount > 1 ? (
                               <span className="text-[10px] text-muted-foreground/60">
-                                {item.mentionsCount} mentions dans ce side thread
+                                {item.mentionsCount} mentions in this side thread
                               </span>
                             ) : null}
                           </div>

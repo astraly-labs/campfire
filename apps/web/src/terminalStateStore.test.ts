@@ -284,7 +284,7 @@ describe("terminalStateStore actions", () => {
     expect(entries.map((entry) => entry.event.type)).toEqual(["output", "activity"]);
   });
 
-  it("applies started terminal events to terminal state, launch context, and event buffer", () => {
+  it("registers terminals from started events without auto-opening the drawer or stealing focus", () => {
     const store = useTerminalStateStore.getState();
     store.applyTerminalEvent(
       THREAD_REF,
@@ -315,8 +315,8 @@ describe("terminalStateStore actions", () => {
       "setup-bootstrap",
     );
 
-    expect(terminalState.terminalOpen).toBe(true);
-    expect(terminalState.activeTerminalId).toBe("setup-bootstrap");
+    expect(terminalState.terminalOpen).toBe(false);
+    expect(terminalState.activeTerminalId).toBe("default");
     expect(terminalState.terminalIds).toEqual(["default", "setup-bootstrap"]);
     expect(
       useTerminalStateStore.getState().terminalLaunchContextByThreadKey[
@@ -328,6 +328,40 @@ describe("terminalStateStore actions", () => {
     });
     expect(entries).toHaveLength(1);
     expect(entries[0]?.event.type).toBe("started");
+  });
+
+  it("does not change drawer state when a restarted event arrives for a known terminal", () => {
+    const store = useTerminalStateStore.getState();
+    store.newTerminal(THREAD_REF, "terminal-2");
+    store.setActiveTerminal(THREAD_REF, "default");
+    store.setTerminalOpen(THREAD_REF, false);
+
+    store.applyTerminalEvent(
+      THREAD_REF,
+      makeTerminalEvent("restarted", {
+        terminalId: "terminal-2",
+        snapshot: {
+          threadId: THREAD_ID,
+          terminalId: "terminal-2",
+          cwd: "/tmp/workspace",
+          worktreePath: null,
+          status: "running",
+          pid: 456,
+          history: "",
+          exitCode: null,
+          exitSignal: null,
+          updatedAt: "2026-04-02T20:00:00.000Z",
+        },
+      }),
+    );
+
+    const terminalState = selectThreadTerminalState(
+      useTerminalStateStore.getState().terminalStateByThreadKey,
+      THREAD_REF,
+    );
+    expect(terminalState.terminalOpen).toBe(false);
+    expect(terminalState.activeTerminalId).toBe("default");
+    expect(terminalState.terminalIds).toEqual(["default", "terminal-2"]);
   });
 
   it("applies activity and exited terminal events to subprocess state while buffering events", () => {

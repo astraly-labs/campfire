@@ -119,6 +119,10 @@ const rpcClientMock = {
   users: {
     directory: vi.fn(),
   },
+  presence: {
+    heartbeat: vi.fn(),
+    subscribe: vi.fn(() => () => undefined),
+  },
 };
 
 vi.mock("./environments/runtime", () => ({

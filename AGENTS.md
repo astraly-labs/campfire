@@ -5,6 +5,10 @@
 - All of `bun fmt`, `bun lint`, and `bun typecheck` must pass before considering tasks completed.
 - NEVER run `bun test`. Always use `bun run test` (runs Vitest).
 
+## Language
+
+- All product copy, UI strings, comments, logs, and identifiers stay in English. No translation/localization for now — write everything in English even if the user prompts in another language.
+
 ## Project Snapshot
 
 T3 Code is a minimal web GUI for using coding agents like Codex and Claude.

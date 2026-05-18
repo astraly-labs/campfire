@@ -58,6 +58,7 @@ import {
   SideThreadRpcSchemas,
 } from "./sidethread.ts";
 import { INBOX_WS_METHODS, InboxListError, InboxRpcSchemas, InboxSubscribeError } from "./inbox.ts";
+import { PRESENCE_WS_METHODS, PresenceError, PresenceRpcSchemas } from "./presence.ts";
 import {
   USERS_WS_METHODS,
   UsersDirectoryError,
@@ -522,6 +523,19 @@ export const WsUsersDirectoryRpc = Rpc.make(USERS_WS_METHODS.directory, {
   error: UsersDirectoryError,
 });
 
+export const WsPresenceHeartbeatRpc = Rpc.make(PRESENCE_WS_METHODS.heartbeat, {
+  payload: PresenceRpcSchemas.heartbeat.input,
+  success: PresenceRpcSchemas.heartbeat.output,
+  error: PresenceError,
+});
+
+export const WsPresenceSubscribeRpc = Rpc.make(PRESENCE_WS_METHODS.subscribe, {
+  payload: PresenceRpcSchemas.subscribe.input,
+  success: PresenceRpcSchemas.subscribe.output,
+  error: PresenceError,
+  stream: true,
+});
+
 export const WsSubscribeTerminalEventsRpc = Rpc.make(WS_METHODS.subscribeTerminalEvents, {
   payload: Schema.Struct({}),
   success: TerminalEvent,
@@ -605,4 +619,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsInboxListRpc,
   WsInboxSubscribeRpc,
   WsUsersDirectoryRpc,
+  WsPresenceHeartbeatRpc,
+  WsPresenceSubscribeRpc,
 );

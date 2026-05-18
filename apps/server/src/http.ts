@@ -25,6 +25,8 @@ import { resolveAttachmentPathById } from "./attachmentStore.ts";
 import { resolveStaticDir, ServerConfig } from "./config.ts";
 import { BrowserTraceCollector } from "./observability/Services/BrowserTraceCollector.ts";
 import { ProjectFaviconResolver } from "./project/Services/ProjectFaviconResolver.ts";
+import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery.ts";
+import { WorkspacePaths } from "./workspace/Services/WorkspacePaths.ts";
 import { ServerAuth } from "./auth/Services/ServerAuth.ts";
 import { respondToAuthError } from "./auth/http.ts";
 import { ServerEnvironment } from "./environment/Services/ServerEnvironment.ts";
@@ -195,6 +197,90 @@ export const attachmentsRouteLayer = HttpRouter.add(
       headers: {
         "Cache-Control": "public, max-age=31536000, immutable",
       },
+    }).pipe(
+      Effect.catch(() =>
+        Effect.succeed(HttpServerResponse.text("Internal Server Error", { status: 500 })),
+      ),
+    );
+  }).pipe(Effect.catchTag("AuthError", respondToAuthError)),
+);
+
+// Serves an arbitrary file from a registered project's workspace. Used by the
+// in-app preview drawer + download buttons. Two guards: (1) `cwd` must match a
+// known active project (lookup in the projection), and (2) the resolved path
+// must remain inside that workspaceRoot (delegated to WorkspacePaths).
+export const workspaceFileRouteLayer = HttpRouter.add(
+  "GET",
+  "/workspace-file",
+  Effect.gen(function* () {
+    yield* requireAuthenticatedRequest;
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const url = HttpServerRequest.toURL(request);
+    if (Option.isNone(url)) {
+      return HttpServerResponse.text("Bad Request", { status: 400 });
+    }
+
+    const cwd = url.value.searchParams.get("cwd");
+    const requestedPath = url.value.searchParams.get("path");
+    const downloadFlag = url.value.searchParams.get("download") === "1";
+    if (!cwd || !requestedPath) {
+      return HttpServerResponse.text("Missing cwd or path parameter", { status: 400 });
+    }
+
+    const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
+    const projectOption = yield* projectionSnapshotQuery
+      .getActiveProjectByWorkspaceRoot(cwd)
+      .pipe(Effect.catch(() => Effect.succeed(Option.none())));
+    if (Option.isNone(projectOption)) {
+      return HttpServerResponse.text("Unknown workspace", { status: 403 });
+    }
+    const workspaceRoot = projectOption.value.workspaceRoot;
+
+    const path = yield* Path.Path;
+    let relativePath = requestedPath;
+    if (path.isAbsolute(requestedPath)) {
+      const resolvedRoot = path.resolve(workspaceRoot);
+      const resolvedRequested = path.resolve(requestedPath);
+      const prefix = resolvedRoot.endsWith(path.sep) ? resolvedRoot : `${resolvedRoot}${path.sep}`;
+      if (resolvedRequested === resolvedRoot || !resolvedRequested.startsWith(prefix)) {
+        return HttpServerResponse.text("Path is outside workspace", { status: 403 });
+      }
+      relativePath = resolvedRequested.slice(prefix.length);
+    }
+
+    const workspacePaths = yield* WorkspacePaths;
+    const resolved = yield* workspacePaths
+      .resolveRelativePathWithinRoot({ workspaceRoot, relativePath })
+      .pipe(Effect.catch(() => Effect.succeed(null)));
+    if (!resolved) {
+      return HttpServerResponse.text("Invalid path", { status: 400 });
+    }
+
+    const fileSystem = yield* FileSystem.FileSystem;
+    const fileInfo = yield* fileSystem
+      .stat(resolved.absolutePath)
+      .pipe(Effect.catch(() => Effect.succeed(null)));
+    if (!fileInfo || fileInfo.type !== "File") {
+      return HttpServerResponse.text("Not Found", { status: 404 });
+    }
+
+    const baseName = path.basename(resolved.absolutePath);
+    const responseContentType = downloadFlag
+      ? "application/octet-stream"
+      : (Mime.getType(resolved.absolutePath) ?? "application/octet-stream");
+    const headers: Record<string, string> = {
+      "Cache-Control": "no-store",
+      "X-Content-Type-Options": "nosniff",
+    };
+    if (downloadFlag) {
+      const safeFilename = baseName.replace(/[\r\n"]/g, "");
+      headers["Content-Disposition"] = `attachment; filename="${safeFilename}"`;
+    }
+
+    return yield* HttpServerResponse.file(resolved.absolutePath, {
+      status: 200,
+      contentType: responseContentType,
+      headers,
     }).pipe(
       Effect.catch(() =>
         Effect.succeed(HttpServerResponse.text("Internal Server Error", { status: 500 })),

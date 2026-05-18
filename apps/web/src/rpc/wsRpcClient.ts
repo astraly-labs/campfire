@@ -8,6 +8,7 @@ import {
   IDENTITY_WS_METHODS,
   INBOX_WS_METHODS,
   ORCHESTRATION_WS_METHODS,
+  PRESENCE_WS_METHODS,
   type ServerSettingsPatch,
   SIDETHREAD_WS_METHODS,
   USERS_WS_METHODS,
@@ -175,6 +176,10 @@ export interface WsRpcClient {
   };
   readonly users: {
     readonly directory: RpcUnaryNoArgMethod<typeof USERS_WS_METHODS.directory>;
+  };
+  readonly presence: {
+    readonly heartbeat: RpcUnaryMethod<typeof PRESENCE_WS_METHODS.heartbeat>;
+    readonly subscribe: RpcStreamMethod<typeof PRESENCE_WS_METHODS.subscribe>;
   };
 }
 
@@ -376,6 +381,15 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
     },
     users: {
       directory: () => transport.request((client) => client[USERS_WS_METHODS.directory]({})),
+    },
+    presence: {
+      heartbeat: (input) =>
+        transport.request((client) => client[PRESENCE_WS_METHODS.heartbeat](input)),
+      subscribe: (listener, options) =>
+        transport.subscribe((client) => client[PRESENCE_WS_METHODS.subscribe]({}), listener, {
+          ...options,
+          tag: PRESENCE_WS_METHODS.subscribe,
+        }),
     },
   };
 }

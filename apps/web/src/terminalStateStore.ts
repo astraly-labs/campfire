@@ -399,6 +399,26 @@ function upsertTerminalIntoGroups(
   });
 }
 
+function registerThreadTerminal(
+  state: ThreadTerminalState,
+  terminalId: string,
+): ThreadTerminalState {
+  const normalized = normalizeThreadTerminalState(state);
+  if (!isValidTerminalId(terminalId) || normalized.terminalIds.includes(terminalId)) {
+    return normalized;
+  }
+  const terminalIds = [...normalized.terminalIds, terminalId];
+  const terminalGroups = copyTerminalGroups(normalized.terminalGroups);
+  const usedGroupIds = new Set(terminalGroups.map((group) => group.id));
+  const nextGroupId = assignUniqueGroupId(fallbackGroupId(terminalId), usedGroupIds);
+  terminalGroups.push({ id: nextGroupId, terminalIds: [terminalId] });
+  return normalizeThreadTerminalState({
+    ...normalized,
+    terminalIds,
+    terminalGroups,
+  });
+}
+
 function setThreadTerminalOpen(state: ThreadTerminalState, open: boolean): ThreadTerminalState {
   const normalized = normalizeThreadTerminalState(state);
   if (normalized.terminalOpen === open) return normalized;
@@ -692,18 +712,17 @@ export const useTerminalStateStore = create<TerminalStateStoreState>()(
             let nextTerminalLaunchContextByThreadKey = state.terminalLaunchContextByThreadKey;
 
             if (event.type === "started" || event.type === "restarted") {
+              // Register the terminal in this client's state without forcing the
+              // drawer open or stealing active focus. Clients that initiate the
+              // open/restart already toggle the drawer locally via UI actions;
+              // peer clients should only learn that the terminal exists.
               nextTerminalStateByThreadKey = updateTerminalStateByThreadKey(
                 nextTerminalStateByThreadKey,
                 threadRef,
-                (current) => {
-                  let nextState = current;
-                  if (!current.terminalIds.includes(event.terminalId)) {
-                    nextState = newThreadTerminal(nextState, event.terminalId);
-                  }
-                  nextState = setThreadActiveTerminal(nextState, event.terminalId);
-                  nextState = setThreadTerminalOpen(nextState, true);
-                  return normalizeThreadTerminalState(nextState);
-                },
+                (current) =>
+                  current.terminalIds.includes(event.terminalId)
+                    ? current
+                    : registerThreadTerminal(current, event.terminalId),
               );
               nextTerminalLaunchContextByThreadKey = {
                 ...nextTerminalLaunchContextByThreadKey,

@@ -72,6 +72,11 @@ import type {
 } from "./sidethread.ts";
 import type { IdentityCurrentUser, IdentitySetDisplayNameInput } from "./identity.ts";
 import type { InboxListResult, InboxStreamEvent } from "./inbox.ts";
+import type {
+  PresenceHeartbeatInput,
+  PresenceHeartbeatResult,
+  PresenceSnapshotEvent,
+} from "./presence.ts";
 import type { UsersDirectoryResult } from "./user.ts";
 import { EnvironmentId } from "./baseSchemas.ts";
 import { AuthBearerBootstrapResult, AuthSessionState, AuthWebSocketTokenResult } from "./auth.ts";
@@ -609,5 +614,14 @@ export interface EnvironmentApi {
   };
   users: {
     directory: () => Promise<UsersDirectoryResult>;
+  };
+  presence: {
+    heartbeat: (input: PresenceHeartbeatInput) => Promise<PresenceHeartbeatResult>;
+    subscribe: (
+      callback: (event: PresenceSnapshotEvent) => void,
+      options?: {
+        onResubscribe?: () => void;
+      },
+    ) => () => void;
   };
 }

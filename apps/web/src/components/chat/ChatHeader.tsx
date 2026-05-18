@@ -16,7 +16,10 @@ import ProjectScriptsControl, { type NewProjectScriptInput } from "../ProjectScr
 import { Toggle } from "../ui/toggle";
 import { SidebarTrigger } from "../ui/sidebar";
 import { OpenInPicker } from "./OpenInPicker";
+import { WorkspaceFilesButton } from "./WorkspaceFilesButton";
 import { usePrimaryEnvironmentId } from "../../environments/primary";
+import { AvatarStack } from "../../presence/AvatarStack";
+import { useViewersOfParentThread } from "../../presence/presenceStore";
 
 interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;
@@ -87,6 +90,7 @@ export const ChatHeader = memo(function ChatHeader({
     activeThreadEnvironmentId,
     primaryEnvironmentId,
   });
+  const viewers = useViewersOfParentThread(activeThreadId);
 
   return (
     <div className="@container/header-actions flex min-w-0 flex-1 items-center gap-2">
@@ -107,6 +111,9 @@ export const ChatHeader = memo(function ChatHeader({
           <Badge variant="outline" className="shrink-0 text-[10px] text-amber-700">
             No Git
           </Badge>
+        )}
+        {viewers.length > 0 && (
+          <AvatarStack viewers={viewers} maxVisible={3} size="md" className="ml-1" />
         )}
       </div>
       <div className="flex shrink-0 items-center justify-end gap-2 @3xl/header-actions:gap-3">
@@ -135,6 +142,10 @@ export const ChatHeader = memo(function ChatHeader({
             {...(draftId ? { draftId } : {})}
           />
         )}
+        <WorkspaceFilesButton
+          environmentId={activeThreadEnvironmentId}
+          threadId={activeThreadId}
+        />
         <Tooltip>
           <TooltipTrigger
             render={

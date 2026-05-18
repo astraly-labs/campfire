@@ -148,6 +148,7 @@ import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
 import { SideThreadDrawer } from "../sidethread/SideThreadDrawer";
+import { FilePreviewDrawer } from "./preview/FilePreviewDrawer";
 import { ParentSideThreadSubscription } from "../sidethread/useParentSideThreadSubscription";
 import { ChatHeader } from "./chat/ChatHeader";
 import { type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
@@ -3748,6 +3749,9 @@ export default function ChatView(props: ChatViewProps) {
           />
         ) : null}
         <SideThreadDrawer environmentId={environmentId} />
+
+        {/* File preview drawer — opens on file-link click, slides in from right */}
+        <FilePreviewDrawer />
       </div>
       {/* end horizontal flex container */}
 

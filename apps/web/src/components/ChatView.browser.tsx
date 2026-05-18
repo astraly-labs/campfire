@@ -232,6 +232,7 @@ function createMockEnvironmentApi(input: {
     identity: {} as EnvironmentApi["identity"],
     inbox: {} as EnvironmentApi["inbox"],
     users: {} as EnvironmentApi["users"],
+    presence: {} as EnvironmentApi["presence"],
   };
 }
 

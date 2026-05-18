@@ -1,8 +1,10 @@
-import type { MessageId, ThreadId } from "@t3tools/contracts";
+import type { MessageId, SideThreadId, ThreadId } from "@t3tools/contracts";
 import { MessageCircleIcon, MessageCirclePlusIcon } from "lucide-react";
 
 import { cn } from "~/lib/utils";
 import { isInboxItemUnread, useInboxStore } from "../inbox/inboxStore";
+import { AvatarStack } from "../presence/AvatarStack";
+import { useViewersOfSideThread } from "../presence/presenceStore";
 import { useUiStateStore } from "../uiStateStore";
 import { deriveSideThreadId, useSideThreadStore, useSideThreadSummaryFor } from "./sideThreadStore";
 
@@ -41,18 +43,19 @@ export function SideThreadAnchorButton({ threadId, messageId }: Props) {
   );
   const lastVisitedAtById = useUiStateStore((state) => state.threadLastVisitedAtById);
   const hasUnreadMention = inboxItem ? isInboxItemUnread(inboxItem, lastVisitedAtById) : false;
+  const viewers = useViewersOfSideThread(sideThreadId as SideThreadId);
 
   return (
     <button
       type="button"
       title={
         exists
-          ? `Voir la discussion (${messageCount} message${messageCount > 1 ? "s" : ""})${
-              hasUnreadMention ? " — tu as une mention non lue" : ""
+          ? `View thread (${messageCount} message${messageCount > 1 ? "s" : ""})${
+              hasUnreadMention ? " — you have an unread mention" : ""
             }`
-          : "Démarrer une discussion"
+          : "Start a thread"
       }
-      aria-label={exists ? "Ouvrir le side thread" : "Démarrer un side thread"}
+      aria-label={exists ? "Open side thread" : "Start a side thread"}
       onClick={() => open({ parentThreadId: threadId, anchorMessageId: messageId })}
       className={cn(
         "relative inline-flex items-center gap-1 rounded p-1 text-[10px] transition-opacity duration-200",
@@ -72,6 +75,9 @@ export function SideThreadAnchorButton({ threadId, messageId }: Props) {
       ) : (
         <MessageCirclePlusIcon className="size-3.5" aria-hidden />
       )}
+      {viewers.length > 0 ? (
+        <AvatarStack viewers={viewers} maxVisible={3} size="sm" className="ml-0.5" />
+      ) : null}
       {hasUnreadMention ? (
         <span
           aria-hidden
