@@ -2,6 +2,7 @@ import { type EnvironmentId, type ThreadId } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime";
 import { DownloadIcon, FileIcon } from "lucide-react";
 import { useMemo } from "react";
+import { useShallow } from "zustand/react/shallow";
 
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Toggle } from "../ui/toggle";
@@ -24,26 +25,31 @@ export function WorkspaceFilesButton({ environmentId, threadId }: Props) {
     () => scopeThreadRef(environmentId, threadId),
     [environmentId, threadId],
   );
-  const messageTexts = useStore((state) => {
-    const thread = selectThreadByRef(state, threadRef);
-    if (!thread) return null;
-    return thread.messages.map((message) => message.text);
-  });
-  const projectCwd = useStore((state) => {
-    const thread = selectThreadByRef(state, threadRef);
-    if (!thread) return undefined;
-    const project = selectProjectByRef(state, {
-      environmentId: thread.environmentId,
-      projectId: thread.projectId,
-    });
-    return project?.cwd;
-  });
+  // Subscribe to the stable `messages` array reference. The store reuses the
+  // same array when nothing changes; mapping/transforming inside the selector
+  // would create a fresh reference each render and Zustand would re-render in
+  // a loop. We do the map() in a memo outside the selector instead.
+  const messages = useStore((state) => selectThreadByRef(state, threadRef)?.messages);
+  const projectCwd = useStore(
+    useShallow((state) => {
+      const thread = selectThreadByRef(state, threadRef);
+      if (!thread) return undefined;
+      const project = selectProjectByRef(state, {
+        environmentId: thread.environmentId,
+        projectId: thread.projectId,
+      });
+      return project?.cwd;
+    }),
+  );
   const { resolvedTheme } = useTheme();
 
   const mentions = useMemo(() => {
-    if (!messageTexts) return null;
-    return collectFileMentions(messageTexts, projectCwd);
-  }, [messageTexts, projectCwd]);
+    if (!messages) return null;
+    return collectFileMentions(
+      messages.map((message) => message.text),
+      projectCwd,
+    );
+  }, [messages, projectCwd]);
 
   const count = mentions?.orderedFilePaths.length ?? 0;
   const disabled = !projectCwd || count === 0;
