@@ -3570,6 +3570,7 @@ export default function ChatView(props: ChatViewProps) {
               turnDiffSummaryByAssistantMessageId={turnDiffSummaryByAssistantMessageId}
               activeThreadEnvironmentId={activeThread.environmentId}
               routeThreadKey={routeThreadKey}
+              activeThreadId={activeThread.id}
               onOpenTurnDiff={onOpenTurnDiff}
               revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
               onRevertUserMessage={onRevertUserMessage}
@@ -3742,10 +3743,10 @@ export default function ChatView(props: ChatViewProps) {
         </InlineSlideDrawer>
 
         {/* Side thread (Slack-style anchored conversation) */}
-        {routeThreadKey ? (
+        {routeKind === "server" ? (
           <ParentSideThreadSubscription
             environmentId={environmentId}
-            parentThreadId={routeThreadKey as ThreadId}
+            parentThreadId={threadId}
           />
         ) : null}
         <SideThreadDrawer environmentId={environmentId} />

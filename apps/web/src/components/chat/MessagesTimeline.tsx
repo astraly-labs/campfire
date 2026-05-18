@@ -80,6 +80,11 @@ import { formatWorkspaceRelativePath } from "../../filePathDisplay";
 interface TimelineRowSharedState {
   timestampFormat: TimestampFormat;
   routeThreadKey: string;
+  // Unscoped thread id of the parent agent thread. Distinct from
+  // `routeThreadKey` (which is `<env>:<threadId>`) — passed to the side-thread
+  // anchor button so the side thread's `parentThreadId` stays an unscoped
+  // ThreadId (otherwise it leaks back into the inbox URLs as `<env>:<id>`).
+  activeThreadId: ThreadId;
   markdownCwd: string | undefined;
   resolvedTheme: "light" | "dark";
   workspaceRoot: string | undefined;
@@ -116,6 +121,7 @@ interface MessagesTimelineProps {
   completionSummary: string | null;
   turnDiffSummaryByAssistantMessageId: Map<MessageId, TurnDiffSummary>;
   routeThreadKey: string;
+  activeThreadId: ThreadId;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
   revertTurnCountByUserMessageId: Map<MessageId, number>;
   onRevertUserMessage: (messageId: MessageId) => void;
@@ -145,6 +151,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   completionSummary,
   turnDiffSummaryByAssistantMessageId,
   routeThreadKey,
+  activeThreadId,
   onOpenTurnDiff,
   revertTurnCountByUserMessageId,
   onRevertUserMessage,
@@ -214,6 +221,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     () => ({
       timestampFormat,
       routeThreadKey,
+      activeThreadId,
       markdownCwd,
       resolvedTheme,
       workspaceRoot,
@@ -226,6 +234,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     [
       timestampFormat,
       routeThreadKey,
+      activeThreadId,
       markdownCwd,
       resolvedTheme,
       workspaceRoot,
@@ -448,7 +457,7 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
           </p>
           <AssistantCopyButton row={row} />
           <SideThreadAnchorButton
-            threadId={ctx.routeThreadKey as ThreadId}
+            threadId={ctx.activeThreadId}
             messageId={row.message.id}
           />
         </div>

@@ -43,11 +43,19 @@ function InboxRouteView() {
 
   const openInboxItem = (item: InboxItem) => {
     if (!environmentId) return;
+    // Older mentions were created when `SideThreadAnchorButton` was passed
+    // `routeThreadKey` (the scoped `<env>:<thread>` form) as its ThreadId
+    // prop. That string then leaked into the side thread's `parentThreadId`
+    // and back into the inbox row. Strip it so the URL stays unscoped.
+    const unscopedParentThreadId = stripEnvironmentPrefix(
+      item.parentThreadId,
+      environmentId,
+    ) as ThreadId;
     const params = buildThreadRouteParams(
-      scopeThreadRef(environmentId, item.parentThreadId as ThreadId),
+      scopeThreadRef(environmentId, unscopedParentThreadId),
     );
     openSideThread({
-      parentThreadId: item.parentThreadId,
+      parentThreadId: unscopedParentThreadId,
       anchorMessageId: item.anchorMessageId as unknown as Parameters<
         typeof openSideThread
       >[0]["anchorMessageId"],
@@ -163,6 +171,17 @@ function InboxRouteView() {
       </div>
     </SidebarInset>
   );
+}
+
+/**
+ * `<env>:<thread>` strings leaked into older side-thread `parentThreadId`s
+ * because `SideThreadAnchorButton` was given `routeThreadKey` (the scoped
+ * key) cast as `ThreadId`. Trim the env prefix so navigation finds the row
+ * in `threadShellById`, which is keyed by the unscoped id.
+ */
+function stripEnvironmentPrefix(threadId: ThreadId, environmentId: string): ThreadId {
+  const prefix = `${environmentId}:`;
+  return (threadId.startsWith(prefix) ? threadId.slice(prefix.length) : threadId) as ThreadId;
 }
 
 interface ParentThreadGroup {

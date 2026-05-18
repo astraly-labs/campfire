@@ -1,6 +1,6 @@
 import "../../index.css";
 
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { createRef } from "react";
 import type { LegendListRef } from "@legendapp/list/react";
 import { page } from "vitest/browser";
@@ -59,6 +59,7 @@ function buildProps() {
     completionSummary: null,
     turnDiffSummaryByAssistantMessageId: new Map(),
     routeThreadKey: "environment-local:thread-1",
+    activeThreadId: ThreadId.make("thread-1"),
     onOpenTurnDiff: vi.fn(),
     revertTurnCountByUserMessageId: new Map(),
     onRevertUserMessage: vi.fn(),
