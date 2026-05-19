@@ -19,7 +19,13 @@ import {
 import { retainThreadDetailSubscription } from "../environments/runtime/service";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
-import { selectEnvironmentState, selectThreadExistsByRef, useStore } from "../store";
+import {
+  selectEnvironmentState,
+  selectThreadExistsByRef,
+  selectThreadMissingByRef,
+  useStore,
+} from "../store";
+import { toastManager } from "../components/ui/toast";
 import { createThreadSelectorByRef } from "../storeSelectors";
 import { resolveThreadRouteRef, buildThreadRouteParams } from "../threadRoutes";
 import { RightPanelSheet } from "../components/RightPanelSheet";
@@ -150,6 +156,7 @@ function ChatThreadRouteView() {
   );
   const serverThread = useStore(useMemo(() => createThreadSelectorByRef(threadRef), [threadRef]));
   const threadExists = useStore((store) => selectThreadExistsByRef(store, threadRef));
+  const threadMissing = useStore((store) => selectThreadMissingByRef(store, threadRef));
   const environmentHasServerThreads = useStore(
     (store) => selectEnvironmentState(store, threadRef?.environmentId ?? null).threadIds.length > 0,
   );
@@ -244,6 +251,23 @@ function ChatThreadRouteView() {
     const id = window.setTimeout(() => setMissingThreadGraceElapsed(true), 2_500);
     return () => window.clearTimeout(id);
   }, [threadRefEnvironmentId, threadRefThreadId]);
+
+  // Fast-path redirect when the server has explicitly told us the thread
+  // doesn't exist (via subscribeThread onError). Skips the 2.5s grace and
+  // surfaces a toast so the user understands why they were bounced — most
+  // commonly hit if they landed here via a bookmark or a stale link the
+  // inbox guard missed.
+  useEffect(() => {
+    if (!threadRef || !threadMissing) {
+      return;
+    }
+    toastManager.add({
+      type: "error",
+      title: "Conversation introuvable",
+      description: "Le thread demandé n'existe plus.",
+    });
+    void navigate({ to: "/inbox", replace: true });
+  }, [navigate, threadMissing, threadRef, threadRefEnvironmentId, threadRefThreadId]);
 
   useEffect(() => {
     if (!threadRef || !bootstrapComplete) {

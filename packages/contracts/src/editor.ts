@@ -10,6 +10,10 @@ type EditorDefinition = {
   readonly commands: readonly [string, ...string[]] | null;
   readonly baseArgs?: readonly string[];
   readonly launchStyle: EditorLaunchStyle;
+  // When set, the editor is launched client-side via a URL scheme (e.g.
+  // "helix://<path>") through `shell.openExternal` instead of spawning a
+  // command server-side. The server must never try to spawn these.
+  readonly clientUrlScheme?: string;
 };
 
 export const EDITORS = [
@@ -38,6 +42,13 @@ export const EDITORS = [
   { id: "rubymine", label: "RubyMine", commands: ["rubymine"], launchStyle: "line-column" },
   { id: "rustrover", label: "RustRover", commands: ["rustrover"], launchStyle: "line-column" },
   { id: "webstorm", label: "WebStorm", commands: ["webstorm"], launchStyle: "line-column" },
+  {
+    id: "helix",
+    label: "Helix",
+    commands: null,
+    launchStyle: "direct-path",
+    clientUrlScheme: "helix",
+  },
   { id: "file-manager", label: "File Manager", commands: null, launchStyle: "direct-path" },
 ] as const satisfies ReadonlyArray<EditorDefinition>;
 

@@ -1,11 +1,24 @@
 import { useEffect, useState } from "react";
 
 import ChatMarkdown from "../ChatMarkdown";
-import { buildWorkspaceFileDownloadUrl, buildWorkspaceFilePreviewUrl } from "../../workspaceFileUrl";
+import {
+  buildWorkspaceFileDownloadUrl,
+  buildWorkspaceFilePreviewUrl,
+} from "../../workspaceFileUrl";
 import type { FilePreviewTarget } from "../../preview/filePreviewStore";
 
 const HTML_EXTENSIONS = new Set(["html", "htm"]);
-const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico", "avif"]);
+const IMAGE_EXTENSIONS = new Set([
+  "png",
+  "jpg",
+  "jpeg",
+  "gif",
+  "webp",
+  "svg",
+  "bmp",
+  "ico",
+  "avif",
+]);
 const PDF_EXTENSIONS = new Set(["pdf"]);
 const MARKDOWN_EXTENSIONS = new Set(["md", "markdown", "mdx"]);
 const TEXT_EXTENSIONS_TO_LANG: Record<string, string> = {

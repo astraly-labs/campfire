@@ -380,8 +380,28 @@ function attachThreadDetailSubscription(entry: ThreadDetailSubscriptionEntry): b
       }
       applyEnvironmentThreadDetailEvent(item.event, entry.environmentId);
     },
+    {
+      onError: (error) => {
+        if (isThreadNotFoundSubscriptionError(error)) {
+          useStore.getState().markThreadMissing(entry.environmentId, entry.threadId);
+        }
+      },
+    },
   );
   return true;
+}
+
+/**
+ * Detect server-side `OrchestrationGetSnapshotError` "Thread X was not
+ * found" responses. Matches on substring rather than instanceof because
+ * the error reaches us as a plain `Error` after RPC serialization.
+ */
+function isThreadNotFoundSubscriptionError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : typeof error === "string" ? error : null;
+  if (!message) {
+    return false;
+  }
+  return /thread .* (?:was )?not found/i.test(message);
 }
 
 function watchThreadDetailSubscriptionConnection(entry: ThreadDetailSubscriptionEntry): void {

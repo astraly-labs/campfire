@@ -23,7 +23,7 @@ export interface AvatarStackProps {
   readonly className?: string;
 }
 
-const SOFT_PALETTE: ReadonlyArray<{ bg: string; text: string }> = [
+export const SOFT_PALETTE: ReadonlyArray<{ bg: string; text: string }> = [
   { bg: "bg-amber-200", text: "text-amber-900" },
   { bg: "bg-emerald-200", text: "text-emerald-900" },
   { bg: "bg-sky-200", text: "text-sky-900" },

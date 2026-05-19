@@ -220,6 +220,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           worktreePath: command.worktreePath,
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
+          createdBy: command.createdBy ?? null,
         },
       };
     }
@@ -411,6 +412,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           attachments: command.message.attachments,
           turnId: null,
           streaming: false,
+          author: command.message.author,
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
         },
@@ -600,6 +602,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           text: command.delta,
           turnId: command.turnId ?? null,
           streaming: true,
+          author: null,
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
         },
@@ -627,6 +630,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           text: "",
           turnId: command.turnId ?? null,
           streaming: false,
+          author: null,
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
         },

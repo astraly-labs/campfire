@@ -21,6 +21,17 @@ import {
   TurnId,
 } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
+import { UserRef } from "./user.ts";
+
+/**
+ * Author of a user-authored message. Captured at write time and denormalized
+ * into the message + event payload so historical bubbles still render the
+ * correct attribution if the user later renames themselves. Optional with
+ * `null` carrying the explicit "unattributed" signal — used by assistant /
+ * system messages and by user prompts authored before per-user attribution
+ * shipped.
+ */
+const OrchestrationMessageAuthorField = Schema.optional(Schema.NullOr(UserRef));
 
 export const ORCHESTRATION_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
@@ -220,6 +231,7 @@ export const OrchestrationMessage = Schema.Struct({
   attachments: Schema.optional(Schema.Array(ChatAttachment)),
   turnId: Schema.NullOr(TurnId),
   streaming: Schema.Boolean,
+  author: OrchestrationMessageAuthorField,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
@@ -346,6 +358,7 @@ export const OrchestrationThread = Schema.Struct({
   updatedAt: IsoDateTime,
   archivedAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   deletedAt: Schema.NullOr(IsoDateTime),
+  createdBy: Schema.NullOr(UserRef).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   messages: Schema.Array(OrchestrationMessage),
   proposedPlans: Schema.Array(OrchestrationProposedPlan).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
@@ -392,6 +405,7 @@ export const OrchestrationThreadShell = Schema.Struct({
   updatedAt: IsoDateTime,
   archivedAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   session: Schema.NullOr(OrchestrationSession),
+  createdBy: Schema.NullOr(UserRef).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   latestUserMessageAt: Schema.NullOr(IsoDateTime),
   hasPendingApprovals: Schema.Boolean,
   hasPendingUserInput: Schema.Boolean,
@@ -493,6 +507,9 @@ const ThreadCreateCommand = Schema.Struct({
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
   createdAt: IsoDateTime,
+  // Server-injected at dispatch time from the authenticated session identity.
+  // Clients should not set this; the WS handler overwrites any client value.
+  createdBy: Schema.optional(UserRef),
 });
 
 const ThreadDeleteCommand = Schema.Struct({
@@ -573,6 +590,7 @@ export const ThreadTurnStartCommand = Schema.Struct({
     role: Schema.Literal("user"),
     text: Schema.String,
     attachments: Schema.Array(ChatAttachment),
+    author: OrchestrationMessageAuthorField,
   }),
   modelSelection: Schema.optional(ModelSelection),
   titleSeed: Schema.optional(TrimmedNonEmptyString),
@@ -594,6 +612,7 @@ const ClientThreadTurnStartCommand = Schema.Struct({
     role: Schema.Literal("user"),
     text: Schema.String,
     attachments: Schema.Array(UploadChatAttachment),
+    author: OrchestrationMessageAuthorField,
   }),
   modelSelection: Schema.optional(ModelSelection),
   titleSeed: Schema.optional(TrimmedNonEmptyString),
@@ -837,6 +856,9 @@ export const ThreadCreatedPayload = Schema.Struct({
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
+  // Auto-assigned creator. Null on events emitted before per-thread
+  // attribution shipped, or when no authenticated identity was available.
+  createdBy: Schema.NullOr(UserRef).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
 });
 
 export const ThreadDeletedPayload = Schema.Struct({
@@ -886,6 +908,7 @@ export const ThreadMessageSentPayload = Schema.Struct({
   attachments: Schema.optional(Schema.Array(ChatAttachment)),
   turnId: Schema.NullOr(TurnId),
   streaming: Schema.Boolean,
+  author: OrchestrationMessageAuthorField,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });

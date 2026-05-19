@@ -585,6 +585,8 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             pendingUserInputCount: 0,
             hasActionableProposedPlan: 0,
             deletedAt: null,
+            createdByUserId: event.payload.createdBy?.id ?? null,
+            createdByDisplayName: event.payload.createdBy?.displayName ?? null,
           });
           return;
 
@@ -815,6 +817,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             text: nextText,
             ...(nextAttachments !== undefined ? { attachments: [...nextAttachments] } : {}),
             isStreaming: event.payload.streaming,
+            author: event.payload.author ?? previousMessage?.author ?? null,
             createdAt: previousMessage?.createdAt ?? event.payload.createdAt,
             updatedAt: event.payload.updatedAt,
           });

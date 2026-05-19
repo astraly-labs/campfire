@@ -47,7 +47,9 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           pending_approval_count,
           pending_user_input_count,
           has_actionable_proposed_plan,
-          deleted_at
+          deleted_at,
+          created_by_user_id,
+          created_by_display_name
         )
         VALUES (
           ${row.threadId},
@@ -66,7 +68,9 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           ${row.pendingApprovalCount},
           ${row.pendingUserInputCount},
           ${row.hasActionableProposedPlan},
-          ${row.deletedAt}
+          ${row.deletedAt},
+          ${row.createdByUserId},
+          ${row.createdByDisplayName}
         )
         ON CONFLICT (thread_id)
         DO UPDATE SET
@@ -85,7 +89,9 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           pending_approval_count = excluded.pending_approval_count,
           pending_user_input_count = excluded.pending_user_input_count,
           has_actionable_proposed_plan = excluded.has_actionable_proposed_plan,
-          deleted_at = excluded.deleted_at
+          deleted_at = excluded.deleted_at,
+          created_by_user_id = excluded.created_by_user_id,
+          created_by_display_name = excluded.created_by_display_name
       `,
   });
 
@@ -111,7 +117,9 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
-          deleted_at AS "deletedAt"
+          deleted_at AS "deletedAt",
+          created_by_user_id AS "createdByUserId",
+          created_by_display_name AS "createdByDisplayName"
         FROM projection_threads
         WHERE thread_id = ${threadId}
       `,
@@ -139,7 +147,9 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
-          deleted_at AS "deletedAt"
+          deleted_at AS "deletedAt",
+          created_by_user_id AS "createdByUserId",
+          created_by_display_name AS "createdByDisplayName"
         FROM projection_threads
         WHERE project_id = ${projectId}
         ORDER BY created_at ASC, thread_id ASC

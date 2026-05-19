@@ -264,6 +264,7 @@ export function projectEvent(
             updatedAt: payload.updatedAt,
             archivedAt: null,
             deletedAt: null,
+            createdBy: payload.createdBy,
             messages: [],
             activities: [],
             checkpoints: [],

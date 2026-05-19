@@ -134,69 +134,84 @@ function DrawerBody({
     if (!currentUser) return;
 
     let cancelled = false;
+    let unsubscribe: (() => void) | undefined;
 
-    void api.sideThread
-      .dispatchCommand({
-        type: "sidethread.create",
-        commandId: CommandId.make(`st-create:${sideThreadId}:${Date.now()}`),
-        sideThreadId,
-        parentThreadId: anchor.parentThreadId,
-        anchor: { kind: "message", messageId: anchor.anchorMessageId },
-        createdBy: currentUser,
-      })
-      .catch(() => {
-        // Already exists → ignore. Other failures will surface via subscribe.
-      });
-
-    const unsubscribe = api.sideThread.subscribe({ sideThreadId }, (item: SideThreadStreamItem) => {
-      if (cancelled) return;
-      if (item.kind === "snapshot") {
-        setSideThread(item.snapshot.sideThread);
-      } else {
-        const event = item.event;
-        if (event.type === "sidethread.created") {
-          const created = event.payload;
-          setSideThread({
-            id: created.sideThreadId,
-            parentThreadId: created.parentThreadId,
-            anchor: created.anchor,
-            createdBy: created.createdBy,
-            createdAt: event.occurredAt,
-            updatedAt: event.occurredAt,
-            archivedAt: null,
-            messages: [],
-          });
-        } else if (event.type === "sidethread.message-posted") {
-          const posted = event.payload;
-          setSideThread((current) =>
-            current
-              ? {
-                  ...current,
-                  updatedAt: event.occurredAt,
-                  messages: [
-                    ...current.messages,
-                    {
-                      id: posted.messageId,
-                      author: posted.author,
-                      text: posted.text,
-                      createdAt: event.occurredAt,
-                      updatedAt: event.occurredAt,
-                      mentions: posted.mentions ?? [],
-                    },
-                  ],
-                }
-              : current,
-          );
-          // Re-mark visited so the anchor badge doesn't pop back on every new
-          // mention while the drawer is open.
-          markVisited(sideThreadId, event.occurredAt);
-        }
+    // Await the create dispatch before opening the subscription. The two
+    // calls take different server paths — dispatchCommand goes through a
+    // serialized command queue, subscribe reads the in-memory read model
+    // synchronously. If subscribe wins the race, the server can't find the
+    // aggregate yet and the stream dies with a fatal error (no retry), so
+    // subsequent message events never reach the client until a refresh.
+    void (async () => {
+      try {
+        await api.sideThread.dispatchCommand({
+          type: "sidethread.create",
+          commandId: CommandId.make(`st-create:${sideThreadId}:${Date.now()}`),
+          sideThreadId,
+          parentThreadId: anchor.parentThreadId,
+          anchor: { kind: "message", messageId: anchor.anchorMessageId },
+          createdBy: currentUser,
+        });
+      } catch {
+        // Already exists (re-opening) → ignore. Other failures will surface
+        // via subscribe below.
       }
-    });
+
+      if (cancelled) return;
+
+      unsubscribe = api.sideThread.subscribe(
+        { sideThreadId },
+        (item: SideThreadStreamItem) => {
+          if (cancelled) return;
+          if (item.kind === "snapshot") {
+            setSideThread(item.snapshot.sideThread);
+          } else {
+            const event = item.event;
+            if (event.type === "sidethread.created") {
+              const created = event.payload;
+              setSideThread({
+                id: created.sideThreadId,
+                parentThreadId: created.parentThreadId,
+                anchor: created.anchor,
+                createdBy: created.createdBy,
+                createdAt: event.occurredAt,
+                updatedAt: event.occurredAt,
+                archivedAt: null,
+                messages: [],
+              });
+            } else if (event.type === "sidethread.message-posted") {
+              const posted = event.payload;
+              setSideThread((current) =>
+                current
+                  ? {
+                      ...current,
+                      updatedAt: event.occurredAt,
+                      messages: [
+                        ...current.messages,
+                        {
+                          id: posted.messageId,
+                          author: posted.author,
+                          text: posted.text,
+                          createdAt: event.occurredAt,
+                          updatedAt: event.occurredAt,
+                          mentions: posted.mentions ?? [],
+                        },
+                      ],
+                    }
+                  : current,
+              );
+              // Re-mark visited so the anchor badge doesn't pop back on every new
+              // mention while the drawer is open.
+              markVisited(sideThreadId, event.occurredAt);
+            }
+          }
+        },
+      );
+    })();
 
     return () => {
       cancelled = true;
-      unsubscribe();
+      unsubscribe?.();
     };
   }, [api, currentUser, sideThreadId, anchor.parentThreadId, anchor.anchorMessageId, markVisited]);
 

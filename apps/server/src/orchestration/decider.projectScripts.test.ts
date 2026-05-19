@@ -148,6 +148,7 @@ describe("decider project scripts", () => {
           worktreePath: null,
           createdAt: now,
           updatedAt: now,
+          createdBy: null,
         },
       }),
     );
@@ -249,6 +250,7 @@ describe("decider project scripts", () => {
           worktreePath: null,
           createdAt: now,
           updatedAt: now,
+          createdBy: null,
         },
       }),
     );
@@ -331,6 +333,7 @@ describe("decider project scripts", () => {
           worktreePath: null,
           createdAt: now,
           updatedAt: now,
+          createdBy: null,
         },
       }),
     );

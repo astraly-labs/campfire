@@ -16,6 +16,7 @@ import type {
   CheckpointRef,
   ProviderInteractionMode,
   RuntimeMode,
+  UserRef,
 } from "@t3tools/contracts";
 
 export type SessionPhase = "disconnected" | "connecting" | "ready" | "running";
@@ -49,6 +50,12 @@ export interface ChatMessage {
   text: string;
   attachments?: ChatAttachment[];
   turnId?: TurnId | null;
+  /**
+   * Denormalized author captured at send time. `null` for assistant/system
+   * messages and for user prompts authored before per-user attribution
+   * shipped.
+   */
+  author?: UserRef | null;
   createdAt: string;
   completedAt?: string | undefined;
   streaming: boolean;
@@ -115,6 +122,10 @@ export interface Thread {
   worktreePath: string | null;
   turnDiffSummaries: TurnDiffSummary[];
   activities: OrchestrationThreadActivity[];
+  /** Creator of the thread, captured at `thread.create` time. Optional so test
+   * fixtures and threads predating per-thread attribution don't need to spell
+   * it out. */
+  createdBy?: UserRef | null;
 }
 
 export interface ThreadShell {

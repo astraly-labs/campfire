@@ -2,6 +2,14 @@ import { EditorId, type ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import { memo, useCallback, useEffect, useMemo } from "react";
 import { isOpenFavoriteEditorShortcut, shortcutLabelForCommand } from "../../keybindings";
 import { usePreferredEditor } from "../../editorPreferences";
+import {
+  editorSupportsRemoteSshLaunch,
+  resolveRemoteSshHostFromLocation,
+  resolveRemoteSshLaunchUrl,
+  shouldUseRemoteSshLaunch,
+} from "../../remoteEditorLaunch";
+import { useSettings } from "../../hooks/useSettings";
+import { buildHelixUrl, translateHelixPath } from "../../helixPathTranslation";
 import { ChevronDownIcon, FolderClosedIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import { Group, GroupSeparator } from "../ui/group";
@@ -9,6 +17,7 @@ import { Menu, MenuItem, MenuPopup, MenuShortcut, MenuTrigger } from "../ui/menu
 import {
   AntigravityIcon,
   CursorIcon,
+  HelixIcon,
   Icon,
   KiroIcon,
   TraeIcon,
@@ -137,6 +146,11 @@ const resolveOptions = (platform: string, availableEditors: ReadonlyArray<Editor
       value: "webstorm",
     },
     {
+      label: "Helix",
+      Icon: HelixIcon,
+      value: "helix",
+    },
+    {
       label: isMacPlatform(platform)
         ? "Finder"
         : isWindowsPlatform(platform)
@@ -158,23 +172,75 @@ export const OpenInPicker = memo(function OpenInPicker({
   availableEditors: ReadonlyArray<EditorId>;
   openInCwd: string | null;
 }) {
-  const [preferredEditor, setPreferredEditor] = usePreferredEditor(availableEditors);
+  const helixPathMappings = useSettings((s) => s.helixPathMappings);
+  // Helix is a client-launched editor: visible only when the user has at
+  // least one path mapping configured. The server never reports it in
+  // `availableEditors` (see resolveAvailableEditors).
+  const effectiveAvailableEditors = useMemo<ReadonlyArray<EditorId>>(
+    () =>
+      helixPathMappings.length > 0
+        ? [...availableEditors, "helix" satisfies EditorId]
+        : availableEditors,
+    [availableEditors, helixPathMappings.length],
+  );
+  const [preferredEditor, setPreferredEditor] = usePreferredEditor(effectiveAvailableEditors);
   const options = useMemo(
-    () => resolveOptions(navigator.platform, availableEditors),
-    [availableEditors],
+    () => resolveOptions(navigator.platform, effectiveAvailableEditors),
+    [effectiveAvailableEditors],
   );
   const primaryOption = options.find(({ value }) => value === preferredEditor) ?? null;
 
+  const isRemoteBrowser = shouldUseRemoteSshLaunch();
+  const sshHost = isRemoteBrowser ? resolveRemoteSshHostFromLocation() : "";
+  // Helix has its own client-side launch path (helix:// URL scheme +
+  // sshfs-mounted translation) that works regardless of remote backend, so
+  // it shouldn't be treated as "remote-unsupported".
+  const editorWorksFromRemoteBrowser = useCallback(
+    (editor: EditorId) => editor === "helix" || editorSupportsRemoteSshLaunch(editor),
+    [],
+  );
+  const preferredEditorBlockedByRemote =
+    isRemoteBrowser && preferredEditor !== null && !editorWorksFromRemoteBrowser(preferredEditor);
+
+  const launchEditor = useCallback(
+    (editor: EditorId) => {
+      if (!openInCwd) return false;
+
+      if (editor === "helix") {
+        const localPath = translateHelixPath(openInCwd, helixPathMappings);
+        if (!localPath) {
+          console.warn("[Helix] no path mapping matches", openInCwd);
+          return false;
+        }
+        window.location.assign(buildHelixUrl(localPath));
+        return true;
+      }
+
+      if (isRemoteBrowser) {
+        const url = resolveRemoteSshLaunchUrl({ editor, cwd: openInCwd, sshHost });
+        if (!url) return false;
+        // Navigate the top window so the OS resolves the cursor:// / vscode:// handler.
+        // Using assign() rather than window.open keeps us inside the same tab and avoids popup blockers.
+        window.location.assign(url);
+        return true;
+      }
+
+      const api = readLocalApi();
+      if (!api) return false;
+      void api.shell.openInEditor(openInCwd, editor);
+      return true;
+    },
+    [openInCwd, isRemoteBrowser, sshHost, helixPathMappings],
+  );
+
   const openInEditor = useCallback(
     (editorId: EditorId | null) => {
-      const api = readLocalApi();
-      if (!api || !openInCwd) return;
       const editor = editorId ?? preferredEditor;
       if (!editor) return;
-      void api.shell.openInEditor(openInCwd, editor);
+      if (!launchEditor(editor)) return;
       setPreferredEditor(editor);
     },
-    [preferredEditor, openInCwd, setPreferredEditor],
+    [preferredEditor, launchEditor, setPreferredEditor],
   );
 
   const openFavoriteEditorShortcutLabel = useMemo(
@@ -184,25 +250,37 @@ export const OpenInPicker = memo(function OpenInPicker({
 
   useEffect(() => {
     const handler = (e: globalThis.KeyboardEvent) => {
-      const api = readLocalApi();
       if (!isOpenFavoriteEditorShortcut(e, keybindings)) return;
-      if (!api || !openInCwd) return;
-      if (!preferredEditor) return;
+      if (!openInCwd || !preferredEditor) return;
+      if (isRemoteBrowser && !editorWorksFromRemoteBrowser(preferredEditor)) return;
 
       e.preventDefault();
-      void api.shell.openInEditor(openInCwd, preferredEditor);
+      launchEditor(preferredEditor);
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [preferredEditor, keybindings, openInCwd]);
+  }, [
+    preferredEditor,
+    keybindings,
+    openInCwd,
+    isRemoteBrowser,
+    launchEditor,
+    editorWorksFromRemoteBrowser,
+  ]);
+
+  const remoteDisabledTitle = isRemoteBrowser
+    ? `Only Cursor and VS Code-family editors can open over SSH-remote (host: ${sshHost || "unknown"}).`
+    : undefined;
+  const primaryButtonTitle = preferredEditorBlockedByRemote ? remoteDisabledTitle : undefined;
 
   return (
     <Group aria-label="Subscription actions">
       <Button
         size="xs"
         variant="outline"
-        disabled={!preferredEditor || !openInCwd}
+        disabled={!preferredEditor || !openInCwd || preferredEditorBlockedByRemote}
         onClick={() => openInEditor(preferredEditor)}
+        title={primaryButtonTitle}
       >
         {primaryOption?.Icon && <primaryOption.Icon aria-hidden="true" className="size-3.5" />}
         <span className="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5">
@@ -216,15 +294,28 @@ export const OpenInPicker = memo(function OpenInPicker({
         </MenuTrigger>
         <MenuPopup align="end">
           {options.length === 0 && <MenuItem disabled>No installed editors found</MenuItem>}
-          {options.map(({ label, Icon, value }) => (
-            <MenuItem key={value} onClick={() => openInEditor(value)}>
-              <Icon aria-hidden="true" className="text-muted-foreground" />
-              {label}
-              {value === preferredEditor && openFavoriteEditorShortcutLabel && (
-                <MenuShortcut>{openFavoriteEditorShortcutLabel}</MenuShortcut>
-              )}
-            </MenuItem>
-          ))}
+          {options.map(({ label, Icon, value }) => {
+            const remoteUnsupported = isRemoteBrowser && !editorWorksFromRemoteBrowser(value);
+            return (
+              <MenuItem
+                key={value}
+                disabled={remoteUnsupported}
+                title={remoteUnsupported ? remoteDisabledTitle : undefined}
+                onClick={() => openInEditor(value)}
+              >
+                <Icon aria-hidden="true" className="text-muted-foreground" />
+                {label}
+                {remoteUnsupported && (
+                  <span className="ml-auto text-muted-foreground text-xs">no remote-SSH</span>
+                )}
+                {!remoteUnsupported &&
+                  value === preferredEditor &&
+                  openFavoriteEditorShortcutLabel && (
+                    <MenuShortcut>{openFavoriteEditorShortcutLabel}</MenuShortcut>
+                  )}
+              </MenuItem>
+            );
+          })}
         </MenuPopup>
       </Menu>
     </Group>

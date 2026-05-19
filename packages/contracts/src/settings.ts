@@ -39,6 +39,16 @@ export const SidebarThreadPreviewCount = Schema.Int.check(
 export type SidebarThreadPreviewCount = typeof SidebarThreadPreviewCount.Type;
 export const DEFAULT_SIDEBAR_THREAD_PREVIEW_COUNT: SidebarThreadPreviewCount = 6;
 
+// Maps a remote workspace path prefix (as seen by the server, e.g. on the
+// shared Mac mini) to a local mount prefix (e.g. an sshfs mountpoint on the
+// user's laptop). Used by the Helix "Open" action to launch `hx` locally
+// against files served from a remote backend.
+export const HelixPathMapping = Schema.Struct({
+  remotePrefix: TrimmedNonEmptyString,
+  localPrefix: TrimmedNonEmptyString,
+});
+export type HelixPathMapping = typeof HelixPathMapping.Type;
+
 export const ClientSettingsSchema = Schema.Struct({
   autoOpenPlanSidebar: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   confirmThreadArchive: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
@@ -91,6 +101,9 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   timestampFormat: TimestampFormat.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_TIMESTAMP_FORMAT)),
+  ),
+  helixPathMappings: Schema.Array(HelixPathMapping).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
   ),
 });
 export type ClientSettings = typeof ClientSettingsSchema.Type;
@@ -509,5 +522,6 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarThreadSortOrder: Schema.optionalKey(SidebarThreadSortOrder),
   sidebarThreadPreviewCount: Schema.optionalKey(SidebarThreadPreviewCount),
   timestampFormat: Schema.optionalKey(TimestampFormat),
+  helixPathMappings: Schema.optionalKey(Schema.Array(HelixPathMapping)),
 });
 export type ClientSettingsPatch = typeof ClientSettingsPatch.Type;

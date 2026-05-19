@@ -24,6 +24,15 @@ interface SubscribeOptions {
   readonly retryDelay?: Duration.Input;
   readonly onResubscribe?: () => void;
   readonly tag?: string;
+  /**
+   * Fires once when the subscription terminates due to a non-transport
+   * (i.e. domain / RPC-level) error — e.g. server-side "Thread X was not
+   * found". After this fires, the subscription will not auto-retry.
+   *
+   * Transport disconnect errors are handled separately via the reconnect
+   * loop and do NOT invoke this callback.
+   */
+  readonly onError?: (error: unknown) => void;
 }
 
 interface RequestOptions {
@@ -176,6 +185,11 @@ export class WsTransport {
             console.warn("WebSocket RPC subscription failed", {
               error: formattedError,
             });
+            try {
+              options?.onError?.(error);
+            } catch {
+              // Swallow error-hook errors so we always exit the retry loop cleanly.
+            }
             return;
           }
 

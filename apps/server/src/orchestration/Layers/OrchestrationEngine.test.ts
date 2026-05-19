@@ -147,6 +147,7 @@ describe("OrchestrationEngine", () => {
           updatedAt: "2026-03-03T00:00:03.000Z",
           archivedAt: null,
           deletedAt: null,
+          createdBy: null,
           messages: [],
           proposedPlans: [],
           activities: [],

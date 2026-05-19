@@ -75,10 +75,27 @@ export function useSideThreadSummaryFor(messageId: MessageId): SideThreadSummary
 }
 
 /**
+ * Stable prefix on every derived side-thread id. Other stores (notably
+ * `uiStateStore`) rely on this to distinguish side-thread keys from regular
+ * agent-thread keys when pruning/persisting per-thread UI state.
+ */
+export const SIDE_THREAD_KEY_PREFIX = "st-";
+
+/**
  * Deterministic side-thread id derived from the anchor. v0 enforces a single
  * side-thread per (parentThread, message) so both ends compute the same id
  * and converge on the same aggregate without server-side discovery.
  */
 export function deriveSideThreadId(anchor: SideThreadAnchor): string {
-  return `st-${anchor.parentThreadId}-${anchor.anchorMessageId}`;
+  return `${SIDE_THREAD_KEY_PREFIX}${anchor.parentThreadId}-${anchor.anchorMessageId}`;
+}
+
+/**
+ * True for any string id produced by {@link deriveSideThreadId}. Useful to
+ * decide whether a `threadLastVisitedAtById` entry belongs to the regular
+ * thread namespace (re-seeded from snapshot) or the side-thread namespace
+ * (owned by the side-thread drawer + inbox, persisted locally).
+ */
+export function isSideThreadKey(threadId: string): boolean {
+  return threadId.startsWith(SIDE_THREAD_KEY_PREFIX);
 }

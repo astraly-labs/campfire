@@ -94,6 +94,7 @@ import {
   type Thread,
   type TurnDiffSummary,
 } from "../types";
+import { useCurrentUser } from "../identity/identityStore";
 import { useTheme } from "../hooks/useTheme";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { useCommandPaletteStore } from "../commandPaletteStore";
@@ -647,6 +648,13 @@ export default function ChatView(props: ChatViewProps) {
     select: (params) => parseDiffRouteSearch(params),
   });
   const { resolvedTheme } = useTheme();
+  // Author identity for outbound prompts. May be null during the brief window
+  // before identityStore resolves the first `getCurrentUser` round-trip — we
+  // still send the command in that case (server stays the source of truth via
+  // its WS auth context) and the bubble just renders without an avatar.
+  const currentUser = useCurrentUser();
+  const currentUserRef = useRef(currentUser);
+  currentUserRef.current = currentUser;
   // Granular store selectors — avoid subscribing to prompt changes.
   const composerRuntimeMode = useComposerDraftStore(
     (store) => store.getComposerDraft(composerDraftTarget)?.runtimeMode ?? null,
@@ -2751,6 +2759,7 @@ export default function ChatView(props: ChatViewProps) {
     setShowScrollToBottom(false);
     await legendListRef.current?.scrollToEnd?.({ animated: false });
 
+    const authorForSend = currentUserRef.current;
     setOptimisticUserMessages((existing) => [
       ...existing,
       {
@@ -2758,6 +2767,7 @@ export default function ChatView(props: ChatViewProps) {
         role: "user",
         text: outgoingMessageText,
         ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
+        author: authorForSend,
         createdAt: messageCreatedAt,
         streaming: false,
       },
@@ -2867,6 +2877,7 @@ export default function ChatView(props: ChatViewProps) {
           role: "user",
           text: outgoingMessageText,
           attachments: turnAttachments,
+          author: authorForSend,
         },
         modelSelection: ctxSelectedModelSelection,
         titleSeed: title,
@@ -3146,12 +3157,14 @@ export default function ChatView(props: ChatViewProps) {
       setShowScrollToBottom(false);
       await legendListRef.current?.scrollToEnd?.({ animated: false });
 
+      const authorForSend = currentUserRef.current;
       setOptimisticUserMessages((existing) => [
         ...existing,
         {
           id: messageIdForSend,
           role: "user",
           text: outgoingMessageText,
+          author: authorForSend,
           createdAt: messageCreatedAt,
           streaming: false,
         },
@@ -3182,6 +3195,7 @@ export default function ChatView(props: ChatViewProps) {
             role: "user",
             text: outgoingMessageText,
             attachments: [],
+            author: authorForSend,
           },
           modelSelection: ctxSelectedModelSelection,
           titleSeed: activeThread.title,
@@ -3520,6 +3534,7 @@ export default function ChatView(props: ChatViewProps) {
           activeThreadId={activeThread.id}
           {...(routeKind === "draft" && draftId ? { draftId } : {})}
           activeThreadTitle={activeThread.title}
+          assignee={isServerThread ? (serverThread.createdBy ?? null) : null}
           activeProjectName={activeProject?.name}
           isGitRepo={isGitRepo}
           openInCwd={gitCwd}
@@ -3744,10 +3759,7 @@ export default function ChatView(props: ChatViewProps) {
 
         {/* Side thread (Slack-style anchored conversation) */}
         {routeKind === "server" ? (
-          <ParentSideThreadSubscription
-            environmentId={environmentId}
-            parentThreadId={threadId}
-          />
+          <ParentSideThreadSubscription environmentId={environmentId} parentThreadId={threadId} />
         ) : null}
         <SideThreadDrawer environmentId={environmentId} />
 

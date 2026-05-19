@@ -4,6 +4,7 @@
  * and pops the side-thread drawer on the anchor message.
  */
 import { scopeThreadRef } from "@t3tools/client-runtime";
+import type { ScopedThreadRef } from "@t3tools/contracts";
 import type { InboxItem, ThreadId } from "@t3tools/contracts";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { AtSignIcon, InboxIcon } from "lucide-react";
@@ -13,14 +14,26 @@ import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../components/ui/empty";
 import { SidebarInset, SidebarTrigger } from "../components/ui/sidebar";
+import { toastManager } from "../components/ui/toast";
 import { ensureEnvironmentApi, readEnvironmentApi } from "../environmentApi";
 import { usePrimaryEnvironmentId } from "../environments/primary";
+import { retainThreadDetailSubscription } from "../environments/runtime/service";
 import { isInboxItemUnread, useInboxStore } from "../inbox/inboxStore";
+import { selectThreadExistsByRef, selectThreadMissingByRef, useStore } from "../store";
 import { buildThreadRouteParams } from "../threadRoutes";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { useUiStateStore } from "../uiStateStore";
 import { useSideThreadStore } from "../sidethread/sideThreadStore";
 import { cn } from "~/lib/utils";
+
+/**
+ * How long we wait for `subscribeThread` to either deliver a snapshot or
+ * fail with "not found" before letting the navigation proceed anyway. If
+ * the snapshot is just slow (good network, just not yet hydrated), the
+ * thread route's own 2.5s grace will catch the gap. If it's truly missing,
+ * the user sees the toast within this window and stays on /inbox.
+ */
+const MISSING_THREAD_DETECTION_TIMEOUT_MS = 1_500;
 
 function InboxRouteView() {
   const environmentId = usePrimaryEnvironmentId();
@@ -41,7 +54,7 @@ function InboxRouteView() {
 
   const grouped = useMemo(() => groupItemsByParentThread(items), [items]);
 
-  const openInboxItem = (item: InboxItem) => {
+  const openInboxItem = async (item: InboxItem) => {
     if (!environmentId) return;
     // Older mentions were created when `SideThreadAnchorButton` was passed
     // `routeThreadKey` (the scoped `<env>:<thread>` form) as its ThreadId
@@ -51,19 +64,57 @@ function InboxRouteView() {
       item.parentThreadId,
       environmentId,
     ) as ThreadId;
-    const params = buildThreadRouteParams(
-      scopeThreadRef(environmentId, unscopedParentThreadId),
-    );
-    openSideThread({
-      parentThreadId: unscopedParentThreadId,
-      anchorMessageId: item.anchorMessageId as unknown as Parameters<
-        typeof openSideThread
-      >[0]["anchorMessageId"],
-    });
-    void navigate({
-      to: "/$environmentId/$threadId",
-      params,
-    });
+    const threadRef = scopeThreadRef(environmentId, unscopedParentThreadId);
+    const params = buildThreadRouteParams(threadRef);
+
+    const proceed = () => {
+      openSideThread({
+        parentThreadId: unscopedParentThreadId,
+        anchorMessageId: item.anchorMessageId as unknown as Parameters<
+          typeof openSideThread
+        >[0]["anchorMessageId"],
+      });
+      void navigate({
+        to: "/$environmentId/$threadId",
+        params,
+      });
+    };
+
+    const showMissingToast = () => {
+      toastManager.add({
+        type: "error",
+        title: "Conversation introuvable",
+        description:
+          "Le thread mentionné a été supprimé. Cette mention pointe vers une conversation qui n'existe plus.",
+      });
+    };
+
+    const currentState = useStore.getState();
+    if (selectThreadMissingByRef(currentState, threadRef)) {
+      showMissingToast();
+      return;
+    }
+    if (selectThreadExistsByRef(currentState, threadRef)) {
+      proceed();
+      return;
+    }
+
+    // Thread not yet hydrated — race subscribe-snapshot vs missing-flag vs
+    // a short timeout. Retain the subscription here so it survives the
+    // navigation; the route's own retain call will reuse the same entry.
+    const release = retainThreadDetailSubscription(environmentId, unscopedParentThreadId);
+    try {
+      const outcome = await waitForThreadResolution(threadRef);
+      if (outcome === "missing") {
+        showMissingToast();
+        return;
+      }
+      // "exists" or "timeout" — proceed (the route fallback handles late
+      // arrivals of either signal).
+      proceed();
+    } finally {
+      release();
+    }
   };
 
   return (
@@ -128,7 +179,9 @@ function InboxRouteView() {
                       <li key={item.sideThreadId}>
                         <button
                           type="button"
-                          onClick={() => openInboxItem(item)}
+                          onClick={() => {
+                            void openInboxItem(item);
+                          }}
                           className={cn(
                             "flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                             unread && "bg-amber-500/5",
@@ -182,6 +235,41 @@ function InboxRouteView() {
 function stripEnvironmentPrefix(threadId: ThreadId, environmentId: string): ThreadId {
   const prefix = `${environmentId}:`;
   return (threadId.startsWith(prefix) ? threadId.slice(prefix.length) : threadId) as ThreadId;
+}
+
+type ThreadResolution = "exists" | "missing" | "timeout";
+
+/**
+ * Resolves when the store transitions the given thread to either "exists"
+ * (snapshot arrived) or "missing" (subscribeThread returned not-found), or
+ * when the short detection window elapses. The caller is responsible for
+ * retaining the underlying subscription for the duration of the wait.
+ */
+function waitForThreadResolution(threadRef: ScopedThreadRef): Promise<ThreadResolution> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const settle = (outcome: ThreadResolution) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timeoutId);
+      unsubscribe();
+      resolve(outcome);
+    };
+
+    const unsubscribe = useStore.subscribe((state) => {
+      if (selectThreadMissingByRef(state, threadRef)) {
+        settle("missing");
+        return;
+      }
+      if (selectThreadExistsByRef(state, threadRef)) {
+        settle("exists");
+      }
+    });
+
+    const timeoutId = window.setTimeout(() => {
+      settle("timeout");
+    }, MISSING_THREAD_DETECTION_TIMEOUT_MS);
+  });
 }
 
 interface ParentThreadGroup {

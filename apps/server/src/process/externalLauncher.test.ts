@@ -799,4 +799,22 @@ it.layer(NodeServices.layer)("resolveAvailableEditors", (it) => {
     });
     assert.deepEqual(editors, []);
   });
+
+  it("never surfaces client-side editors (e.g. helix)", () => {
+    const editors = resolveAvailableEditors("darwin", { PATH: "/usr/bin:/bin" });
+    assert.equal(editors.includes("helix"), false);
+  });
+});
+
+it.layer(NodeServices.layer)("resolveEditorLaunch (client-side editors)", (it) => {
+  it.effect("rejects helix because it must be launched client-side", () =>
+    Effect.gen(function* () {
+      const result = yield* resolveEditorLaunch(
+        { cwd: "/tmp/workspace", editor: "helix" },
+        "darwin",
+        { PATH: "" },
+      ).pipe(Effect.result);
+      assert.equal(result._tag, "Failure");
+    }),
+  );
 });

@@ -13,6 +13,7 @@ import {
   ThreadId,
   TurnId,
   IsoDateTime,
+  UserRef,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import * as Context from "effect/Context";
@@ -29,6 +30,7 @@ export const ProjectionThreadMessage = Schema.Struct({
   text: Schema.String,
   attachments: Schema.optional(Schema.Array(ChatAttachment)),
   isStreaming: Schema.Boolean,
+  author: Schema.optional(Schema.NullOr(UserRef)),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });

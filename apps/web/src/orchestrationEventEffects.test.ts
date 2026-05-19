@@ -57,6 +57,7 @@ describe("deriveOrchestrationBatchEffects", () => {
         worktreePath: null,
         createdAt: "2026-02-27T00:00:00.000Z",
         updatedAt: "2026-02-27T00:00:00.000Z",
+        createdBy: null,
       }),
       makeEvent("thread.deleted", {
         threadId: deletedThreadId,
@@ -94,6 +95,7 @@ describe("deriveOrchestrationBatchEffects", () => {
         worktreePath: null,
         createdAt: "2026-02-27T00:00:02.000Z",
         updatedAt: "2026-02-27T00:00:02.000Z",
+        createdBy: null,
       }),
       makeEvent("thread.turn-diff-completed", {
         threadId,

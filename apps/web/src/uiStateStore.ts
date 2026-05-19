@@ -1,6 +1,8 @@
 import { Debouncer } from "@tanstack/react-pacer";
 import { create } from "zustand";
 
+import { isSideThreadKey } from "./sidethread/sideThreadStore";
+
 export const PERSISTED_STATE_KEY = "t3code:ui-state:v1";
 const LEGACY_PERSISTED_STATE_KEYS = [
   "t3code:renderer-state:v8",
@@ -21,6 +23,13 @@ export interface PersistedUiState {
   projectOrderCwds?: string[];
   defaultAdvertisedEndpointKey?: string | null;
   threadChangedFilesExpandedById?: Record<string, Record<string, boolean>>;
+  /**
+   * Side-thread visit timestamps survive page reloads so the inbox + anchor
+   * unread dot don't repaint as "new" every time the renderer remounts.
+   * Regular agent-thread visits are intentionally not persisted: they get
+   * reseeded from the snapshot via `syncThreads` on boot.
+   */
+  sideThreadLastVisitedAtById?: Record<string, string>;
 }
 
 export interface UiProjectState {
@@ -102,10 +111,34 @@ function readPersistedState(): UiState {
       threadChangedFilesExpandedById: sanitizePersistedThreadChangedFilesExpanded(
         parsed.threadChangedFilesExpandedById,
       ),
+      threadLastVisitedAtById: sanitizePersistedSideThreadVisits(
+        parsed.sideThreadLastVisitedAtById,
+      ),
     };
   } catch {
     return initialState;
   }
+}
+
+function sanitizePersistedSideThreadVisits(
+  value: PersistedUiState["sideThreadLastVisitedAtById"],
+): Record<string, string> {
+  if (!value || typeof value !== "object") {
+    return {};
+  }
+  const nextState: Record<string, string> = {};
+  for (const [threadId, visitedAt] of Object.entries(value)) {
+    if (
+      typeof threadId === "string" &&
+      isSideThreadKey(threadId) &&
+      typeof visitedAt === "string" &&
+      visitedAt.length > 0 &&
+      Number.isFinite(Date.parse(visitedAt))
+    ) {
+      nextState[threadId] = visitedAt;
+    }
+  }
+  return nextState;
 }
 
 function sanitizePersistedThreadChangedFilesExpanded(
@@ -184,6 +217,15 @@ export function persistState(state: UiState): void {
         return Object.keys(nextTurns).length > 0 ? [[threadId, nextTurns]] : [];
       }),
     );
+    // Only side-thread visit keys are persisted — regular threads get their
+    // visit state reseeded from the server snapshot on every boot, so writing
+    // them here would just bloat localStorage and risk stale entries for
+    // deleted threads sticking around.
+    const sideThreadLastVisitedAtById = Object.fromEntries(
+      Object.entries(state.threadLastVisitedAtById).filter(([threadId]) =>
+        isSideThreadKey(threadId),
+      ),
+    );
     window.localStorage.setItem(
       PERSISTED_STATE_KEY,
       JSON.stringify({
@@ -192,6 +234,7 @@ export function persistState(state: UiState): void {
         projectOrderCwds,
         defaultAdvertisedEndpointKey: state.defaultAdvertisedEndpointKey,
         threadChangedFilesExpandedById,
+        sideThreadLastVisitedAtById,
       } satisfies PersistedUiState),
     );
     if (!legacyKeysCleanedUp) {
@@ -397,9 +440,15 @@ export function syncProjects(state: UiState, projects: readonly SyncProjectInput
 
 export function syncThreads(state: UiState, threads: readonly SyncThreadInput[]): UiState {
   const retainedThreadIds = new Set(threads.map((thread) => thread.key));
+  // Side-thread visit keys (prefix `st-`) live in the same Record but aren't
+  // owned by the agent-thread snapshot — they're written by the side-thread
+  // drawer when the user opens a thread, and consumed by the inbox + anchor
+  // unread dot. Pruning them here used to reset every side-thread read state
+  // on every `thread.created`/`thread.deleted` event, so the inbox row always
+  // looked unread.
   const nextThreadLastVisitedAtById = Object.fromEntries(
-    Object.entries(state.threadLastVisitedAtById).filter(([threadId]) =>
-      retainedThreadIds.has(threadId),
+    Object.entries(state.threadLastVisitedAtById).filter(
+      ([threadId]) => retainedThreadIds.has(threadId) || isSideThreadKey(threadId),
     ),
   );
   for (const thread of threads) {
@@ -412,8 +461,8 @@ export function syncThreads(state: UiState, threads: readonly SyncThreadInput[])
     }
   }
   const nextThreadChangedFilesExpandedById = Object.fromEntries(
-    Object.entries(state.threadChangedFilesExpandedById).filter(([threadId]) =>
-      retainedThreadIds.has(threadId),
+    Object.entries(state.threadChangedFilesExpandedById).filter(
+      ([threadId]) => retainedThreadIds.has(threadId) || isSideThreadKey(threadId),
     ),
   );
   if (

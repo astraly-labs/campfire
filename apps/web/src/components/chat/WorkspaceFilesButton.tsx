@@ -87,9 +87,7 @@ export function WorkspaceFilesButton({ environmentId, threadId }: Props) {
       </Tooltip>
       <PopoverPopup className="min-w-72 max-w-[28rem]" side="bottom" align="end">
         {!mentions || mentions.orderedFilePaths.length === 0 ? (
-          <div className="px-2 py-1 text-xs text-muted-foreground">
-            No files mentioned yet.
-          </div>
+          <div className="px-2 py-1 text-xs text-muted-foreground">No files mentioned yet.</div>
         ) : (
           <ul className="-mx-2 -my-2 max-h-72 overflow-y-auto">
             {mentions.orderedFilePaths.map((filePath) => {

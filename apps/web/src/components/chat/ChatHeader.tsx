@@ -4,6 +4,7 @@ import {
   type ProjectScript,
   type ResolvedKeybindingsConfig,
   type ThreadId,
+  type UserRef,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime";
 import { memo } from "react";
@@ -18,8 +19,9 @@ import { SidebarTrigger } from "../ui/sidebar";
 import { OpenInPicker } from "./OpenInPicker";
 import { WorkspaceFilesButton } from "./WorkspaceFilesButton";
 import { usePrimaryEnvironmentId } from "../../environments/primary";
-import { AvatarStack } from "../../presence/AvatarStack";
+import { AvatarStack, SOFT_PALETTE, colorIndexForUserId, initialsFor } from "../../presence/AvatarStack";
 import { useViewersOfParentThread } from "../../presence/presenceStore";
+import { cn } from "~/lib/utils";
 
 interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;
@@ -45,6 +47,12 @@ interface ChatHeaderProps {
   onDeleteProjectScript: (scriptId: string) => Promise<void>;
   onToggleTerminal: () => void;
   onToggleDiff: () => void;
+  /**
+   * Creator of the thread, surfaced as an "assigned to" avatar. Null for
+   * threads created before per-thread attribution shipped or for local
+   * drafts that have not yet been dispatched server-side.
+   */
+  assignee: UserRef | null;
 }
 
 export function shouldShowOpenInPicker(input: {
@@ -83,6 +91,7 @@ export const ChatHeader = memo(function ChatHeader({
   onDeleteProjectScript,
   onToggleTerminal,
   onToggleDiff,
+  assignee,
 }: ChatHeaderProps) {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const showOpenInPicker = shouldShowOpenInPicker({
@@ -112,6 +121,7 @@ export const ChatHeader = memo(function ChatHeader({
             No Git
           </Badge>
         )}
+        {assignee !== null && <AssigneeAvatar assignee={assignee} />}
         {viewers.length > 0 && (
           <AvatarStack viewers={viewers} maxVisible={3} size="md" className="ml-1" />
         )}
@@ -142,10 +152,7 @@ export const ChatHeader = memo(function ChatHeader({
             {...(draftId ? { draftId } : {})}
           />
         )}
-        <WorkspaceFilesButton
-          environmentId={activeThreadEnvironmentId}
-          threadId={activeThreadId}
-        />
+        <WorkspaceFilesButton environmentId={activeThreadEnvironmentId} threadId={activeThreadId} />
         <Tooltip>
           <TooltipTrigger
             render={
@@ -198,3 +205,27 @@ export const ChatHeader = memo(function ChatHeader({
     </div>
   );
 });
+
+function AssigneeAvatar({ assignee }: { readonly assignee: UserRef }) {
+  const palette = SOFT_PALETTE[colorIndexForUserId(assignee.id)]!;
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={(props) => (
+          <span
+            {...props}
+            aria-label={`Assigned to ${assignee.displayName}`}
+            className={cn(
+              "inline-flex size-5 shrink-0 items-center justify-center rounded-full text-[9px] font-medium ring-2 ring-background ml-1",
+              palette.bg,
+              palette.text,
+            )}
+          >
+            {initialsFor(assignee.displayName)}
+          </span>
+        )}
+      />
+      <TooltipPopup side="bottom">Assigned to {assignee.displayName}</TooltipPopup>
+    </Tooltip>
+  );
+}

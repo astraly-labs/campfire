@@ -382,6 +382,35 @@ describe("uiStateStore pure functions", () => {
     });
   });
 
+  it("syncThreads preserves side-thread visit state even when absent from the snapshot", () => {
+    // Side-thread keys (`st-…`) aren't owned by the agent-thread snapshot
+    // — they're written by the side-thread drawer when the user reads a
+    // thread, and the inbox + anchor unread dot read them back. Pruning
+    // them here used to mark every side thread as unread again on every
+    // `thread.created`/`thread.deleted` event.
+    const thread1 = ThreadId.make("thread-1");
+    const sideThreadKey = "st-thread-1-anchor-msg-7";
+    const initialState = makeUiState({
+      threadLastVisitedAtById: {
+        [thread1]: "2026-02-25T12:35:00.000Z",
+        [sideThreadKey]: "2026-02-25T12:40:00.000Z",
+      },
+      threadChangedFilesExpandedById: {
+        [sideThreadKey]: { "turn-side": false },
+      },
+    });
+
+    const next = syncThreads(initialState, [{ key: thread1 }]);
+
+    expect(next.threadLastVisitedAtById).toEqual({
+      [thread1]: "2026-02-25T12:35:00.000Z",
+      [sideThreadKey]: "2026-02-25T12:40:00.000Z",
+    });
+    expect(next.threadChangedFilesExpandedById).toEqual({
+      [sideThreadKey]: { "turn-side": false },
+    });
+  });
+
   it("setProjectExpanded updates expansion without touching order", () => {
     const project1 = ProjectId.make("project-1");
     const initialState = makeUiState({
@@ -577,6 +606,31 @@ describe("uiStateStore persistence round-trip", () => {
       localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}",
     ) as PersistedUiState;
     expect(persisted.defaultAdvertisedEndpointKey).toBe("desktop-core:lan:http");
+  });
+
+  it("persists side-thread visit timestamps and drops regular thread visits", () => {
+    // Regression: pre-fix `threadLastVisitedAtById` was not persisted at all,
+    // so reloading the renderer marked every inbox row as unread. Now we
+    // persist the `st-…` subset only — regular thread visits are reseeded
+    // from the snapshot on boot and don't need to round-trip through
+    // localStorage.
+    const sideThreadKey = "st-thread-7-anchor-msg-42";
+    const regularThreadKey = "env-local:thread-7";
+    const state = makeUiState({
+      threadLastVisitedAtById: {
+        [regularThreadKey]: "2026-02-25T12:00:00.000Z",
+        [sideThreadKey]: "2026-02-25T12:30:00.000Z",
+      },
+    });
+
+    persistState(state);
+
+    const persisted = JSON.parse(
+      localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}",
+    ) as PersistedUiState;
+    expect(persisted.sideThreadLastVisitedAtById).toEqual({
+      [sideThreadKey]: "2026-02-25T12:30:00.000Z",
+    });
   });
 
   it("preserves expand state across restart when project's logical key changes", () => {

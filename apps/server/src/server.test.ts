@@ -180,6 +180,7 @@ const makeDefaultOrchestrationReadModel = () => {
         proposedPlans: [],
         checkpoints: [],
         deletedAt: null,
+        createdBy: null,
       },
     ],
   };
@@ -203,6 +204,7 @@ const makeDefaultOrchestrationThreadShell = (
     updatedAt: now,
     archivedAt: null,
     session: null,
+    createdBy: null,
     latestUserMessageAt: null,
     hasPendingApprovals: false,
     hasPendingUserInput: false,
@@ -3296,6 +3298,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             proposedPlans: [],
             checkpoints: [],
             deletedAt: null,
+            createdBy: null,
           },
         ],
       };
@@ -4314,6 +4317,204 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.deepEqual(
         dispatchedCommands.map((command) => command.type),
         ["thread.create", "thread.delete"],
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("appends no-worktree warning when starting in main repo with dirty git", () =>
+    Effect.gen(function* () {
+      const dispatchedCommands: Array<OrchestrationCommand> = [];
+      const localStatus = vi.fn(() =>
+        Effect.succeed({
+          isRepo: true,
+          hasPrimaryRemote: true,
+          isDefaultRef: true,
+          refName: "main",
+          hasWorkingTreeChanges: true,
+          workingTree: {
+            files: [
+              { path: "src/foo.ts", insertions: 3, deletions: 1 },
+              { path: "src/bar.ts", insertions: 0, deletions: 2 },
+            ],
+            insertions: 3,
+            deletions: 3,
+          },
+        }),
+      );
+
+      yield* buildAppUnderTest({
+        layers: {
+          gitManager: {
+            localStatus,
+          },
+          vcsDriver: {
+            isInsideWorkTree: () => Effect.succeed(true),
+          },
+          orchestrationEngine: {
+            dispatch: (command) =>
+              Effect.sync(() => {
+                dispatchedCommands.push(command);
+                return { sequence: dispatchedCommands.length };
+              }),
+            readEvents: () => Stream.empty,
+          },
+          projectionSnapshotQuery: {
+            getProjectShellById: () =>
+              Effect.succeed(
+                Option.some({
+                  id: defaultProjectId,
+                  title: "Default Project",
+                  workspaceRoot: "/tmp/default-project",
+                  defaultModelSelection,
+                  scripts: [],
+                  createdAt: "2026-01-01T00:00:00.000Z",
+                  updatedAt: "2026-01-01T00:00:00.000Z",
+                }),
+              ),
+          },
+        },
+      });
+
+      const createdAt = "2026-01-01T00:00:00.000Z";
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const response = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+            type: "thread.turn.start",
+            commandId: CommandId.make("cmd-bootstrap-no-worktree-warn"),
+            threadId: ThreadId.make("thread-bootstrap-no-worktree-warn"),
+            message: {
+              messageId: MessageId.make("msg-bootstrap-no-worktree-warn"),
+              role: "user",
+              text: "hello",
+              attachments: [],
+              author: null,
+            },
+            modelSelection: defaultModelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            bootstrap: {
+              createThread: {
+                projectId: defaultProjectId,
+                title: "Bootstrap Thread",
+                modelSelection: defaultModelSelection,
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                branch: null,
+                worktreePath: null,
+                createdAt,
+              },
+            },
+            createdAt,
+          }),
+        ),
+      );
+
+      assert.equal(response.sequence, 3);
+      assert.deepEqual(
+        dispatchedCommands.map((command) => command.type),
+        ["thread.create", "thread.activity.append", "thread.turn.start"],
+      );
+      const warning = dispatchedCommands.find(
+        (command): command is Extract<OrchestrationCommand, { type: "thread.activity.append" }> =>
+          command.type === "thread.activity.append",
+      );
+      assertTrue(warning !== undefined);
+      assert.equal(warning.activity.kind, "workspace.no-worktree-warning");
+      assert.equal(warning.activity.tone, "info");
+      assert.include(warning.activity.summary, "uncommitted");
+      const payload = warning.activity.payload as Record<string, unknown>;
+      assert.equal(payload.workspaceRoot, "/tmp/default-project");
+      assert.equal(payload.fileCount, 2);
+      assert.deepEqual(payload.files, ["src/foo.ts", "src/bar.ts"]);
+      assert.equal(payload.truncatedCount, 0);
+      assert.equal(localStatus.mock.calls.length, 1);
+      assert.equal(localStatus.mock.calls[0]?.[0]?.cwd, "/tmp/default-project");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("skips no-worktree warning when git working tree is clean", () =>
+    Effect.gen(function* () {
+      const dispatchedCommands: Array<OrchestrationCommand> = [];
+      yield* buildAppUnderTest({
+        layers: {
+          gitManager: {
+            localStatus: () =>
+              Effect.succeed({
+                isRepo: true,
+                hasPrimaryRemote: true,
+                isDefaultRef: true,
+                refName: "main",
+                hasWorkingTreeChanges: false,
+                workingTree: { files: [], insertions: 0, deletions: 0 },
+              }),
+          },
+          vcsDriver: {
+            isInsideWorkTree: () => Effect.succeed(true),
+          },
+          orchestrationEngine: {
+            dispatch: (command) =>
+              Effect.sync(() => {
+                dispatchedCommands.push(command);
+                return { sequence: dispatchedCommands.length };
+              }),
+            readEvents: () => Stream.empty,
+          },
+          projectionSnapshotQuery: {
+            getProjectShellById: () =>
+              Effect.succeed(
+                Option.some({
+                  id: defaultProjectId,
+                  title: "Default Project",
+                  workspaceRoot: "/tmp/default-project",
+                  defaultModelSelection,
+                  scripts: [],
+                  createdAt: "2026-01-01T00:00:00.000Z",
+                  updatedAt: "2026-01-01T00:00:00.000Z",
+                }),
+              ),
+          },
+        },
+      });
+
+      const createdAt = "2026-01-01T00:00:00.000Z";
+      const wsUrl = yield* getWsServerUrl("/ws");
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+            type: "thread.turn.start",
+            commandId: CommandId.make("cmd-bootstrap-no-worktree-clean"),
+            threadId: ThreadId.make("thread-bootstrap-no-worktree-clean"),
+            message: {
+              messageId: MessageId.make("msg-bootstrap-no-worktree-clean"),
+              role: "user",
+              text: "hello",
+              attachments: [],
+              author: null,
+            },
+            modelSelection: defaultModelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            bootstrap: {
+              createThread: {
+                projectId: defaultProjectId,
+                title: "Bootstrap Thread",
+                modelSelection: defaultModelSelection,
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                branch: null,
+                worktreePath: null,
+                createdAt,
+              },
+            },
+            createdAt,
+          }),
+        ),
+      );
+
+      assert.deepEqual(
+        dispatchedCommands.map((command) => command.type),
+        ["thread.create", "thread.turn.start"],
       );
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );

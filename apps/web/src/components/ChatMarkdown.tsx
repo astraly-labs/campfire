@@ -35,10 +35,7 @@ import {
 } from "../markdown-links";
 import { readLocalApi } from "../localApi";
 import { useFilePreviewStore } from "../preview/filePreviewStore";
-import {
-  buildWorkspaceFileDownloadUrl,
-  buildWorkspaceFilePreviewUrl,
-} from "../workspaceFileUrl";
+import { buildWorkspaceFileDownloadUrl, buildWorkspaceFilePreviewUrl } from "../workspaceFileUrl";
 import { cn } from "../lib/utils";
 
 class CodeHighlightErrorBoundary extends React.Component<

@@ -87,6 +87,13 @@ export interface EnvironmentState {
   // ---------------------------------------------------------------------------
   sidebarThreadSummaryById: Record<ThreadId, SidebarThreadSummary>;
 
+  // ---------------------------------------------------------------------------
+  // Threads we tried to subscribe to but the server returned "not found".
+  // Set by the detail-subscription onError path; cleared when a snapshot
+  // eventually arrives (e.g. after a re-create) or the env is removed.
+  // ---------------------------------------------------------------------------
+  missingThreadIds: Record<ThreadId, true>;
+
   bootstrapComplete: boolean;
 }
 
@@ -112,6 +119,7 @@ const initialEnvironmentState: EnvironmentState = {
   turnDiffIdsByThreadId: {},
   turnDiffSummaryByThreadId: {},
   sidebarThreadSummaryById: {},
+  missingThreadIds: {},
   bootstrapComplete: false,
 };
 
@@ -180,6 +188,7 @@ function mapMessage(environmentId: EnvironmentId, message: OrchestrationMessage)
     turnId: message.turnId,
     createdAt: message.createdAt,
     streaming: message.streaming,
+    ...(message.author !== undefined ? { author: message.author } : {}),
     ...(message.streaming ? {} : { completedAt: message.updatedAt }),
     ...(attachments && attachments.length > 0 ? { attachments } : {}),
   };
@@ -253,6 +262,7 @@ function mapThread(thread: OrchestrationThread, environmentId: EnvironmentId): T
     worktreePath: thread.worktreePath,
     turnDiffSummaries: thread.checkpoints.map(mapTurnDiffSummary),
     activities: thread.activities.map((activity) => ({ ...activity })),
+    createdBy: thread.createdBy,
   };
 }
 
@@ -518,6 +528,16 @@ function ensureThreadRegistered(
   previousProjectId: ProjectId | undefined,
 ): EnvironmentState {
   let nextState = state;
+
+  // Receiving any state for a thread proves it exists — drop a stale missing
+  // flag (e.g. if the thread was recreated after we recorded the not-found).
+  if (state.missingThreadIds[threadId]) {
+    const { [threadId]: _removed, ...rest } = state.missingThreadIds;
+    nextState = {
+      ...nextState,
+      missingThreadIds: rest as Record<ThreadId, true>,
+    };
+  }
 
   if (!state.threadIds.includes(threadId)) {
     nextState = {
@@ -1105,6 +1125,14 @@ function syncEnvironmentShellSnapshot(
       state.turnDiffSummaryByThreadId,
       nextThreadIds,
     ),
+    // Drop missing-thread flags for any thread the server now reports as
+    // existing (rare but possible if a thread is re-created). Threads still
+    // absent stay flagged so the inbox click guard keeps surfacing them.
+    missingThreadIds: Object.fromEntries(
+      Object.entries(state.missingThreadIds).filter(
+        ([threadId]) => !nextThreadIds.has(threadId as ThreadId),
+      ),
+    ) as Record<ThreadId, true>,
     bootstrapComplete: true,
   };
 
@@ -1264,6 +1292,7 @@ function applyEnvironmentOrchestrationEvent(
           updatedAt: event.payload.updatedAt,
           archivedAt: null,
           deletedAt: null,
+          createdBy: event.payload.createdBy,
           messages: [],
           proposedPlans: [],
           activities: [],
@@ -1828,6 +1857,55 @@ export function selectThreadExistsByRef(
     : false;
 }
 
+/**
+ * True once we have proof from the server (via a failed subscribeThread
+ * call) that this thread does not exist. Used by the inbox click guard
+ * and the thread route fallback to surface a clear error instead of a
+ * silent redirect.
+ */
+export function selectThreadMissingByRef(
+  state: AppState,
+  ref: ScopedThreadRef | null | undefined,
+): boolean {
+  return ref
+    ? selectEnvironmentState(state, ref.environmentId).missingThreadIds[ref.threadId] === true
+    : false;
+}
+
+export function markThreadMissing(
+  state: AppState,
+  environmentId: EnvironmentId,
+  threadId: ThreadId,
+): AppState {
+  const environmentState = getStoredEnvironmentState(state, environmentId);
+  if (environmentState.missingThreadIds[threadId]) {
+    return state;
+  }
+  return commitEnvironmentState(state, environmentId, {
+    ...environmentState,
+    missingThreadIds: {
+      ...environmentState.missingThreadIds,
+      [threadId]: true,
+    },
+  });
+}
+
+export function clearThreadMissing(
+  state: AppState,
+  environmentId: EnvironmentId,
+  threadId: ThreadId,
+): AppState {
+  const environmentState = getStoredEnvironmentState(state, environmentId);
+  if (!environmentState.missingThreadIds[threadId]) {
+    return state;
+  }
+  const { [threadId]: _removed, ...rest } = environmentState.missingThreadIds;
+  return commitEnvironmentState(state, environmentId, {
+    ...environmentState,
+    missingThreadIds: rest as Record<ThreadId, true>,
+  });
+}
+
 export function selectSidebarThreadSummaryByRef(
   state: AppState,
   ref: ScopedThreadRef | null | undefined,
@@ -1963,6 +2041,8 @@ interface AppStore extends AppState {
     branch: string | null,
     worktreePath: string | null,
   ) => void;
+  markThreadMissing: (environmentId: EnvironmentId, threadId: ThreadId) => void;
+  clearThreadMissing: (environmentId: EnvironmentId, threadId: ThreadId) => void;
 }
 
 export const useStore = create<AppStore>((set) => ({
@@ -1984,4 +2064,8 @@ export const useStore = create<AppStore>((set) => ({
   setError: (threadId, error) => set((state) => setError(state, threadId, error)),
   setThreadBranch: (threadRef, branch, worktreePath) =>
     set((state) => setThreadBranch(state, threadRef, branch, worktreePath)),
+  markThreadMissing: (environmentId, threadId) =>
+    set((state) => markThreadMissing(state, environmentId, threadId)),
+  clearThreadMissing: (environmentId, threadId) =>
+    set((state) => clearThreadMissing(state, environmentId, threadId)),
 }));

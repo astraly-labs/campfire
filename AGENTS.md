@@ -15,6 +15,27 @@ T3 Code is a minimal web GUI for using coding agents like Codex and Claude.
 
 This repository is a VERY EARLY WIP. Proposing sweeping changes that improve long-term maintainability is encouraged.
 
+## Fork Context: Campfire
+
+This repo is **campfire**, a fork of [pingdotgg/t3code](https://github.com/pingdotgg/t3code) (tracked as the `upstream` remote; `origin` is `EvolveArt/campfire`). The fork exists to enable **peer-prompting**: a team-wide collaborative agentic coding workflow.
+
+### Deployment Topology
+
+- **One host machine** — a shared Mac mini in the office runs a single T3 Code backend, exposed over the team's tailnet via `tailscale serve` (see `REMOTE.md` → "Tailscale Endpoints" and `t3 serve --tailscale-serve`).
+- **Many client machines** — every teammate connects from their own laptop using the standard pairing flow (`REMOTE.md` → "How Pairing Works"). Each teammate gets a paired session against the same backend.
+- Everyone therefore shares the same projects, file system, git state, terminals, and provider sessions on the Mac mini. The "remote" in `REMOTE.md` is the *normal* mode of operation here, not an edge case.
+
+### What "Peer-Prompting" Means Here
+
+Multiple humans + their agents operate against the same backend concurrently. When designing or changing features, assume:
+
+- Multiple simultaneous paired sessions on a single backend (no "single-user" shortcuts).
+- Shared mutable state (threads, files, terminals, provider sessions) that several humans may touch in the same minute.
+- Concurrency, attribution, and visibility into "who/what is doing what" matter more than they would in a typical single-user desktop app.
+- Performance/reliability priorities from the section above apply *per host* serving the whole team, not per user.
+
+When in doubt about a UX or protocol decision, ask: "does this still make sense when 4 teammates and their agents are all paired into this same backend at once?"
+
 ## Core Priorities
 
 1. Performance first.

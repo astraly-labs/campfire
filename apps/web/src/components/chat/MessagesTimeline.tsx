@@ -36,12 +36,14 @@ import {
   ZapIcon,
 } from "lucide-react";
 import { Button } from "../ui/button";
+import { SOFT_PALETTE, colorIndexForUserId, initialsFor } from "../../presence/AvatarStack";
 import { buildExpandedImagePreview, ExpandedImagePreview } from "./ExpandedImagePreview";
 import { ProposedPlanCard } from "./ProposedPlanCard";
 import { ChangedFilesTree } from "./ChangedFilesTree";
 import { DiffStatLabel, hasNonZeroStat } from "./DiffStatLabel";
 import { MessageCopyButton } from "./MessageCopyButton";
 import { SideThreadAnchorButton } from "../../sidethread/SideThreadAnchorButton";
+import { TakeALookButton } from "../../sidethread/TakeALookButton";
 import {
   computeStableMessagesTimelineRows,
   MAX_VISIBLE_WORK_LOG_ENTRIES,
@@ -339,9 +341,10 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   const displayedUserMessage = deriveDisplayedUserMessageState(row.message.text);
   const terminalContexts = displayedUserMessage.contexts;
   const canRevertAgentWork = typeof row.revertTurnCount === "number";
+  const author = row.message.author ?? null;
 
   return (
-    <div className="flex justify-end">
+    <div className="flex items-start justify-end gap-2">
       <div className="group relative max-w-[80%] rounded-2xl rounded-br-sm border border-border bg-secondary px-4 py-3">
         {userImages.length > 0 && (
           <div className="mb-2 grid max-w-[420px] grid-cols-2 gap-2">
@@ -395,7 +398,32 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           }
         />
       </div>
+      {author ? <MessageAuthorAvatar author={author} /> : null}
     </div>
+  );
+}
+
+function MessageAuthorAvatar({ author }: { author: NonNullable<TimelineMessage["author"]> }) {
+  const palette = SOFT_PALETTE[colorIndexForUserId(author.id)]!;
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={(props) => (
+          <span
+            {...props}
+            className={cn(
+              "mt-1 inline-flex size-6 shrink-0 items-center justify-center rounded-full text-[10px] font-medium ring-1 ring-background",
+              palette.bg,
+              palette.text,
+            )}
+            aria-label={`Sent by ${author.displayName}`}
+          >
+            {initialsFor(author.displayName)}
+          </span>
+        )}
+      />
+      <TooltipPopup side="top">{author.displayName}</TooltipPopup>
+    </Tooltip>
   );
 }
 
@@ -456,9 +484,11 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
             )}
           </p>
           <AssistantCopyButton row={row} />
-          <SideThreadAnchorButton
+          <SideThreadAnchorButton threadId={ctx.activeThreadId} messageId={row.message.id} />
+          <TakeALookButton
             threadId={ctx.activeThreadId}
             messageId={row.message.id}
+            environmentId={ctx.activeThreadEnvironmentId}
           />
         </div>
       </div>

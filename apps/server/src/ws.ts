@@ -21,6 +21,7 @@ import {
   InboxSubscribeError,
   PRESENCE_WS_METHODS,
   PresenceError,
+  ProjectId,
   USERS_WS_METHODS,
   UsersDirectoryError,
   type OrchestrationCommand,
@@ -251,6 +252,77 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId, initialIdentity: Resolv
           },
           createdAt: input.createdAt,
         });
+
+      const appendNoWorktreeWarningActivity = (input: {
+        readonly threadId: ThreadId;
+        readonly summary: string;
+        readonly createdAt: string;
+        readonly payload: Record<string, unknown>;
+      }) =>
+        orchestrationEngine.dispatch({
+          type: "thread.activity.append",
+          commandId: serverCommandId("no-worktree-warning"),
+          threadId: input.threadId,
+          activity: {
+            id: EventId.make(crypto.randomUUID()),
+            tone: "info",
+            kind: "workspace.no-worktree-warning",
+            summary: input.summary,
+            payload: input.payload,
+            turnId: null,
+            createdAt: input.createdAt,
+          },
+          createdAt: input.createdAt,
+        });
+
+      const NO_WORKTREE_WARNING_FILE_LIMIT = 5;
+
+      const maybeWarnNoWorktreeDirty = (input: {
+        readonly threadId: ThreadId;
+        readonly projectId: ProjectId;
+      }) =>
+        Effect.gen(function* () {
+          const projectShell = yield* projectionSnapshotQuery.getProjectShellById(input.projectId);
+          if (Option.isNone(projectShell)) {
+            return;
+          }
+          const workspaceRoot = projectShell.value.workspaceRoot;
+          const localStatus = yield* gitWorkflow.localStatus({ cwd: workspaceRoot });
+          if (!localStatus.isRepo || !localStatus.hasWorkingTreeChanges) {
+            return;
+          }
+          const allFiles = localStatus.workingTree.files;
+          const preview = allFiles
+            .slice(0, NO_WORKTREE_WARNING_FILE_LIMIT)
+            .map((file) => file.path);
+          const truncatedCount = Math.max(0, allFiles.length - preview.length);
+          const summary =
+            allFiles.length === 1
+              ? "Started in main workspace with 1 uncommitted file — consider a worktree to avoid collisions"
+              : `Started in main workspace with ${allFiles.length} uncommitted files — consider a worktree to avoid collisions`;
+          const createdAt = yield* nowIso;
+          yield* appendNoWorktreeWarningActivity({
+            threadId: input.threadId,
+            summary,
+            createdAt,
+            payload: {
+              workspaceRoot,
+              fileCount: allFiles.length,
+              insertions: localStatus.workingTree.insertions,
+              deletions: localStatus.workingTree.deletions,
+              files: preview,
+              truncatedCount,
+            },
+          });
+        }).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("failed to emit no-worktree dirty warning", {
+              threadId: input.threadId,
+              projectId: input.projectId,
+              cause,
+            }),
+          ),
+        );
 
       const toDispatchCommandError = (cause: unknown, fallbackMessage: string) =>
         isOrchestrationDispatchCommandError(cause)
@@ -535,6 +607,13 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId, initialIdentity: Resolv
                 createdAt: bootstrap.createThread.createdAt,
               });
               createdThread = true;
+
+              if (!bootstrap.prepareWorktree && bootstrap.createThread.worktreePath === null) {
+                yield* maybeWarnNoWorktreeDirty({
+                  threadId: command.threadId,
+                  projectId: bootstrap.createThread.projectId,
+                });
+              }
             }
 
             if (bootstrap?.prepareWorktree) {
@@ -634,7 +713,17 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId, initialIdentity: Resolv
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.dispatchCommand,
             Effect.gen(function* () {
-              const normalizedCommand = yield* normalizeDispatchCommand(command);
+              // Auto-assign the creator of a new thread to the authenticated
+              // session identity. The server is source-of-truth here — any
+              // client-provided `createdBy` is dropped.
+              const commandWithCreator =
+                command.type === "thread.create"
+                  ? {
+                      ...command,
+                      createdBy: (yield* Ref.get(currentIdentityRef)).user,
+                    }
+                  : command;
+              const normalizedCommand = yield* normalizeDispatchCommand(commandWithCreator);
               const shouldStopSessionAfterArchive =
                 normalizedCommand.type === "thread.archive"
                   ? yield* projectionSnapshotQuery

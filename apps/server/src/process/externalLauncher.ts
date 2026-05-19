@@ -219,6 +219,13 @@ export function resolveAvailableEditors(
   const available: EditorId[] = [];
 
   for (const editor of EDITORS) {
+    // Client-side editors (URL-scheme launched, e.g. Helix) are never
+    // exposed by the server; the web client decides availability based on
+    // its own configuration.
+    if ("clientUrlScheme" in editor && editor.clientUrlScheme !== undefined) {
+      continue;
+    }
+
     if (editor.commands === null) {
       const command = fileManagerCommandForPlatform(platform);
       if (isCommandAvailable(command, { platform, env })) {
@@ -277,6 +284,12 @@ export const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
   const editorDef = EDITORS.find((editor) => editor.id === input.editor);
   if (!editorDef) {
     return yield* new ExternalLauncherError({ message: `Unknown editor: ${input.editor}` });
+  }
+
+  if ("clientUrlScheme" in editorDef && editorDef.clientUrlScheme !== undefined) {
+    return yield* new ExternalLauncherError({
+      message: `Editor ${input.editor} must be launched client-side`,
+    });
   }
 
   if (editorDef.commands) {

@@ -28,6 +28,13 @@ type RpcInput<TTag extends RpcTag> = Parameters<RpcMethod<TTag>>[0];
 
 interface StreamSubscriptionOptions {
   readonly onResubscribe?: () => void;
+  /**
+   * Invoked once when the subscription terminates with a non-transport
+   * (domain / RPC-level) error. Useful for detecting cases like "thread
+   * not found" without polling, since the underlying stream never emits
+   * a snapshot in that case.
+   */
+  readonly onError?: (error: unknown) => void;
 }
 
 type RpcUnaryMethod<TTag extends RpcTag> =

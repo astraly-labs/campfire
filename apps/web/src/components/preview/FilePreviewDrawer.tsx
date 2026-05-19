@@ -6,10 +6,7 @@ import {
   buildWorkspaceFileDownloadUrl,
   buildWorkspaceFilePreviewUrl,
 } from "../../workspaceFileUrl";
-import {
-  type FilePreviewTarget,
-  useFilePreviewStore,
-} from "../../preview/filePreviewStore";
+import { type FilePreviewTarget, useFilePreviewStore } from "../../preview/filePreviewStore";
 import { cn } from "~/lib/utils";
 import { FilePreviewBody } from "./FilePreviewBody";
 
@@ -38,9 +35,7 @@ function DrawerShell({ target, onClose }: { target: FilePreviewTarget; onClose: 
 
   return (
     <div
-      className={cn(
-        "flex h-full w-full min-h-0 flex-col border-l border-border/70 bg-card/50",
-      )}
+      className={cn("flex h-full w-full min-h-0 flex-col border-l border-border/70 bg-card/50")}
       role="complementary"
       aria-label="File preview"
     >

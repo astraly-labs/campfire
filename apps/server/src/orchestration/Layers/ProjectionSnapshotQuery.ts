@@ -10,6 +10,7 @@ import {
   OrchestrationShellSnapshot,
   OrchestrationThread,
   ProjectScript,
+  TrimmedNonEmptyString,
   TurnId,
   type OrchestrationCheckpointSummary,
   type OrchestrationLatestTurn,
@@ -23,6 +24,7 @@ import {
   ModelSelection,
   ProjectId,
   ThreadId,
+  UserId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -66,9 +68,13 @@ const ProjectionProjectDbRowSchema = ProjectionProject.mapFields(
   }),
 );
 const ProjectionThreadMessageDbRowSchema = ProjectionThreadMessage.mapFields(
+  Struct.omit(["author"]),
+).mapFields(
   Struct.assign({
     isStreaming: Schema.Number,
     attachments: Schema.NullOr(Schema.fromJsonString(Schema.Array(ChatAttachment))),
+    authorUserId: Schema.NullOr(UserId),
+    authorDisplayName: Schema.NullOr(TrimmedNonEmptyString),
   }),
 );
 const ProjectionThreadProposedPlanDbRowSchema = ProjectionThreadProposedPlan;
@@ -335,7 +341,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
-          deleted_at AS "deletedAt"
+          deleted_at AS "deletedAt",
+          created_by_user_id AS "createdByUserId",
+          created_by_display_name AS "createdByDisplayName"
         FROM projection_threads
         ORDER BY created_at ASC, thread_id ASC
       `,
@@ -363,7 +371,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
-          deleted_at AS "deletedAt"
+          deleted_at AS "deletedAt",
+          created_by_user_id AS "createdByUserId",
+          created_by_display_name AS "createdByDisplayName"
         FROM projection_threads
         WHERE deleted_at IS NULL
           AND archived_at IS NULL
@@ -393,7 +403,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
-          deleted_at AS "deletedAt"
+          deleted_at AS "deletedAt",
+          created_by_user_id AS "createdByUserId",
+          created_by_display_name AS "createdByDisplayName"
         FROM projection_threads
         WHERE deleted_at IS NULL
           AND archived_at IS NOT NULL
@@ -414,6 +426,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           text,
           attachments_json AS "attachments",
           is_streaming AS "isStreaming",
+          author_user_id AS "authorUserId",
+          author_display_name AS "authorDisplayName",
           created_at AS "createdAt",
           updated_at AS "updatedAt"
         FROM projection_thread_messages
@@ -755,7 +769,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
-          deleted_at AS "deletedAt"
+          deleted_at AS "deletedAt",
+          created_by_user_id AS "createdByUserId",
+          created_by_display_name AS "createdByDisplayName"
         FROM projection_threads
         WHERE thread_id = ${threadId}
           AND deleted_at IS NULL
@@ -777,6 +793,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           text,
           attachments_json AS "attachments",
           is_streaming AS "isStreaming",
+          author_user_id AS "authorUserId",
+          author_display_name AS "authorDisplayName",
           created_at AS "createdAt",
           updated_at AS "updatedAt"
         FROM projection_thread_messages
@@ -1042,6 +1060,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               for (const row of messageRows) {
                 updatedAt = maxIso(updatedAt, row.updatedAt);
                 const threadMessages = messagesByThread.get(row.threadId) ?? [];
+                const author =
+                  row.authorUserId !== null && row.authorDisplayName !== null
+                    ? { id: row.authorUserId, displayName: row.authorDisplayName }
+                    : null;
                 threadMessages.push({
                   id: row.messageId,
                   role: row.role,
@@ -1049,6 +1071,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   ...(row.attachments !== null ? { attachments: row.attachments } : {}),
                   turnId: row.turnId,
                   streaming: row.isStreaming === 1,
+                  ...(author !== null ? { author } : {}),
                   createdAt: row.createdAt,
                   updatedAt: row.updatedAt,
                 });
@@ -1184,6 +1207,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 updatedAt: row.updatedAt,
                 archivedAt: row.archivedAt,
                 deletedAt: row.deletedAt,
+                createdBy:
+                  row.createdByUserId !== null && row.createdByDisplayName !== null
+                    ? { id: row.createdByUserId, displayName: row.createdByDisplayName }
+                    : null,
                 messages: messagesByThread.get(row.threadId) ?? [],
                 proposedPlans: proposedPlansByThread.get(row.threadId) ?? [],
                 activities: activitiesByThread.get(row.threadId) ?? [],
@@ -1382,6 +1409,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   updatedAt: row.updatedAt,
                   archivedAt: row.archivedAt,
                   deletedAt: row.deletedAt,
+                  createdBy:
+                    row.createdByUserId !== null && row.createdByDisplayName !== null
+                      ? { id: row.createdByUserId, displayName: row.createdByDisplayName }
+                      : null,
                   messages: [],
                   proposedPlans: proposedPlansByThread.get(row.threadId) ?? [],
                   activities: [],
@@ -1510,6 +1541,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                     updatedAt: row.updatedAt,
                     archivedAt: row.archivedAt,
                     session: sessionByThread.get(row.threadId) ?? null,
+                    createdBy:
+                      row.createdByUserId !== null && row.createdByDisplayName !== null
+                        ? { id: row.createdByUserId, displayName: row.createdByDisplayName }
+                        : null,
                     latestUserMessageAt: row.latestUserMessageAt,
                     hasPendingApprovals: row.pendingApprovalCount > 0,
                     hasPendingUserInput: row.pendingUserInputCount > 0,
@@ -1641,6 +1676,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   updatedAt: row.updatedAt,
                   archivedAt: row.archivedAt,
                   session: sessionByThread.get(row.threadId) ?? null,
+                  createdBy:
+                    row.createdByUserId !== null && row.createdByDisplayName !== null
+                      ? { id: row.createdByUserId, displayName: row.createdByDisplayName }
+                      : null,
                   latestUserMessageAt: row.latestUserMessageAt,
                   hasPendingApprovals: row.pendingApprovalCount > 0,
                   hasPendingUserInput: row.pendingUserInputCount > 0,
@@ -1881,6 +1920,13 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         updatedAt: threadRow.value.updatedAt,
         archivedAt: threadRow.value.archivedAt,
         session: Option.isSome(sessionRow) ? mapSessionRow(sessionRow.value) : null,
+        createdBy:
+          threadRow.value.createdByUserId !== null && threadRow.value.createdByDisplayName !== null
+            ? {
+                id: threadRow.value.createdByUserId,
+                displayName: threadRow.value.createdByDisplayName,
+              }
+            : null,
         latestUserMessageAt: threadRow.value.latestUserMessageAt,
         hasPendingApprovals: threadRow.value.pendingApprovalCount > 0,
         hasPendingUserInput: threadRow.value.pendingUserInputCount > 0,
@@ -1975,13 +2021,25 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         updatedAt: threadRow.value.updatedAt,
         archivedAt: threadRow.value.archivedAt,
         deletedAt: null,
+        createdBy:
+          threadRow.value.createdByUserId !== null && threadRow.value.createdByDisplayName !== null
+            ? {
+                id: threadRow.value.createdByUserId,
+                displayName: threadRow.value.createdByDisplayName,
+              }
+            : null,
         messages: messageRows.map((row) => {
+          const author =
+            row.authorUserId !== null && row.authorDisplayName !== null
+              ? { id: row.authorUserId, displayName: row.authorDisplayName }
+              : null;
           const message = {
             id: row.messageId,
             role: row.role,
             text: row.text,
             turnId: row.turnId,
             streaming: row.isStreaming === 1,
+            ...(author !== null ? { author } : {}),
             createdAt: row.createdAt,
             updatedAt: row.updatedAt,
           };

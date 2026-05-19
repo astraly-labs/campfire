@@ -345,6 +345,7 @@ function setStoreThreads(threads: ReadonlyArray<ReturnType<typeof makeThread>>) 
       ]),
     ),
     sidebarThreadSummaryById: {},
+    missingThreadIds: {},
     bootstrapComplete: true,
   };
   useStore.setState({

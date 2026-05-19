@@ -73,6 +73,7 @@ async function seedReadModel(): Promise<OrchestrationReadModel> {
         worktreePath: null,
         createdAt: now,
         updatedAt: now,
+        createdBy: null,
       },
     }),
   );
@@ -103,6 +104,7 @@ async function seedReadModel(): Promise<OrchestrationReadModel> {
         worktreePath: null,
         createdAt: now,
         updatedAt: now,
+        createdBy: null,
       },
     }),
   );

@@ -75,6 +75,7 @@ import {
   SettingsSection,
   useRelativeTimeTick,
 } from "./settingsLayout";
+import { HelixPathMappingsControl } from "./HelixPathMappingsControl";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { useServerObservability, useServerProviders } from "../../rpc/serverState";
 
@@ -641,6 +642,24 @@ export function GeneralSettingsPanel() {
             />
           }
         />
+
+        <SettingsRow
+          title="Helix path mappings"
+          description="Map remote workspace prefixes to local sshfs mountpoints. Adds a Helix entry to the Open menu that launches `hx` locally against the translated path via the `helix://` URL scheme."
+          resetAction={
+            settings.helixPathMappings.length > 0 ? (
+              <SettingResetButton
+                label="Helix path mappings"
+                onClick={() => updateSettings({ helixPathMappings: [] })}
+              />
+            ) : null
+          }
+        >
+          <HelixPathMappingsControl
+            mappings={settings.helixPathMappings}
+            onChange={(next) => updateSettings({ helixPathMappings: next })}
+          />
+        </SettingsRow>
 
         <SettingsRow
           title="Assistant output"
