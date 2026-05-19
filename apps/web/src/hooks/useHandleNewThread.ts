@@ -4,6 +4,7 @@ import { useParams, useRouter } from "@tanstack/react-router";
 import { useCallback, useMemo } from "react";
 import { useShallow } from "zustand/react/shallow";
 import {
+  type DraftId,
   type DraftThreadEnvMode,
   type DraftThreadState,
   useComposerDraftStore,
@@ -37,6 +38,13 @@ function useNewThreadState() {
         branch?: string | null;
         worktreePath?: string | null;
         envMode?: DraftThreadEnvMode;
+        /**
+         * When provided, pre-fill the new (or reused) draft's prompt with this
+         * text. Used by the "fork conversation to another project" flow so the
+         * generated handoff summary lands in the composer of the target
+         * project. Replaces any existing draft prompt for that project.
+         */
+        initialPrompt?: string;
       },
     ): Promise<void> => {
       const {
@@ -46,7 +54,14 @@ function useNewThreadState() {
         applyStickyState,
         setDraftThreadContext,
         setLogicalProjectDraftThreadId,
+        setPrompt,
       } = useComposerDraftStore.getState();
+      const hasInitialPrompt =
+        typeof options?.initialPrompt === "string" && options.initialPrompt.length > 0;
+      const applyInitialPrompt = (draftId: DraftId) => {
+        if (!hasInitialPrompt) return;
+        setPrompt(draftId, options!.initialPrompt as string);
+      };
       const currentRouteTarget = getCurrentRouteTarget();
       const project = projects.find(
         (candidate) =>
@@ -77,6 +92,7 @@ function useNewThreadState() {
           setLogicalProjectDraftThreadId(logicalProjectKey, projectRef, storedDraftThread.draftId, {
             threadId: storedDraftThread.threadId,
           });
+          applyInitialPrompt(storedDraftThread.draftId);
           if (
             currentRouteTarget?.kind === "draft" &&
             currentRouteTarget.draftId === storedDraftThread.draftId
@@ -112,6 +128,7 @@ function useNewThreadState() {
           ...(hasWorktreePathOption ? { worktreePath: options?.worktreePath ?? null } : {}),
           ...(hasEnvModeOption ? { envMode: options?.envMode } : {}),
         });
+        applyInitialPrompt(currentRouteTarget.draftId);
         return Promise.resolve();
       }
 
@@ -128,6 +145,7 @@ function useNewThreadState() {
           runtimeMode: DEFAULT_RUNTIME_MODE,
         });
         applyStickyState(draftId);
+        applyInitialPrompt(draftId);
 
         await router.navigate({
           to: "/draft/$draftId",

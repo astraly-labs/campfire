@@ -51,12 +51,7 @@ describe("buildFileTree", () => {
 });
 
 describe("filterPaths", () => {
-  const paths = [
-    "apps/web/src/main.tsx",
-    "apps/server/src/server.ts",
-    "README.md",
-    "package.json",
-  ];
+  const paths = ["apps/web/src/main.tsx", "apps/server/src/server.ts", "README.md", "package.json"];
 
   it("returns an empty list when query is blank", () => {
     expect(filterPaths(paths, "")).toEqual([]);

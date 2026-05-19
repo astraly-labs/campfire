@@ -173,6 +173,7 @@ export interface SidebarThreadSummary {
   hasPendingApprovals: boolean;
   hasPendingUserInput: boolean;
   hasActionableProposedPlan: boolean;
+  createdBy?: UserRef | null;
 }
 
 export interface ThreadSession {

@@ -1,11 +1,20 @@
 import { type ThreadId } from "@t3tools/contracts";
 
+/**
+ * Origin of a code/log chunk attached to a composer draft. `terminal` is the
+ * historical source (selections lifted from an embedded terminal); `file` is
+ * the same shape but produced from the file preview drawer. The wire format
+ * stays unchanged — `kind` only drives UI affordances (chip icon, tooltip).
+ */
+export type TerminalContextSourceKind = "terminal" | "file";
+
 export interface TerminalContextSelection {
   terminalId: string;
   terminalLabel: string;
   lineStart: number;
   lineEnd: number;
   text: string;
+  kind?: TerminalContextSourceKind;
 }
 
 export interface TerminalContextDraft extends TerminalContextSelection {
@@ -88,6 +97,7 @@ export function normalizeTerminalContextSelection(
     lineStart,
     lineEnd,
     text,
+    ...(selection.kind ? { kind: selection.kind } : {}),
   };
 }
 

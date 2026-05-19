@@ -19,12 +19,21 @@ const LEGACY_PERSISTED_STATE_KEYS = [
 
 /**
  * User's manual override for the sidebar "My projects" / "Projects" split.
- * Keyed by the logical project key so the choice survives env churn.
- * `"mine"` pins to My projects even if the auto rules wouldn't, `"other"`
- * forces into Projects even if mentions or ownership would auto-include it.
- * Absent → fall back to the auto partition (`partitionProjectsByAffiliation`).
+ * `"mine"` pins into My projects, `"other"` forces into Projects.
+ *
+ * Two override scopes coexist:
+ *   - `threadAffiliationOverrideByThreadKey` (scoped thread key): the new
+ *     per-thread override surface. Wins outright when present.
+ *   - `projectAffiliationOverrideByLogicalKey` (logical project key):
+ *     legacy project-wide pin, kept as a fallback so threads inside an
+ *     historically-pinned project keep behaving the same after the per-thread
+ *     migration. No UI writes here anymore.
+ *
+ * Absent → fall back to the auto partition (mentions, authorship,
+ * primary-environment heuristic).
  */
 export type ProjectAffiliationOverride = "mine" | "other";
+export type ThreadAffiliationOverride = "mine" | "other";
 
 export interface PersistedUiState {
   collapsedProjectCwds?: string[];
@@ -40,6 +49,7 @@ export interface PersistedUiState {
    */
   sideThreadLastVisitedAtById?: Record<string, string>;
   projectAffiliationOverrideByLogicalKey?: Record<string, ProjectAffiliationOverride>;
+  threadAffiliationOverrideByThreadKey?: Record<string, ThreadAffiliationOverride>;
   /**
    * Whether the secondary "Projects" sidebar section is collapsed. Persisted
    * so the user keeps a tidy sidebar across reloads; defaults to `true` on
@@ -51,8 +61,10 @@ export interface PersistedUiState {
 export interface UiProjectState {
   projectExpandedById: Record<string, boolean>;
   projectOrder: string[];
-  /** Manual pin overrides for the My projects / Projects split. */
+  /** Legacy project-wide pin, kept as fallback. See ProjectAffiliationOverride. */
   projectAffiliationOverrideByLogicalKey: Record<string, ProjectAffiliationOverride>;
+  /** Per-thread pin overriding the auto partition. Keyed by scoped thread key. */
+  threadAffiliationOverrideByThreadKey: Record<string, ThreadAffiliationOverride>;
   /** Collapsed state of the secondary "Projects" sidebar section. */
   projectsSectionCollapsed: boolean;
 }
@@ -85,6 +97,7 @@ const initialState: UiState = {
   projectExpandedById: {},
   projectOrder: [],
   projectAffiliationOverrideByLogicalKey: {},
+  threadAffiliationOverrideByThreadKey: {},
   projectsSectionCollapsed: true,
   threadLastVisitedAtById: {},
   threadChangedFilesExpandedById: {},
@@ -139,6 +152,9 @@ function readPersistedState(): UiState {
       projectAffiliationOverrideByLogicalKey: sanitizePersistedProjectAffiliationOverrides(
         parsed.projectAffiliationOverrideByLogicalKey,
       ),
+      threadAffiliationOverrideByThreadKey: sanitizePersistedThreadAffiliationOverrides(
+        parsed.threadAffiliationOverrideByThreadKey,
+      ),
       projectsSectionCollapsed:
         typeof parsed.projectsSectionCollapsed === "boolean"
           ? parsed.projectsSectionCollapsed
@@ -184,6 +200,25 @@ function sanitizePersistedProjectAffiliationOverrides(
       (choice === "mine" || choice === "other")
     ) {
       nextState[logicalKey] = choice;
+    }
+  }
+  return nextState;
+}
+
+function sanitizePersistedThreadAffiliationOverrides(
+  value: PersistedUiState["threadAffiliationOverrideByThreadKey"],
+): Record<string, ThreadAffiliationOverride> {
+  if (!value || typeof value !== "object") {
+    return {};
+  }
+  const nextState: Record<string, ThreadAffiliationOverride> = {};
+  for (const [threadKey, choice] of Object.entries(value)) {
+    if (
+      typeof threadKey === "string" &&
+      threadKey.length > 0 &&
+      (choice === "mine" || choice === "other")
+    ) {
+      nextState[threadKey] = choice;
     }
   }
   return nextState;
@@ -281,6 +316,7 @@ export function persistState(state: UiState): void {
         expandedProjectCwds,
         projectOrderCwds,
         projectAffiliationOverrideByLogicalKey: state.projectAffiliationOverrideByLogicalKey,
+        threadAffiliationOverrideByThreadKey: state.threadAffiliationOverrideByThreadKey,
         projectsSectionCollapsed: state.projectsSectionCollapsed,
         defaultAdvertisedEndpointKey: state.defaultAdvertisedEndpointKey,
         threadChangedFilesExpandedById,
@@ -721,6 +757,31 @@ export function setProjectAffiliation(
   };
 }
 
+export function setThreadAffiliation(
+  state: UiState,
+  threadKey: string,
+  override: ThreadAffiliationOverride | null,
+): UiState {
+  const current = state.threadAffiliationOverrideByThreadKey[threadKey] ?? null;
+  if (current === override) {
+    return state;
+  }
+  if (override === null) {
+    const { [threadKey]: _removed, ...rest } = state.threadAffiliationOverrideByThreadKey;
+    return {
+      ...state,
+      threadAffiliationOverrideByThreadKey: rest,
+    };
+  }
+  return {
+    ...state,
+    threadAffiliationOverrideByThreadKey: {
+      ...state.threadAffiliationOverrideByThreadKey,
+      [threadKey]: override,
+    },
+  };
+}
+
 export function setProjectsSectionCollapsed(state: UiState, collapsed: boolean): UiState {
   if (state.projectsSectionCollapsed === collapsed) {
     return state;
@@ -799,6 +860,7 @@ interface UiStateStore extends UiState {
   toggleProject: (projectId: string) => void;
   setProjectExpanded: (projectId: string, expanded: boolean) => void;
   setProjectAffiliation: (logicalKey: string, override: ProjectAffiliationOverride | null) => void;
+  setThreadAffiliation: (threadKey: string, override: ThreadAffiliationOverride | null) => void;
   setProjectsSectionCollapsed: (collapsed: boolean) => void;
   toggleProjectsSection: () => void;
   reorderProjects: (
@@ -826,6 +888,8 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
     set((state) => setProjectExpanded(state, projectId, expanded)),
   setProjectAffiliation: (logicalKey, override) =>
     set((state) => setProjectAffiliation(state, logicalKey, override)),
+  setThreadAffiliation: (threadKey, override) =>
+    set((state) => setThreadAffiliation(state, threadKey, override)),
   setProjectsSectionCollapsed: (collapsed) =>
     set((state) => setProjectsSectionCollapsed(state, collapsed)),
   toggleProjectsSection: () =>

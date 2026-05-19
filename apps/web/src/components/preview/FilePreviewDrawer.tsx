@@ -6,19 +6,35 @@ import {
   buildWorkspaceFileDownloadUrl,
   buildWorkspaceFilePreviewUrl,
 } from "../../workspaceFileUrl";
+import type { TerminalContextSelection } from "../../lib/terminalContext";
 import { type FilePreviewTarget, useFilePreviewStore } from "../../preview/filePreviewStore";
 import { cn } from "~/lib/utils";
 import { FilePreviewBody } from "./FilePreviewBody";
 
 const DRAWER_WIDTH = 640;
 
-export function FilePreviewDrawer() {
+export interface FilePreviewDrawerProps {
+  /**
+   * Invoked when the user adds a code selection from the preview to the chat
+   * context (via the floating "+" button). Omitting this prop hides the
+   * selection affordance.
+   */
+  readonly onAddSelection?: (selection: TerminalContextSelection) => void;
+}
+
+export function FilePreviewDrawer({ onAddSelection }: FilePreviewDrawerProps) {
   const current = useFilePreviewStore((state) => state.current);
   const close = useFilePreviewStore((state) => state.close);
 
   return (
     <InlineSlideDrawer open={current !== null} width={DRAWER_WIDTH}>
-      {current ? <DrawerShell target={current} onClose={close} /> : null}
+      {current ? (
+        <DrawerShell
+          target={current}
+          onClose={close}
+          {...(onAddSelection ? { onAddSelection } : {})}
+        />
+      ) : null}
     </InlineSlideDrawer>
   );
 }
@@ -28,7 +44,15 @@ function basenameOf(filePath: string): string {
   return sepIndex >= 0 ? filePath.slice(sepIndex + 1) : filePath;
 }
 
-function DrawerShell({ target, onClose }: { target: FilePreviewTarget; onClose: () => void }) {
+function DrawerShell({
+  target,
+  onClose,
+  onAddSelection,
+}: {
+  target: FilePreviewTarget;
+  onClose: () => void;
+  onAddSelection?: (selection: TerminalContextSelection) => void;
+}) {
   const previewUrl = buildWorkspaceFilePreviewUrl({ cwd: target.cwd, path: target.filePath });
   const downloadUrl = buildWorkspaceFileDownloadUrl({ cwd: target.cwd, path: target.filePath });
   const basename = basenameOf(target.filePath);
@@ -111,7 +135,7 @@ function DrawerShell({ target, onClose }: { target: FilePreviewTarget; onClose: 
         </Button>
       </div>
       <div className="min-h-0 flex-1">
-        <FilePreviewBody target={target} />
+        <FilePreviewBody target={target} {...(onAddSelection ? { onAddSelection } : {})} />
       </div>
     </div>
   );

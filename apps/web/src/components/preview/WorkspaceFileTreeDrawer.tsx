@@ -142,11 +142,7 @@ function DrawerShell() {
               onOpen={handleOpenFile}
             />
           ) : (
-            <TreeView
-              root={snapshot.tree}
-              resolvedTheme={resolvedTheme}
-              onOpen={handleOpenFile}
-            />
+            <TreeView root={snapshot.tree} resolvedTheme={resolvedTheme} onOpen={handleOpenFile} />
           )}
         </div>
       </ScrollArea>

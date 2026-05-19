@@ -89,6 +89,9 @@ const PersistedTerminalContextDraft = Schema.Struct({
   terminalLabel: Schema.String,
   lineStart: Schema.Number,
   lineEnd: Schema.Number,
+  // Drafts created before file-selection support omit this field; that's OK,
+  // it just defaults to "terminal" semantics at the UI layer.
+  kind: Schema.optionalKey(Schema.Literals(["terminal", "file"])),
 });
 type PersistedTerminalContextDraft = typeof PersistedTerminalContextDraft.Type;
 
@@ -995,6 +998,8 @@ function normalizePersistedTerminalContextDraft(
   }
   const normalizedLineStart = Math.max(1, Math.floor(lineStart));
   const normalizedLineEnd = Math.max(normalizedLineStart, Math.floor(lineEnd));
+  const kind: "terminal" | "file" | undefined =
+    candidate.kind === "file" || candidate.kind === "terminal" ? candidate.kind : undefined;
   return {
     id,
     threadId: threadId as ThreadId,
@@ -1003,6 +1008,7 @@ function normalizePersistedTerminalContextDraft(
     terminalLabel,
     lineStart: normalizedLineStart,
     lineEnd: normalizedLineEnd,
+    ...(kind ? { kind } : {}),
   };
 }
 
@@ -1661,6 +1667,7 @@ function partializeComposerDraftStoreState(
               terminalLabel: context.terminalLabel,
               lineStart: context.lineStart,
               lineEnd: context.lineEnd,
+              ...(context.kind ? { kind: context.kind } : {}),
             })),
           }
         : {}),

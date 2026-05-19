@@ -3557,6 +3557,14 @@ export default function ChatView(props: ChatViewProps) {
           onDeleteProjectScript={deleteProjectScript}
           onToggleTerminal={toggleTerminalVisibility}
           onToggleDiff={onToggleDiff}
+          forkSource={
+            isServerThread
+              ? {
+                  projectId: serverThread.projectId,
+                  modelSelection: serverThread.modelSelection,
+                }
+              : null
+          }
         />
       </header>
 
@@ -3768,7 +3776,7 @@ export default function ChatView(props: ChatViewProps) {
         <WorkspaceFileTreeDrawer />
 
         {/* File preview drawer — opens on file-link click, slides in from right */}
-        <FilePreviewDrawer />
+        <FilePreviewDrawer onAddSelection={addTerminalContextToDraft} />
       </div>
       {/* end horizontal flex container */}
 

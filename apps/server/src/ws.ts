@@ -30,6 +30,7 @@ import {
   OrchestrationDispatchCommandError,
   type OrchestrationEvent,
   type OrchestrationShellStreamEvent,
+  OrchestrationGenerateThreadHandoffError,
   OrchestrationGetFullThreadDiffError,
   OrchestrationGetSnapshotError,
   OrchestrationGetTurnDiffError,
@@ -54,6 +55,7 @@ import { CheckpointDiffQuery } from "./checkpointing/Services/CheckpointDiffQuer
 import { ServerConfig } from "./config.ts";
 import { Keybindings } from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
+import { TextGeneration } from "./textGeneration/TextGeneration.ts";
 import { normalizeDispatchCommand } from "./orchestration/Normalizer.ts";
 import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery.ts";
@@ -207,6 +209,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId, initialIdentity: Resolv
       const serverEnvironment = yield* ServerEnvironment;
       const serverAuth = yield* ServerAuth;
       const sourceControlDiscovery = yield* SourceControlDiscoveryLayer.SourceControlDiscovery;
+      const textGeneration = yield* TextGeneration;
       const automaticGitFetchInterval = serverSettings.getSettings.pipe(
         Effect.map((settings) => settings.automaticGitFetchInterval),
         Effect.catch((cause) =>
@@ -951,6 +954,104 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId, initialIdentity: Resolv
             }),
             { "rpc.aggregate": "orchestration" },
           ),
+        [ORCHESTRATION_WS_METHODS.generateThreadHandoff]: (input) =>
+          observeRpcEffect(
+            ORCHESTRATION_WS_METHODS.generateThreadHandoff,
+            Effect.gen(function* () {
+              const sourceThreadOpt = yield* projectionSnapshotQuery
+                .getThreadDetailById(input.sourceThreadId)
+                .pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new OrchestrationGenerateThreadHandoffError({
+                        message: `Failed to load source thread ${input.sourceThreadId}`,
+                        cause,
+                      }),
+                  ),
+                );
+              if (Option.isNone(sourceThreadOpt)) {
+                return yield* new OrchestrationGenerateThreadHandoffError({
+                  message: `Source thread ${input.sourceThreadId} was not found`,
+                });
+              }
+              const sourceThread = sourceThreadOpt.value;
+
+              const [sourceProjectOpt, targetProjectOpt] = yield* Effect.all(
+                [
+                  projectionSnapshotQuery.getProjectShellById(sourceThread.projectId),
+                  projectionSnapshotQuery.getProjectShellById(input.targetProjectId),
+                ],
+                { concurrency: "unbounded" },
+              ).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestrationGenerateThreadHandoffError({
+                      message: "Failed to load project metadata for handoff",
+                      cause,
+                    }),
+                ),
+              );
+
+              if (Option.isNone(targetProjectOpt)) {
+                return yield* new OrchestrationGenerateThreadHandoffError({
+                  message: `Target project ${input.targetProjectId} was not found`,
+                });
+              }
+              const targetProject = targetProjectOpt.value;
+              const sourceProject = Option.getOrNull(sourceProjectOpt);
+
+              // Project the projection messages into the role/text pairs the
+              // handoff prompt expects. Role mapping: assistant → "agent",
+              // user → "user"; system messages are dropped because they are
+              // protocol scaffolding, not conversational content the next
+              // agent would benefit from.
+              const transcript = sourceThread.messages.flatMap((message) => {
+                if (message.role === "system") {
+                  return [];
+                }
+                const text = message.text.trim();
+                if (text.length === 0) {
+                  return [];
+                }
+                return [
+                  {
+                    role: (message.role === "assistant" ? "agent" : "user") as "user" | "agent",
+                    text,
+                  },
+                ];
+              });
+
+              if (transcript.length === 0) {
+                return yield* new OrchestrationGenerateThreadHandoffError({
+                  message: `Source thread ${input.sourceThreadId} has no transcript to hand off`,
+                });
+              }
+
+              const generated = yield* textGeneration
+                .generateThreadHandoff({
+                  sourceCwd: sourceProject?.workspaceRoot ?? targetProject.workspaceRoot,
+                  sourceBranch: sourceThread.branch,
+                  sourceProjectName: sourceProject?.title ?? null,
+                  targetCwd: targetProject.workspaceRoot,
+                  targetProjectName: targetProject.title,
+                  transcript,
+                  ...(input.note !== undefined ? { note: input.note } : {}),
+                  modelSelection: input.modelSelection,
+                })
+                .pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new OrchestrationGenerateThreadHandoffError({
+                        message: `Thread handoff generation failed: ${cause.detail}`,
+                        cause,
+                      }),
+                  ),
+                );
+
+              return { prompt: generated.prompt };
+            }),
+            { "rpc.aggregate": "orchestration" },
+          ),
         [SIDETHREAD_WS_METHODS.dispatchCommand]: (command) =>
           observeRpcEffect(
             SIDETHREAD_WS_METHODS.dispatchCommand,
@@ -1139,14 +1240,14 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId, initialIdentity: Resolv
               const dismissalsStream = sideThreadEngine.streamDomainEvents.pipe(
                 Stream.filter(
                   (event) =>
-                    event.type === "sidethread.inbox-dismissed" &&
-                    event.payload.userId === userId,
+                    event.type === "sidethread.inbox-dismissed" && event.payload.userId === userId,
                 ),
                 Stream.map((event) => ({
                   kind: "removed" as const,
                   // Narrowed by the filter above — guaranteed inbox-dismissed.
-                  sideThreadId: (event as Extract<typeof event, { type: "sidethread.inbox-dismissed" }>)
-                    .payload.sideThreadId,
+                  sideThreadId: (
+                    event as Extract<typeof event, { type: "sidethread.inbox-dismissed" }>
+                  ).payload.sideThreadId,
                 })),
               );
 

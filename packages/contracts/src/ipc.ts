@@ -53,6 +53,8 @@ import type { ServerRemoveKeybindingInput, ServerUpsertKeybindingInput } from ".
 import * as Schema from "effect/Schema";
 import type {
   ClientOrchestrationCommand,
+  OrchestrationGenerateThreadHandoffInput,
+  OrchestrationGenerateThreadHandoffResult,
   OrchestrationGetFullThreadDiffInput,
   OrchestrationGetFullThreadDiffResult,
   OrchestrationGetTurnDiffInput,
@@ -580,6 +582,9 @@ export interface EnvironmentApi {
         onResubscribe?: () => void;
       },
     ) => () => void;
+    generateThreadHandoff: (
+      input: OrchestrationGenerateThreadHandoffInput,
+    ) => Promise<OrchestrationGenerateThreadHandoffResult>;
   };
   sideThread: {
     dispatchCommand: (command: SideThreadCommand) => Promise<SideThreadDispatchResult>;

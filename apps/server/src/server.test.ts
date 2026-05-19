@@ -89,6 +89,7 @@ import { ServerLifecycleEvents, type ServerLifecycleEventsShape } from "./server
 import { ServerRuntimeStartup, type ServerRuntimeStartupShape } from "./serverRuntimeStartup.ts";
 import { ServerSettingsService, type ServerSettingsShape } from "./serverSettings.ts";
 import { TerminalManager, type TerminalManagerShape } from "./terminal/Services/Manager.ts";
+import { TextGeneration } from "./textGeneration/TextGeneration.ts";
 import {
   BrowserTraceCollector,
   type BrowserTraceCollectorShape,
@@ -786,6 +787,21 @@ const buildAppUnderTest = (options?: {
       Layer.provideMerge(makeAuthTestLayer()),
       Layer.provide(workspaceAndProjectServicesLayer),
       Layer.provideMerge(FetchHttpClient.layer),
+      // WS router seam tests never exercise text generation; provide a
+      // failing stub so the new `generateThreadHandoff` requirement on
+      // `makeWsRpcLayer` does not force every test to wire up a provider
+      // instance registry.
+      Layer.provide(
+        Layer.mock(TextGeneration)({
+          generateCommitMessage: () =>
+            Effect.die("TextGeneration not configured in router test"),
+          generatePrContent: () => Effect.die("TextGeneration not configured in router test"),
+          generateBranchName: () => Effect.die("TextGeneration not configured in router test"),
+          generateThreadTitle: () => Effect.die("TextGeneration not configured in router test"),
+          generateThreadHandoff: () =>
+            Effect.die("TextGeneration not configured in router test"),
+        }),
+      ),
       Layer.provide(layerConfig),
     );
 

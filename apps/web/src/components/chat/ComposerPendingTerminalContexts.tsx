@@ -24,7 +24,14 @@ export function ComposerPendingTerminalContextChip({
     ? `Terminal context expired. Remove and re-add ${label} to include it in your message.`
     : context.text;
 
-  return <TerminalContextInlineChip label={label} tooltipText={tooltipText} expired={expired} />;
+  return (
+    <TerminalContextInlineChip
+      label={label}
+      tooltipText={tooltipText}
+      expired={expired}
+      {...(context.kind ? { kind: context.kind } : {})}
+    />
+  );
 }
 
 export function ComposerPendingTerminalContexts(props: ComposerPendingTerminalContextsProps) {

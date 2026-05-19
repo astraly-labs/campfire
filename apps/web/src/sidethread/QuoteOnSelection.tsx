@@ -1,12 +1,6 @@
 import type { MessageId, ThreadId } from "@t3tools/contracts";
 import { QuoteIcon } from "lucide-react";
-import {
-  type ReactNode,
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
+import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { cn } from "~/lib/utils";
@@ -135,10 +129,7 @@ export function QuoteOnSelection({ threadId, messageId, children, className }: P
   const handleCite = useCallback(() => {
     if (!popover) return;
     const blockquote = formatAsBlockquote(popover.text);
-    open(
-      { parentThreadId: threadId, anchorMessageId: messageId },
-      { draftPrefill: blockquote },
-    );
+    open({ parentThreadId: threadId, anchorMessageId: messageId }, { draftPrefill: blockquote });
     setPopover(null);
     // Clear the visible selection so the popover doesn't immediately
     // re-appear on the next `mouseup` over the same range.

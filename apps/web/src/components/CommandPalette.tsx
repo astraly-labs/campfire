@@ -21,6 +21,7 @@ import {
   CornerLeftUpIcon,
   FolderIcon,
   FolderPlusIcon,
+  GitForkIcon,
   LinkIcon,
   MessageSquareIcon,
   SettingsIcon,
@@ -45,6 +46,7 @@ import {
   useSavedEnvironmentRegistryStore,
   useSavedEnvironmentRuntimeStore,
 } from "../environments/runtime";
+import { useForkThreadToProject } from "../hooks/useForkThreadToProject";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useSettings } from "../hooks/useSettings";
 import { readLocalApi } from "../localApi";
@@ -404,6 +406,7 @@ function OpenCommandPaletteDialog() {
   const settings = useSettings();
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread } =
     useHandleNewThread();
+  const { forkThread } = useForkThreadToProject();
   const projects = useStore(useShallow(selectProjectsAcrossEnvironments));
   const threads = useStore(useShallow(selectSidebarThreadsAcrossEnvironments));
   const keybindings = useServerKeybindings();
@@ -689,6 +692,46 @@ function OpenCommandPaletteDialog() {
       projects,
       settings.defaultThreadEnvMode,
     ],
+  );
+
+  // Same project list as `projectThreadItems`, but restricted to the source
+  // thread's environment (cross-environment fork is unsupported). Picking a
+  // project here closes the palette, generates a handoff summary via the
+  // server, and opens a pre-filled draft in the target project.
+  const forkTargetProjects = useMemo(() => {
+    if (!activeThread) return [];
+    return projects.filter(
+      (project) =>
+        project.environmentId === activeThread.environmentId &&
+        project.id !== activeThread.projectId,
+    );
+  }, [activeThread, projects]);
+
+  const forkTargetItems = useMemo(
+    () =>
+      buildProjectActionItems({
+        projects: forkTargetProjects,
+        valuePrefix: "fork-thread-to",
+        icon: (project) => (
+          <ProjectFavicon
+            environmentId={project.environmentId}
+            cwd={project.cwd}
+            className={ITEM_ICON_CLASS}
+          />
+        ),
+        runProject: async (project) => {
+          if (!activeThread) return;
+          await forkThread({
+            sourceEnvironmentId: activeThread.environmentId,
+            sourceThreadId: activeThread.id,
+            targetEnvironmentId: project.environmentId,
+            targetProjectId: project.id,
+            targetProjectName: project.name,
+            modelSelection: activeThread.modelSelection,
+          });
+        },
+      }),
+    [activeThread, forkTargetProjects, forkThread],
   );
 
   const allThreadItems = useMemo(
@@ -1019,6 +1062,26 @@ function OpenCommandPaletteDialog() {
       addonIcon: <SquarePenIcon className={ADDON_ICON_CLASS} />,
       groups: [{ value: "projects", label: "Projects", items: projectThreadItems }],
     });
+
+    if (forkTargetItems.length > 0) {
+      actionItems.push({
+        kind: "submenu",
+        value: "action:fork-thread-to",
+        searchTerms: [
+          "fork",
+          "send to",
+          "move to",
+          "handoff",
+          "another project",
+          "thread",
+          "transfer",
+        ],
+        title: "Fork this thread to...",
+        icon: <GitForkIcon className={ITEM_ICON_CLASS} />,
+        addonIcon: <GitForkIcon className={ADDON_ICON_CLASS} />,
+        groups: [{ value: "projects", label: "Projects", items: forkTargetItems }],
+      });
+    }
   }
 
   actionItems.push({

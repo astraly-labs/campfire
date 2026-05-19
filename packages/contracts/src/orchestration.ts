@@ -41,6 +41,7 @@ export const ORCHESTRATION_WS_METHODS = {
   getArchivedShellSnapshot: "orchestration.getArchivedShellSnapshot",
   subscribeShell: "orchestration.subscribeShell",
   subscribeThread: "orchestration.subscribeThread",
+  generateThreadHandoff: "orchestration.generateThreadHandoff",
 } as const;
 
 export const ProviderApprovalPolicy = Schema.Literals([
@@ -1249,6 +1250,35 @@ export type OrchestrationReplayEventsInput = typeof OrchestrationReplayEventsInp
 const OrchestrationReplayEventsResult = Schema.Array(OrchestrationEvent);
 export type OrchestrationReplayEventsResult = typeof OrchestrationReplayEventsResult.Type;
 
+/**
+ * Input for "fork this conversation to another project":
+ * - `sourceThreadId` names the thread whose transcript we summarise.
+ * - `targetProjectId` names the project the resulting draft will live in.
+ *   We deliberately do NOT use `ScopedProjectRef` / `ScopedThreadRef` here:
+ *   the WebSocket server is bound to a single environment, so the
+ *   environment id is implicit.
+ * - `modelSelection` picks the provider instance + model used to summarise.
+ *   Defaults to whatever the caller used in the source thread, but the
+ *   contract lets the UI override it.
+ * - `note` is an optional free-form hint the user wants the next agent to
+ *   keep in mind ("focus on order placement code").
+ */
+export const OrchestrationGenerateThreadHandoffInput = Schema.Struct({
+  sourceThreadId: ThreadId,
+  targetProjectId: ProjectId,
+  modelSelection: ModelSelection,
+  note: Schema.optional(Schema.String),
+});
+export type OrchestrationGenerateThreadHandoffInput =
+  typeof OrchestrationGenerateThreadHandoffInput.Type;
+
+export const OrchestrationGenerateThreadHandoffResult = Schema.Struct({
+  /** Markdown body to pre-fill in the target project's composer. */
+  prompt: Schema.String,
+});
+export type OrchestrationGenerateThreadHandoffResult =
+  typeof OrchestrationGenerateThreadHandoffResult.Type;
+
 export const OrchestrationRpcSchemas = {
   dispatchCommand: {
     input: ClientOrchestrationCommand,
@@ -1277,6 +1307,10 @@ export const OrchestrationRpcSchemas = {
   subscribeShell: {
     input: Schema.Struct({}),
     output: OrchestrationShellStreamItem,
+  },
+  generateThreadHandoff: {
+    input: OrchestrationGenerateThreadHandoffInput,
+    output: OrchestrationGenerateThreadHandoffResult,
   },
 } as const;
 
@@ -1314,6 +1348,14 @@ export class OrchestrationGetFullThreadDiffError extends Schema.TaggedErrorClass
 
 export class OrchestrationReplayEventsError extends Schema.TaggedErrorClass<OrchestrationReplayEventsError>()(
   "OrchestrationReplayEventsError",
+  {
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {}
+
+export class OrchestrationGenerateThreadHandoffError extends Schema.TaggedErrorClass<OrchestrationGenerateThreadHandoffError>()(
+  "OrchestrationGenerateThreadHandoffError",
   {
     message: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect),

@@ -151,7 +151,11 @@ describe("partitionProjectsByAffiliation", () => {
 
   it("treats null currentUserId as identity-not-yet-loaded — fallback only on env heuristic", () => {
     const snapshots = makeSnapshots([
-      makeProject({ id: ProjectId.make("p-with-creator"), environmentId: primaryEnvId, createdBy: meRef }),
+      makeProject({
+        id: ProjectId.make("p-with-creator"),
+        environmentId: primaryEnvId,
+        createdBy: meRef,
+      }),
       makeProject({ id: ProjectId.make("p-legacy"), environmentId: primaryEnvId, createdBy: null }),
     ]);
 

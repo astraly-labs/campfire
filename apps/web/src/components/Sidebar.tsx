@@ -197,10 +197,13 @@ import type { SidebarThreadSummary } from "../types";
 import {
   buildPhysicalToLogicalProjectKeyMap,
   buildSidebarProjectSnapshots,
-  partitionProjectsByAffiliation,
   type SidebarProjectGroupMember,
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
+import {
+  partitionProjectsBySectionedThreads,
+  type SidebarProjectSectionInstance,
+} from "../sidebarThreadAffiliation";
 import { useCurrentUser } from "../identity/identityStore";
 import { useMentionedParentThreadIds } from "../inbox/inboxStore";
 import { SidebarProviderUpdatePill } from "./sidebar/SidebarProviderUpdatePill";
@@ -929,11 +932,19 @@ interface SidebarProjectItemProps {
   isManualProjectSorting: boolean;
   dragHandleProps: SortableProjectHandleProps | null;
   /**
-   * Which section the project currently lives in. Drives the
-   * "Pin to My projects" vs "Move to Projects" label in the context menu.
+   * Which section this instance of the project lives in. Drives the
+   * "Pin to My projects" vs "Move to Projects" label in the thread context
+   * menu (per-thread overrides flip whichever side they currently land on).
    */
   section: "mine" | "other";
-  onChangeAffiliation: (projectKey: string, override: "mine" | "other") => void;
+  /**
+   * When non-null, restricts the rendered thread list to threads whose
+   * scoped key is in this set. Used to render the same project twice when
+   * its threads straddle both sidebar sections, each instance showing only
+   * the matching subset.
+   */
+  sectionThreadKeys: ReadonlySet<string> | null;
+  onChangeThreadAffiliation: (threadKey: string, override: "mine" | "other" | null) => void;
 }
 
 const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjectItemProps) {
@@ -955,7 +966,8 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     isManualProjectSorting,
     dragHandleProps,
     section,
-    onChangeAffiliation,
+    sectionThreadKeys,
+    onChangeThreadAffiliation,
   } = props;
   const threadSortOrder = useSettings<SidebarThreadSortOrder>(
     (settings) => settings.sidebarThreadSortOrder,
@@ -1070,7 +1082,14 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   // thread-list change).
   const sidebarThreadByKeyRef = useRef(sidebarThreadByKey);
   sidebarThreadByKeyRef.current = sidebarThreadByKey;
-  const projectThreads = sidebarThreads;
+  // When the project is split across both sidebar sections, restrict the
+  // visible thread list to the subset that belongs to this section instance.
+  const projectThreads = useMemo(() => {
+    if (!sectionThreadKeys) return sidebarThreads;
+    return sidebarThreads.filter((thread) =>
+      sectionThreadKeys.has(scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))),
+    );
+  }, [sidebarThreads, sectionThreadKeys]);
   const projectExpanded = useUiStateStore(
     (state) => state.projectExpandedById[project.projectKey] ?? true,
   );
@@ -1110,10 +1129,13 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     [project.memberProjects],
   );
   const memberThreadCountByPhysicalKey = useMemo(() => {
+    // Counts include threads from BOTH sections — member-level actions
+    // (rename, delete, grouping) operate on the whole project regardless of
+    // which section instance the user right-clicked.
     const counts = new Map<string, number>(
       project.memberProjects.map((member) => [member.physicalProjectKey, 0] as const),
     );
-    for (const thread of projectThreads) {
+    for (const thread of sidebarThreads) {
       const member = memberProjectByScopedKey.get(
         scopedProjectKey(scopeProjectRef(thread.environmentId, thread.projectId)),
       );
@@ -1123,7 +1145,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       counts.set(member.physicalProjectKey, (counts.get(member.physicalProjectKey) ?? 0) + 1);
     }
     return counts;
-  }, [memberProjectByScopedKey, project.memberProjects, projectThreads]);
+  }, [memberProjectByScopedKey, project.memberProjects, sidebarThreads]);
 
   const { projectStatus, visibleProjectThreads, orderedProjectThreadKeys } = useMemo(() => {
     const lastVisitedAtByThreadKey = new Map(
@@ -1524,18 +1546,8 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           };
         };
 
-        const affiliationItemId = "affiliation:toggle";
-        const affiliationItem: ContextMenuItem<string> = {
-          id: affiliationItemId,
-          label: section === "mine" ? "Move to Projects" : "Pin to My projects",
-        };
-        actionHandlers.set(affiliationItemId, () => {
-          onChangeAffiliation(project.projectKey, section === "mine" ? "other" : "mine");
-        });
-
         const clicked = await api.contextMenu.show(
           [
-            affiliationItem,
             buildTargetedItem("rename", "Rename project"),
             buildTargetedItem("grouping", "Project grouping…"),
             buildTargetedItem("copy-path", "Copy Project Path"),
@@ -1559,13 +1571,10 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     [
       copyPathToClipboard,
       handleRemoveProject,
-      onChangeAffiliation,
       openProjectGroupingDialog,
       openProjectRenameDialog,
       project.groupedProjectCount,
       project.memberProjects,
-      project.projectKey,
-      section,
       suppressProjectClickForContextMenuRef,
     ],
   );
@@ -1952,8 +1961,14 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         scopedProjectKey(scopeProjectRef(thread.environmentId, thread.projectId)),
       );
       const threadWorkspacePath = thread.worktreePath ?? threadProject?.cwd ?? project.cwd ?? null;
+      // The affiliation toggle label mirrors the section instance the user
+      // right-clicked from: "mine" instances offer "Move to Projects", "other"
+      // instances offer "Pin to My projects". The override targets the
+      // scoped thread key so the choice survives env churn.
+      const affiliationLabel = section === "mine" ? "Move to Projects" : "Pin to My projects";
       const clicked = await api.contextMenu.show(
         [
+          { id: "affiliation", label: affiliationLabel },
           { id: "rename", label: "Rename thread" },
           { id: "mark-unread", label: "Mark unread" },
           { id: "copy-path", label: "Copy Path" },
@@ -1962,6 +1977,11 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         ],
         position,
       );
+
+      if (clicked === "affiliation") {
+        onChangeThreadAffiliation(threadKey, section === "mine" ? "other" : "mine");
+        return;
+      }
 
       if (clicked === "rename") {
         setRenamingThreadKey(threadKey);
@@ -2013,7 +2033,9 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       deleteThread,
       markThreadUnread,
       memberProjectByScopedKey,
+      onChangeThreadAffiliation,
       project.cwd,
+      section,
     ],
   );
 
@@ -2583,11 +2605,11 @@ const SidebarChromeFooter = memo(function SidebarChromeFooter() {
 });
 
 interface SidebarProjectsSectionsProps {
-  myProjects: readonly SidebarProjectSnapshot[];
-  otherProjects: readonly SidebarProjectSnapshot[];
+  myProjects: readonly SidebarProjectSectionInstance[];
+  otherProjects: readonly SidebarProjectSectionInstance[];
   projectsSectionCollapsed: boolean;
   toggleProjectsSection: () => void;
-  onChangeProjectAffiliation: (projectKey: string, override: "mine" | "other") => void;
+  onChangeThreadAffiliation: (threadKey: string, override: "mine" | "other" | null) => void;
   projectSortOrder: SidebarProjectSortOrder;
   threadSortOrder: SidebarThreadSortOrder;
   projectGroupingMode: SidebarProjectGroupingMode;
@@ -2629,7 +2651,7 @@ const SidebarProjectsSections = memo(function SidebarProjectsSections(
     otherProjects,
     projectsSectionCollapsed,
     toggleProjectsSection,
-    onChangeProjectAffiliation,
+    onChangeThreadAffiliation,
     projectSortOrder,
     threadSortOrder,
     projectGroupingMode,
@@ -2664,9 +2686,50 @@ const SidebarProjectsSections = memo(function SidebarProjectsSections(
   } = props;
 
   const renderProjectList = (
-    projects: readonly SidebarProjectSnapshot[],
+    instances: readonly SidebarProjectSectionInstance[],
     section: "mine" | "other",
   ) => {
+    // Build the set of scoped thread keys that should be visible in this
+    // section instance (passed to SidebarProjectItem so duplicate folder
+    // renders restrict themselves to the right subset). `null` would mean
+    // "show all threads"; we always pass a Set so duplicate folders never
+    // leak threads across sections.
+    const renderProject = (
+      instance: SidebarProjectSectionInstance,
+      dragHandleProps: SortableProjectHandleProps | null,
+    ) => {
+      const sectionThreadKeys = new Set(
+        instance.threads.map((thread) =>
+          scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+        ),
+      );
+      return (
+        <SidebarProjectListRow
+          project={instance.snapshot}
+          isThreadListExpanded={expandedThreadListsByProject.has(instance.snapshot.projectKey)}
+          activeRouteThreadKey={
+            activeRouteProjectKey === instance.snapshot.projectKey ? routeThreadKey : null
+          }
+          newThreadShortcutLabel={newThreadShortcutLabel}
+          handleNewThread={handleNewThread}
+          archiveThread={archiveThread}
+          deleteThread={deleteThread}
+          threadJumpLabelByKey={threadJumpLabelByKey}
+          attachThreadListAutoAnimateRef={attachThreadListAutoAnimateRef}
+          expandThreadListForProject={expandThreadListForProject}
+          collapseThreadListForProject={collapseThreadListForProject}
+          dragInProgressRef={dragInProgressRef}
+          suppressProjectClickAfterDragRef={suppressProjectClickAfterDragRef}
+          suppressProjectClickForContextMenuRef={suppressProjectClickForContextMenuRef}
+          isManualProjectSorting={isManualProjectSorting}
+          dragHandleProps={dragHandleProps}
+          section={section}
+          sectionThreadKeys={sectionThreadKeys}
+          onChangeThreadAffiliation={onChangeThreadAffiliation}
+        />
+      );
+    };
+
     if (isManualProjectSorting) {
       return (
         <DndContext
@@ -2679,35 +2742,18 @@ const SidebarProjectsSections = memo(function SidebarProjectsSections(
         >
           <SidebarMenu>
             <SortableContext
-              items={projects.map((project) => project.projectKey)}
+              // Use bare projectKey for DnD: the same project across both
+              // sections is one logical sort target, so reordering moves
+              // both instances together.
+              items={instances.map((instance) => instance.snapshot.projectKey)}
               strategy={verticalListSortingStrategy}
             >
-              {projects.map((project) => (
-                <SortableProjectItem key={project.projectKey} projectId={project.projectKey}>
-                  {(dragHandleProps) => (
-                    <SidebarProjectItem
-                      project={project}
-                      isThreadListExpanded={expandedThreadListsByProject.has(project.projectKey)}
-                      activeRouteThreadKey={
-                        activeRouteProjectKey === project.projectKey ? routeThreadKey : null
-                      }
-                      newThreadShortcutLabel={newThreadShortcutLabel}
-                      handleNewThread={handleNewThread}
-                      archiveThread={archiveThread}
-                      deleteThread={deleteThread}
-                      threadJumpLabelByKey={threadJumpLabelByKey}
-                      attachThreadListAutoAnimateRef={attachThreadListAutoAnimateRef}
-                      expandThreadListForProject={expandThreadListForProject}
-                      collapseThreadListForProject={collapseThreadListForProject}
-                      dragInProgressRef={dragInProgressRef}
-                      suppressProjectClickAfterDragRef={suppressProjectClickAfterDragRef}
-                      suppressProjectClickForContextMenuRef={suppressProjectClickForContextMenuRef}
-                      isManualProjectSorting={isManualProjectSorting}
-                      dragHandleProps={dragHandleProps}
-                      section={section}
-                      onChangeAffiliation={onChangeProjectAffiliation}
-                    />
-                  )}
+              {instances.map((instance) => (
+                <SortableProjectItem
+                  key={`${instance.snapshot.projectKey}:${section}`}
+                  projectId={instance.snapshot.projectKey}
+                >
+                  {(dragHandleProps) => renderProject(instance, dragHandleProps)}
                 </SortableProjectItem>
               ))}
             </SortableContext>
@@ -2717,30 +2763,10 @@ const SidebarProjectsSections = memo(function SidebarProjectsSections(
     }
     return (
       <SidebarMenu ref={attachProjectListAutoAnimateRef}>
-        {projects.map((project) => (
-          <SidebarProjectListRow
-            key={project.projectKey}
-            project={project}
-            isThreadListExpanded={expandedThreadListsByProject.has(project.projectKey)}
-            activeRouteThreadKey={
-              activeRouteProjectKey === project.projectKey ? routeThreadKey : null
-            }
-            newThreadShortcutLabel={newThreadShortcutLabel}
-            handleNewThread={handleNewThread}
-            archiveThread={archiveThread}
-            deleteThread={deleteThread}
-            threadJumpLabelByKey={threadJumpLabelByKey}
-            attachThreadListAutoAnimateRef={attachThreadListAutoAnimateRef}
-            expandThreadListForProject={expandThreadListForProject}
-            collapseThreadListForProject={collapseThreadListForProject}
-            dragInProgressRef={dragInProgressRef}
-            suppressProjectClickAfterDragRef={suppressProjectClickAfterDragRef}
-            suppressProjectClickForContextMenuRef={suppressProjectClickForContextMenuRef}
-            isManualProjectSorting={isManualProjectSorting}
-            dragHandleProps={null}
-            section={section}
-            onChangeAffiliation={onChangeProjectAffiliation}
-          />
+        {instances.map((instance) => (
+          <React.Fragment key={`${instance.snapshot.projectKey}:${section}`}>
+            {renderProject(instance, null)}
+          </React.Fragment>
         ))}
       </SidebarMenu>
     );
@@ -2844,11 +2870,11 @@ interface SidebarProjectsContentProps {
   handleNewThread: ReturnType<typeof useNewThreadHandler>["handleNewThread"];
   archiveThread: ReturnType<typeof useThreadActions>["archiveThread"];
   deleteThread: ReturnType<typeof useThreadActions>["deleteThread"];
-  myProjects: readonly SidebarProjectSnapshot[];
-  otherProjects: readonly SidebarProjectSnapshot[];
+  myProjects: readonly SidebarProjectSectionInstance[];
+  otherProjects: readonly SidebarProjectSectionInstance[];
   projectsSectionCollapsed: boolean;
   toggleProjectsSection: () => void;
-  onChangeProjectAffiliation: (projectKey: string, override: "mine" | "other") => void;
+  onChangeThreadAffiliation: (threadKey: string, override: "mine" | "other" | null) => void;
   expandedThreadListsByProject: ReadonlySet<string>;
   activeRouteProjectKey: string | null;
   routeThreadKey: string | null;
@@ -2893,7 +2919,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     otherProjects,
     projectsSectionCollapsed,
     toggleProjectsSection,
-    onChangeProjectAffiliation,
+    onChangeThreadAffiliation,
     expandedThreadListsByProject,
     activeRouteProjectKey,
     routeThreadKey,
@@ -2988,7 +3014,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
         otherProjects={otherProjects}
         projectsSectionCollapsed={projectsSectionCollapsed}
         toggleProjectsSection={toggleProjectsSection}
-        onChangeProjectAffiliation={onChangeProjectAffiliation}
+        onChangeThreadAffiliation={onChangeThreadAffiliation}
         projectSortOrder={projectSortOrder}
         threadSortOrder={threadSortOrder}
         projectGroupingMode={projectGroupingMode}
@@ -3313,71 +3339,98 @@ export default function Sidebar() {
   const projectAffiliationOverrideByLogicalKey = useUiStateStore(
     (store) => store.projectAffiliationOverrideByLogicalKey,
   );
+  const threadAffiliationOverrideByThreadKey = useUiStateStore(
+    (store) => store.threadAffiliationOverrideByThreadKey,
+  );
   const projectsSectionCollapsed = useUiStateStore((store) => store.projectsSectionCollapsed);
-  const setProjectAffiliationAction = useUiStateStore((store) => store.setProjectAffiliation);
+  const setThreadAffiliationAction = useUiStateStore((store) => store.setThreadAffiliation);
   const toggleProjectsSectionAction = useUiStateStore((store) => store.toggleProjectsSection);
-  const mentionedParentThreadIds = useMentionedParentThreadIds();
-  const mentionedProjectKeys = useMemo(() => {
-    if (mentionedParentThreadIds.size === 0) {
-      return new Set<string>();
+  const mentionedThreadIds = useMentionedParentThreadIds();
+  // Pre-compute the effective per-thread override map. Legacy project-level
+  // overrides are flattened into a synthetic per-thread map keyed by scoped
+  // thread key so the partition logic only ever has to consult one source.
+  // A real per-thread override always wins over the legacy project pin.
+  const effectiveThreadOverrideByThreadKey = useMemo(() => {
+    const result: Record<string, "mine" | "other"> = {};
+    if (Object.keys(projectAffiliationOverrideByLogicalKey).length > 0) {
+      for (const [logicalKey, override] of Object.entries(projectAffiliationOverrideByLogicalKey)) {
+        const threadsForProject = threadsByProjectKey.get(logicalKey);
+        if (!threadsForProject) continue;
+        for (const thread of threadsForProject) {
+          result[scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))] = override;
+        }
+      }
     }
-    const next = new Set<string>();
-    for (const thread of sidebarThreads) {
-      if (!mentionedParentThreadIds.has(thread.id)) continue;
+    for (const [threadKey, override] of Object.entries(threadAffiliationOverrideByThreadKey)) {
+      result[threadKey] = override;
+    }
+    return result;
+  }, [
+    projectAffiliationOverrideByLogicalKey,
+    threadAffiliationOverrideByThreadKey,
+    threadsByProjectKey,
+  ]);
+  const resolveProjectMember = useCallback(
+    (thread: SidebarThreadSummary): SidebarProjectGroupMember | null => {
       const physicalKey =
         projectPhysicalKeyByScopedRef.get(
           scopedProjectKey(scopeProjectRef(thread.environmentId, thread.projectId)),
         ) ?? scopedProjectKey(scopeProjectRef(thread.environmentId, thread.projectId));
       const logicalKey = physicalToLogicalKey.get(physicalKey) ?? physicalKey;
-      next.add(logicalKey);
-    }
-    return next;
-  }, [
-    mentionedParentThreadIds,
-    physicalToLogicalKey,
-    projectPhysicalKeyByScopedRef,
-    sidebarThreads,
-  ]);
-  const partitionedProjects = useMemo(
+      const snapshot = sortedProjects.find((project) => project.projectKey === logicalKey);
+      if (!snapshot) return null;
+      return (
+        snapshot.memberProjects.find(
+          (member) =>
+            member.id === thread.projectId && member.environmentId === thread.environmentId,
+        ) ?? null
+      );
+    },
+    [physicalToLogicalKey, projectPhysicalKeyByScopedRef, sortedProjects],
+  );
+  const partitionedProjectSections = useMemo(
     () =>
-      partitionProjectsByAffiliation({
+      partitionProjectsBySectionedThreads({
         snapshots: sortedProjects,
+        threadsByProjectKey,
         currentUserId: currentUser?.id ?? null,
         primaryEnvironmentId,
-        mentionedProjectKeys,
-        overrideByLogicalKey: projectAffiliationOverrideByLogicalKey,
+        mentionedThreadIds,
+        overrideByThreadKey: effectiveThreadOverrideByThreadKey,
+        resolveProjectMember,
       }),
     [
       currentUser?.id,
-      mentionedProjectKeys,
+      effectiveThreadOverrideByThreadKey,
+      mentionedThreadIds,
       primaryEnvironmentId,
-      projectAffiliationOverrideByLogicalKey,
+      resolveProjectMember,
       sortedProjects,
+      threadsByProjectKey,
     ],
   );
-  const handleProjectAffiliationChange = useCallback(
-    (projectKey: string, override: "mine" | "other") => {
-      setProjectAffiliationAction(projectKey, override);
+  const handleThreadAffiliationChange = useCallback(
+    (threadKey: string, override: "mine" | "other" | null) => {
+      setThreadAffiliationAction(threadKey, override);
     },
-    [setProjectAffiliationAction],
+    [setThreadAffiliationAction],
   );
   const visibleProjectsForKeyboardNav = useMemo(
     () =>
       projectsSectionCollapsed
-        ? partitionedProjects.mine
-        : [...partitionedProjects.mine, ...partitionedProjects.others],
-    [partitionedProjects.mine, partitionedProjects.others, projectsSectionCollapsed],
+        ? partitionedProjectSections.mine
+        : [...partitionedProjectSections.mine, ...partitionedProjectSections.others],
+    [partitionedProjectSections.mine, partitionedProjectSections.others, projectsSectionCollapsed],
   );
   const visibleSidebarThreadKeys = useMemo(
     () =>
-      visibleProjectsForKeyboardNav.flatMap((project) => {
+      visibleProjectsForKeyboardNav.flatMap((instance) => {
+        const projectKey = instance.snapshot.projectKey;
         const projectThreads = sortThreads(
-          (threadsByProjectKey.get(project.projectKey) ?? []).filter(
-            (thread) => thread.archivedAt === null,
-          ),
+          instance.threads.filter((thread) => thread.archivedAt === null),
           sidebarThreadSortOrder,
         );
-        const projectExpanded = projectExpandedById[project.projectKey] ?? true;
+        const projectExpanded = projectExpandedById[projectKey] ?? true;
         const activeThreadKey = routeThreadKey ?? undefined;
         const pinnedCollapsedThread =
           !projectExpanded && activeThreadKey
@@ -3391,7 +3444,7 @@ export default function Sidebar() {
         if (!shouldShowThreadPanel) {
           return [];
         }
-        const isThreadListExpanded = expandedThreadListsByProject.has(project.projectKey);
+        const isThreadListExpanded = expandedThreadListsByProject.has(projectKey);
         const hasOverflowingThreads = projectThreads.length > sidebarThreadPreviewCount;
         const previewThreads =
           isThreadListExpanded || !hasOverflowingThreads
@@ -3408,7 +3461,6 @@ export default function Sidebar() {
       expandedThreadListsByProject,
       projectExpandedById,
       routeThreadKey,
-      threadsByProjectKey,
       visibleProjectsForKeyboardNav,
     ],
   );
@@ -3739,11 +3791,11 @@ export default function Sidebar() {
             handleNewThread={handleNewThread}
             archiveThread={archiveThread}
             deleteThread={deleteThread}
-            myProjects={partitionedProjects.mine}
-            otherProjects={partitionedProjects.others}
+            myProjects={partitionedProjectSections.mine}
+            otherProjects={partitionedProjectSections.others}
             projectsSectionCollapsed={projectsSectionCollapsed}
             toggleProjectsSection={toggleProjectsSectionAction}
-            onChangeProjectAffiliation={handleProjectAffiliationChange}
+            onChangeThreadAffiliation={handleThreadAffiliationChange}
             expandedThreadListsByProject={expandedThreadListsByProject}
             activeRouteProjectKey={activeRouteProjectKey}
             routeThreadKey={routeThreadKey}

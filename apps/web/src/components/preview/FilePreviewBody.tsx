@@ -1,18 +1,18 @@
 import { getSharedHighlighter, type SupportedLanguages } from "@pierre/diffs";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { PlusIcon } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import ChatMarkdown from "../ChatMarkdown";
 import {
   buildWorkspaceFileDownloadUrl,
   buildWorkspaceFilePreviewUrl,
 } from "../../workspaceFileUrl";
+import { formatWorkspaceRelativePath } from "../../filePathDisplay";
 import { useTheme } from "../../hooks/useTheme";
 import { resolveDiffThemeName } from "../../lib/diffRendering";
+import type { TerminalContextSelection } from "../../lib/terminalContext";
 import { cn } from "../../lib/utils";
-import {
-  type FilePreviewTarget,
-  useFilePreviewStore,
-} from "../../preview/filePreviewStore";
+import { type FilePreviewTarget, useFilePreviewStore } from "../../preview/filePreviewStore";
 
 const HTML_EXTENSIONS = new Set(["html", "htm"]);
 const IMAGE_EXTENSIONS = new Set([
@@ -88,7 +88,19 @@ function extensionOf(filePath: string): string {
   return basename.slice(dot + 1).toLowerCase();
 }
 
-export function FilePreviewBody({ target }: { target: FilePreviewTarget }) {
+export interface FilePreviewBodyProps {
+  readonly target: FilePreviewTarget;
+  /**
+   * Invoked when the user clicks the floating "+" button next to a code
+   * selection in the preview. The callback receives a ready-to-attach
+   * {@link TerminalContextSelection} with `kind: 'file'`. If omitted, the
+   * selection affordance is hidden — keeps the drawer usable in contexts that
+   * have no active composer to receive selections.
+   */
+  readonly onAddSelection?: (selection: TerminalContextSelection) => void;
+}
+
+export function FilePreviewBody({ target, onAddSelection }: FilePreviewBodyProps) {
   const ext = extensionOf(target.filePath);
   const previewUrl = buildWorkspaceFilePreviewUrl({ cwd: target.cwd, path: target.filePath });
 
@@ -131,7 +143,14 @@ export function FilePreviewBody({ target }: { target: FilePreviewTarget }) {
 
   if (ext in TEXT_EXTENSIONS_TO_LANG) {
     const lang = TEXT_EXTENSIONS_TO_LANG[ext] ?? "text";
-    return <FetchedTextPreview target={target} mode="code" lang={lang} />;
+    return (
+      <FetchedTextPreview
+        target={target}
+        mode="code"
+        lang={lang}
+        {...(onAddSelection ? { onAddSelection } : {})}
+      />
+    );
   }
 
   return <BinaryPlaceholder target={target} />;
@@ -141,6 +160,7 @@ interface FetchedTextProps {
   readonly target: FilePreviewTarget;
   readonly mode: "markdown" | "code";
   readonly lang?: string;
+  readonly onAddSelection?: (selection: TerminalContextSelection) => void;
 }
 
 type FetchState =
@@ -150,7 +170,7 @@ type FetchState =
 
 const MAX_TEXT_PREVIEW_BYTES = 2_000_000;
 
-function FetchedTextPreview({ target, mode, lang }: FetchedTextProps) {
+function FetchedTextPreview({ target, mode, lang, onAddSelection }: FetchedTextProps) {
   const previewUrl = buildWorkspaceFilePreviewUrl({ cwd: target.cwd, path: target.filePath });
   const [state, setState] = useState<FetchState>({ kind: "loading" });
 
@@ -208,6 +228,9 @@ function FetchedTextPreview({ target, mode, lang }: FetchedTextProps) {
       lang={language}
       targetLine={target.line}
       targetColumn={target.column}
+      cwd={target.cwd}
+      filePath={target.filePath}
+      {...(onAddSelection ? { onAddSelection } : {})}
     />
   );
 }
@@ -217,6 +240,9 @@ interface CodePreviewProps {
   readonly lang: string;
   readonly targetLine: number | undefined;
   readonly targetColumn: number | undefined;
+  readonly cwd: string;
+  readonly filePath: string;
+  readonly onAddSelection?: (selection: TerminalContextSelection) => void;
 }
 
 interface ParsedHighlight {
@@ -228,10 +254,7 @@ interface ParsedHighlight {
 const FALLBACK_LINE_HTML = "&#8203;"; // zero-width space to preserve empty row height
 
 function escapeHtml(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;");
+  return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
 
 function plainTextFallback(text: string): ParsedHighlight {
@@ -278,7 +301,15 @@ type HighlightState =
   | { kind: "ok"; parsed: ParsedHighlight }
   | { kind: "fallback"; parsed: ParsedHighlight };
 
-function CodePreview({ text, lang, targetLine, targetColumn }: CodePreviewProps) {
+function CodePreview({
+  text,
+  lang,
+  targetLine,
+  targetColumn,
+  cwd,
+  filePath,
+  onAddSelection,
+}: CodePreviewProps) {
   const { resolvedTheme } = useTheme();
   const themeName = resolveDiffThemeName(resolvedTheme);
   const showLineNumbers = useFilePreviewStore((state) => state.showLineNumbers);
@@ -333,13 +364,37 @@ function CodePreview({ text, lang, targetLine, targetColumn }: CodePreviewProps)
     return () => window.cancelAnimationFrame(id);
   }, [highlightState.kind, parsed.lines.length, targetLine]);
 
+  const selectionEnabled = Boolean(onAddSelection);
+  const { selection: codeSelection, clear: clearCodeSelection } = useCodeSelection(
+    containerRef,
+    text,
+    selectionEnabled,
+  );
+
+  const relativeLabel = useMemo(() => formatWorkspaceRelativePath(filePath, cwd), [filePath, cwd]);
+
+  const handleAddSelection = useCallback(() => {
+    if (!codeSelection || !onAddSelection) return;
+    onAddSelection({
+      kind: "file",
+      // Prefix with `file:` so the dedup key in the composer store can never
+      // collide with a real terminalId.
+      terminalId: `file:${filePath}`,
+      terminalLabel: relativeLabel,
+      lineStart: codeSelection.lineStart,
+      lineEnd: codeSelection.lineEnd,
+      text: codeSelection.text,
+    });
+    clearCodeSelection();
+  }, [codeSelection, onAddSelection, filePath, relativeLabel, clearCodeSelection]);
+
   const lineCount = parsed.lines.length;
   const gutterWidth = `${Math.max(2, String(lineCount).length)}ch`;
 
   return (
     <div
       ref={containerRef}
-      className="h-full overflow-auto font-mono text-[12.5px] leading-[1.55]"
+      className="relative h-full overflow-auto font-mono text-[12.5px] leading-[1.55]"
       style={{
         background: parsed.background || undefined,
         color: parsed.color || undefined,
@@ -381,6 +436,29 @@ function CodePreview({ text, lang, targetLine, targetColumn }: CodePreviewProps)
           );
         })}
       </div>
+      {selectionEnabled && codeSelection ? (
+        <button
+          type="button"
+          // preventDefault on mousedown keeps the native text selection alive
+          // until our click handler runs (otherwise mousedown on the button
+          // would collapse the selection before we read it).
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={handleAddSelection}
+          style={{ top: codeSelection.top, left: codeSelection.left }}
+          className={cn(
+            "absolute z-10 inline-flex size-5 items-center justify-center rounded-md",
+            "border border-border/70 bg-background/95 text-foreground shadow-sm backdrop-blur",
+            "transition-colors hover:bg-accent hover:text-accent-foreground",
+            "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+          )}
+          title={`Ajouter lignes ${codeSelection.lineStart}${
+            codeSelection.lineStart === codeSelection.lineEnd ? "" : `-${codeSelection.lineEnd}`
+          } au contexte du chat`}
+          aria-label="Ajouter la sélection au contexte du chat"
+        >
+          <PlusIcon className="size-3.5" aria-hidden />
+        </button>
+      ) : null}
       {targetColumn !== undefined && targetLine !== undefined ? (
         <span className="sr-only">
           Targeted line {targetLine}, column {targetColumn}
@@ -388,6 +466,100 @@ function CodePreview({ text, lang, targetLine, targetColumn }: CodePreviewProps)
       ) : null}
     </div>
   );
+}
+
+interface CodeSelectionInfo {
+  readonly top: number;
+  readonly left: number;
+  readonly lineStart: number;
+  readonly lineEnd: number;
+  readonly text: string;
+}
+
+function getDataLineForNode(node: Node | null, container: HTMLElement): number | null {
+  let current: Node | null = node;
+  while (current && current !== container) {
+    if (current.nodeType === Node.ELEMENT_NODE) {
+      const raw = (current as HTMLElement).getAttribute?.("data-line");
+      if (raw) {
+        const parsedLine = Number.parseInt(raw, 10);
+        if (Number.isFinite(parsedLine)) return parsedLine;
+      }
+    }
+    current = current.parentNode;
+  }
+  return null;
+}
+
+/**
+ * Tracks the user's text selection inside a code preview container and exposes
+ * the line range + slice of the original source text needed to materialize a
+ * file-context selection. Returns `null` when there is no usable selection in
+ * the container (collapsed, outside our DOM, or unable to resolve line nums).
+ */
+function useCodeSelection(
+  containerRef: React.RefObject<HTMLDivElement | null>,
+  sourceText: string,
+  enabled: boolean,
+): { selection: CodeSelectionInfo | null; clear: () => void } {
+  const [selection, setSelection] = useState<CodeSelectionInfo | null>(null);
+
+  useEffect(() => {
+    if (!enabled) {
+      setSelection(null);
+      return;
+    }
+    const container = containerRef.current;
+    if (!container) return;
+
+    const handle = () => {
+      const sel = window.getSelection();
+      if (!sel || sel.isCollapsed || sel.rangeCount === 0) {
+        setSelection(null);
+        return;
+      }
+      const range = sel.getRangeAt(0);
+      if (!container.contains(range.startContainer) || !container.contains(range.endContainer)) {
+        setSelection(null);
+        return;
+      }
+      const startLine = getDataLineForNode(range.startContainer, container);
+      const endLine = getDataLineForNode(range.endContainer, container);
+      if (startLine === null || endLine === null) {
+        setSelection(null);
+        return;
+      }
+      const lineStart = Math.min(startLine, endLine);
+      const lineEnd = Math.max(startLine, endLine);
+      const rangeRect = range.getBoundingClientRect();
+      const containerRect = container.getBoundingClientRect();
+      // Position the floating button just above and slightly left of the
+      // selection start. Coordinates are content-relative so the button
+      // scrolls naturally with the code.
+      const top = Math.max(0, rangeRect.top - containerRect.top + container.scrollTop - 26);
+      const left = Math.max(0, rangeRect.left - containerRect.left + container.scrollLeft - 4);
+      const lines = sourceText.split("\n");
+      const slicedText = lines.slice(lineStart - 1, lineEnd).join("\n");
+      if (slicedText.trim().length === 0) {
+        setSelection(null);
+        return;
+      }
+      setSelection({ top, left, lineStart, lineEnd, text: slicedText });
+    };
+
+    document.addEventListener("selectionchange", handle);
+    return () => {
+      document.removeEventListener("selectionchange", handle);
+    };
+  }, [containerRef, sourceText, enabled]);
+
+  const clear = useCallback(() => {
+    setSelection(null);
+    const sel = typeof window !== "undefined" ? window.getSelection() : null;
+    sel?.removeAllRanges();
+  }, []);
+
+  return { selection, clear };
 }
 
 function BinaryPlaceholder({ target }: { target: FilePreviewTarget }) {

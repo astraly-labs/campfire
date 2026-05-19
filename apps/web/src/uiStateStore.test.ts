@@ -24,6 +24,7 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
     projectExpandedById: {},
     projectOrder: [],
     projectAffiliationOverrideByLogicalKey: {},
+    threadAffiliationOverrideByThreadKey: {},
     projectsSectionCollapsed: true,
     threadLastVisitedAtById: {},
     threadChangedFilesExpandedById: {},

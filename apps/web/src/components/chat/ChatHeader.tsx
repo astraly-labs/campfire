@@ -1,6 +1,8 @@
 import {
   type EnvironmentId,
   type EditorId,
+  type ModelSelection,
+  type ProjectId,
   type ProjectScript,
   type ResolvedKeybindingsConfig,
   type ThreadId,
@@ -16,6 +18,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import ProjectScriptsControl, { type NewProjectScriptInput } from "../ProjectScriptsControl";
 import { Toggle } from "../ui/toggle";
 import { SidebarTrigger } from "../ui/sidebar";
+import { ForkThreadButton } from "./ForkThreadButton";
 import { OpenInPicker } from "./OpenInPicker";
 import { WorkspaceFilesButton } from "./WorkspaceFilesButton";
 import { WorkspaceFileTreeButton } from "./WorkspaceFileTreeButton";
@@ -59,6 +62,15 @@ interface ChatHeaderProps {
    * drafts that have not yet been dispatched server-side.
    */
   assignee: UserRef | null;
+  /**
+   * Source-thread metadata for the "fork to another project" button. Null
+   * for drafts (no transcript to summarise yet); when null, the button is
+   * not rendered.
+   */
+  forkSource: {
+    readonly projectId: ProjectId;
+    readonly modelSelection: ModelSelection;
+  } | null;
 }
 
 export function shouldShowOpenInPicker(input: {
@@ -98,6 +110,7 @@ export const ChatHeader = memo(function ChatHeader({
   onToggleTerminal,
   onToggleDiff,
   assignee,
+  forkSource,
 }: ChatHeaderProps) {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const showOpenInPicker = shouldShowOpenInPicker({
@@ -163,6 +176,14 @@ export const ChatHeader = memo(function ChatHeader({
           threadId={activeThreadId}
         />
         <WorkspaceFilesButton environmentId={activeThreadEnvironmentId} threadId={activeThreadId} />
+        {forkSource && (
+          <ForkThreadButton
+            sourceEnvironmentId={activeThreadEnvironmentId}
+            sourceThreadId={activeThreadId}
+            sourceProjectId={forkSource.projectId}
+            sourceModelSelection={forkSource.modelSelection}
+          />
+        )}
         <Tooltip>
           <TooltipTrigger
             render={
