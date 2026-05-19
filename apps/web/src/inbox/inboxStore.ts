@@ -17,11 +17,13 @@ import type {
   ThreadId,
   UserId,
 } from "@t3tools/contracts";
-import { useEffect, useMemo } from "react";
+import { useMemo } from "react";
 import { create } from "zustand";
 import { useShallow } from "zustand/react/shallow";
 
 import { newCommandId } from "../lib/utils";
+import { useLiveChannel } from "../realtime/liveChannel";
+import { realtimeLog } from "../rpc/realtimeLog";
 import { useUiStateStore } from "../uiStateStore";
 
 interface InboxStore {
@@ -64,14 +66,17 @@ export const useInboxStore = create<InboxStore>((set, get) => ({
 
   applyStreamEvent: (event) => {
     if (event.kind === "snapshot") {
+      realtimeLog("inbox", "snapshot.applied", { itemCount: event.items.length });
       set({ items: sortByLastMention(event.items), status: "ready", errorMessage: null });
       return;
     }
     if (event.kind === "removed") {
+      realtimeLog("inbox", "event.removed", { sideThreadId: event.sideThreadId });
       const current = get().items;
       set({ items: current.filter((item) => item.sideThreadId !== event.sideThreadId) });
       return;
     }
+    realtimeLog("inbox", "event.upserted", { sideThreadId: event.item.sideThreadId });
     const current = get().items;
     const others = current.filter((item) => item.sideThreadId !== event.item.sideThreadId);
     set({ items: sortByLastMention([event.item, ...others]) });
@@ -114,12 +119,16 @@ function sortByLastMention(items: ReadonlyArray<InboxItem>): InboxItem[] {
  * updates fire even when the user is not on `/inbox`.
  */
 export function useInboxLiveSync(api: EnvironmentApi | undefined): void {
-  useEffect(() => {
-    if (!api) return;
-    const apply = useInboxStore.getState().applyStreamEvent;
-    const unsubscribe = api.inbox.subscribe(apply);
-    return () => {
-      unsubscribe();
+  useLiveChannel(() => {
+    if (!api) return null;
+    return {
+      channelKey: "inbox",
+      subscribe: (listener, options) => api.inbox.subscribe(listener, options),
+      applyEvent: useInboxStore.getState().applyStreamEvent,
+      // Belt-and-suspenders: on every reconnect, re-fetch the whole list via
+      // `api.inbox.list()`. The stream itself promises to re-emit a snapshot,
+      // but in remote/Tailscale mode the WS can flap silently and miss it.
+      onResubscribe: () => useInboxStore.getState().refresh(api),
     };
   }, [api]);
 }

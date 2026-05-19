@@ -10,7 +10,6 @@ import * as Stream from "effect/Stream";
 import { RpcClient } from "effect/unstable/rpc";
 
 import { ClientTracingLive } from "../observability/clientTracing";
-import { clearAllTrackedRpcRequests } from "./requestLatencyState";
 import {
   createWsRpcProtocolLayer,
   makeWsRpcProtocolClient,
@@ -18,6 +17,8 @@ import {
   type WsRpcProtocolClient,
   type WsRpcProtocolSocketUrlProvider,
 } from "./protocol";
+import { realtimeLog } from "./realtimeLog";
+import { clearAllTrackedRpcRequests } from "./requestLatencyState";
 import { isTransportConnectionErrorMessage } from "./transportError";
 
 interface SubscribeOptions {
@@ -152,6 +153,7 @@ export class WsTransport {
               ...(hasReceivedValue
                 ? {
                     onStarted: () => {
+                      realtimeLog("transport", "subscribe.resubscribed", { tag: options?.tag });
                       try {
                         options?.onResubscribe?.();
                       } catch {
@@ -199,6 +201,11 @@ export class WsTransport {
             });
           }
           this.hasReportedTransportDisconnect = true;
+          realtimeLog("transport", "subscribe.retry-after-disconnect", {
+            tag: options?.tag,
+            retryDelayMs,
+            error: formattedError,
+          });
           await sleep(retryDelayMs);
         }
       }
@@ -220,11 +227,15 @@ export class WsTransport {
         throw new Error("Transport disposed");
       }
 
+      realtimeLog("transport", "reconnect.begin");
       clearAllTrackedRpcRequests();
       this.lastHeartbeatPongAt = 0;
       const previousSession = this.session;
       this.session = this.createSession();
       await this.closeSession(previousSession);
+      realtimeLog("transport", "reconnect.session-rebuilt", {
+        sessionId: this.activeSessionId,
+      });
     });
 
     this.reconnectChain = reconnectOperation.catch(() => undefined);

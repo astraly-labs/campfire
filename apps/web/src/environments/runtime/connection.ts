@@ -8,6 +8,7 @@ import type {
 } from "@t3tools/contracts";
 import type { KnownEnvironment } from "@t3tools/client-runtime";
 
+import { attachLiveChannel } from "~/realtime/liveChannel";
 import type { WsRpcClient } from "~/rpc/wsRpcClient";
 
 export interface EnvironmentConnection {
@@ -124,8 +125,12 @@ export function createEnvironmentConnection(
       )
     : () => undefined;
 
-  const unsubShell = input.client.orchestration.subscribeShell(
-    (item: Parameters<Parameters<WsRpcClient["orchestration"]["subscribeShell"]>[0]>[0]) => {
+  const unsubShell = attachLiveChannel<
+    Parameters<Parameters<WsRpcClient["orchestration"]["subscribeShell"]>[0]>[0]
+  >({
+    channelKey: "chat-shell",
+    subscribe: (listener, options) => input.client.orchestration.subscribeShell(listener, options),
+    applyEvent: (item) => {
       if (item.kind === "snapshot") {
         input.syncShellSnapshot(item.snapshot, environmentId);
         bootstrapGate.resolve();
@@ -133,15 +138,13 @@ export function createEnvironmentConnection(
       }
       input.applyShellEvent(item, environmentId);
     },
-    {
-      onResubscribe: () => {
-        if (disposed) {
-          return;
-        }
-        bootstrapGate.reset();
-      },
+    onResubscribe: () => {
+      if (disposed) {
+        return;
+      }
+      bootstrapGate.reset();
     },
-  );
+  });
 
   const unsubTerminalEvent = input.client.terminal.onEvent(
     (event: Parameters<Parameters<WsRpcClient["terminal"]["onEvent"]>[0]>[0]) => {

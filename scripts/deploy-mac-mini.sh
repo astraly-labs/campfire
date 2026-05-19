@@ -19,6 +19,7 @@
 #   CAMPFIRE_WEB_HTTPS_PORT     tailscale-serve port for web    (default: 8443)
 #   CAMPFIRE_BACKEND_HTTPS_PORT tailscale-serve port for backend(default: 8444)
 #   CAMPFIRE_BRANCH             remote branch to deploy         (default: campfire/v0)
+#   VITE_REALTIME_DEBUG         1 to enable [🚨 Realtime] console logging (default: off)
 
 set -euo pipefail
 
@@ -61,9 +62,14 @@ ssh "${HOST}" 'lsof -iTCP -sTCP:LISTEN -P 2>/dev/null | awk "/(:5733|:13773)/{pr
 sleep 2
 
 step "Starting dev server with HTTPS env wired"
+REALTIME_DEBUG="${VITE_REALTIME_DEBUG:-}"
+if [[ -n "${REALTIME_DEBUG}" ]]; then
+  step "Realtime debug logging enabled (VITE_REALTIME_DEBUG=${REALTIME_DEBUG})"
+fi
 ssh "${HOST}" "cd ${REPO_PATH} && rm -f /tmp/campfire-mac.log && nohup env \
   VITE_HTTP_URL='${BACKEND_HTTPS}' \
   VITE_WS_URL='${BACKEND_WSS}' \
+  VITE_REALTIME_DEBUG='${REALTIME_DEBUG}' \
   T3CODE_CORS_ORIGIN='${WEB_URL}' \
   ${BUN_BIN} run dev > /tmp/campfire-mac.log 2>&1 < /dev/null &"
 

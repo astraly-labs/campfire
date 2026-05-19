@@ -101,6 +101,15 @@ ssh macmini "cd agent-host/repos/campfire && \
     VITE_WS_URL='wss://jeffs-mac-mini.<tailnet>.ts.net:8444' \
     T3CODE_CORS_ORIGIN='https://jeffs-mac-mini.<tailnet>.ts.net:8443' \
     /opt/homebrew/bin/bun run dev > /tmp/campfire-mac.log 2>&1 < /dev/null &"
+```
+
+Optional realtime debug flag — set `VITE_REALTIME_DEBUG=1` to log every WS lifecycle
+event (heartbeat timeout, session rebuild, stream resubscribe) and every realtime
+snapshot/event applied by the inbox, presence, and chat-shell stores. Tagged
+`[🚨 Realtime <channel>]` in the browser console. Useful for diagnosing flaky
+remote/Tailscale connections.
+
+```bash
 ssh macmini "sleep 20 && grep pairingUrl /tmp/campfire-mac.log"
 ```
 

@@ -18,8 +18,12 @@ import type {
   UserId,
   UserRef,
 } from "@t3tools/contracts";
-import { useEffect, useMemo } from "react";
+import { useMemo } from "react";
 import { create } from "zustand";
+
+import { useLiveChannel } from "../realtime/liveChannel";
+import { realtimeLog } from "../rpc/realtimeLog";
+import { sendPresenceHeartbeatNow } from "./usePresenceHeartbeat";
 
 interface PresenceStore {
   /** Last snapshot the server emitted, indexed by userId for cheap selectors. */
@@ -39,6 +43,7 @@ export const usePresenceStore = create<PresenceStore>((set) => ({
     for (const entry of event.entries) {
       next.set(entry.user.id, entry);
     }
+    realtimeLog("presence", "snapshot.applied", { entryCount: next.size });
     set({ entries: next, status: "subscribed", errorMessage: null });
   },
   reset: () => set({ entries: new Map(), status: "idle", errorMessage: null }),
@@ -49,12 +54,22 @@ export const usePresenceStore = create<PresenceStore>((set) => ({
  * that derives from this store stays live without re-subscribing.
  */
 export function usePresenceLiveSync(api: EnvironmentApi | undefined): void {
-  useEffect(() => {
-    if (!api) return;
-    const apply = usePresenceStore.getState().applySnapshot;
-    const unsubscribe = api.presence.subscribe(apply);
-    return () => {
-      unsubscribe();
+  useLiveChannel(() => {
+    if (!api) return null;
+    return {
+      channelKey: "presence",
+      subscribe: (listener, options) => api.presence.subscribe(listener, options),
+      applyEvent: usePresenceStore.getState().applySnapshot,
+      // After a reconnect, fire an immediate heartbeat so the server-side
+      // publish-only-if-changed filter doesn't suppress our entry. Without
+      // this, in remote/Tailscale mode the new snapshot can be missing this
+      // user until the next heartbeat tick (up to 4s).
+      onResubscribe: () =>
+        sendPresenceHeartbeatNow(api).catch((error) => {
+          realtimeLog("presence", "resubscribe.heartbeat-failed", {
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }),
     };
   }, [api]);
 }

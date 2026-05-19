@@ -15,6 +15,7 @@ import type {
 } from "@t3tools/contracts";
 import { useEffect, useRef } from "react";
 
+import { realtimeLog } from "../rpc/realtimeLog";
 import { deriveSideThreadId, useSideThreadStore } from "../sidethread/sideThreadStore";
 
 /** Keepalive cadence. Must be < server PRESENCE_TTL_MS (12 s) by a fat margin. */
@@ -30,6 +31,22 @@ const TYPING_INDICATOR_TTL_MS = 3_000;
 // just to update a transient flag, which would tank the composer's perf.
 let lastTypingFocus: PresenceTypingFocus | null = null;
 let lastTypingAt = 0;
+
+// Module-level mirror of the currently-mounted heartbeat focus, so non-hook
+// callers (e.g. WS resubscribe handlers) can fire an out-of-band heartbeat
+// to nudge the server into republishing the presence snapshot.
+let lastKnownFocus: { parentThreadId: ThreadId | null; sideThreadId: SideThreadId | null } = {
+  parentThreadId: null,
+  sideThreadId: null,
+};
+
+export async function sendPresenceHeartbeatNow(api: EnvironmentApi): Promise<void> {
+  await api.presence.heartbeat({
+    parentThreadId: lastKnownFocus.parentThreadId,
+    sideThreadId: lastKnownFocus.sideThreadId,
+    typingIn: readTypingFocus(Date.now()),
+  });
+}
 
 /**
  * Called by composers on every keystroke (or input event) to mark the user
@@ -92,6 +109,10 @@ export function usePresenceHeartbeat(input: PresenceHeartbeatHookInput): void {
     sideThreadId: SideThreadId | null;
   }>({ parentThreadId, sideThreadId });
   focusRef.current = { parentThreadId, sideThreadId };
+  // Mirror the focus to module-level so out-of-band callers (e.g. the WS
+  // resubscribe handler in usePresenceLiveSync) can fire a heartbeat without
+  // re-reading React state.
+  lastKnownFocus = { parentThreadId, sideThreadId };
 
   // Fire an immediate heartbeat when the surface changes — typing-focus
   // changes are handled by the interval (max 1 s delay because the typing
@@ -103,7 +124,12 @@ export function usePresenceHeartbeat(input: PresenceHeartbeatHookInput): void {
       sideThreadId,
       typingIn: readTypingFocus(Date.now()),
     };
-    void api.presence.heartbeat(body).catch(() => {
+    void api.presence.heartbeat(body).catch((error) => {
+      realtimeLog("presence", "heartbeat.failed-on-focus-change", {
+        error: error instanceof Error ? error.message : String(error),
+        parentThreadId,
+        sideThreadId,
+      });
       // Swallow — the next tick will retry.
     });
   }, [api, parentThreadId, sideThreadId]);
@@ -117,7 +143,10 @@ export function usePresenceHeartbeat(input: PresenceHeartbeatHookInput): void {
         sideThreadId: sTid,
         typingIn: readTypingFocus(Date.now()),
       };
-      void api.presence.heartbeat(body).catch(() => {
+      void api.presence.heartbeat(body).catch((error) => {
+        realtimeLog("presence", "heartbeat.failed-on-tick", {
+          error: error instanceof Error ? error.message : String(error),
+        });
         // Swallow — heartbeat loss is non-fatal; the server TTL handles it.
       });
     }, HEARTBEAT_INTERVAL_MS);

@@ -6,6 +6,7 @@ import * as Schedule from "effect/Schedule";
 import { RpcClient, RpcSerialization } from "effect/unstable/rpc";
 import * as Socket from "effect/unstable/socket/Socket";
 
+import { realtimeLog } from "./realtimeLog";
 import {
   acknowledgeRpcRequest,
   clearAllTrackedRpcRequests,
@@ -307,6 +308,7 @@ export function createWsRpcProtocolLayer(
       }),
       onPingTimeout: Effect.sync(() => {
         if (lifecycle.isActive()) {
+          realtimeLog("transport", "heartbeat.timeout");
           clearAllTrackedRpcRequests();
           recordWsConnectionErrored(
             "WebSocket heartbeat timed out.",
