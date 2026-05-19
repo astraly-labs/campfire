@@ -282,7 +282,7 @@ export const OpenInPicker = memo(function OpenInPicker({
   ]);
 
   const remoteDisabledTitle = isRemoteBrowser
-    ? `Only Cursor and VS Code-family editors can open over SSH-remote (host: ${sshHost || "unknown"}).`
+    ? `Only Cursor, VS Code-family editors, and Zed can open over SSH-remote (host: ${sshHost || "unknown"}).`
     : undefined;
   const primaryButtonTitle = preferredEditorBlockedByRemote ? remoteDisabledTitle : undefined;
 

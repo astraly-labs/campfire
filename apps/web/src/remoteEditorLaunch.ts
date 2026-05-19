@@ -1,30 +1,36 @@
 /**
- * Remote-SSH launch URLs for VS Code-family editors.
+ * Remote-SSH launch URLs for editors that can reconnect over SSH from the
+ * viewer's local machine.
  *
  * When the browser is connected to a remote backend (e.g. the Mac mini via
  * Tailscale serve), `shell.openInEditor` over RPC would spawn the editor on
  * the backend's display — useless from a remote machine. Instead we hand the
- * browser a `cursor://vscode-remote/ssh-remote+<host>/<path>` URL so the
- * editor opens locally and connects back over SSH-remote.
+ * browser a deep-link URL so the *local* editor opens and connects back over
+ * SSH:
+ *   - VS Code family: `<scheme>://vscode-remote/ssh-remote+<host><path>`
+ *   - Zed:            `zed://ssh/<host><path>` (see https://zed.dev/docs/remote-development)
  */
 import type { EditorId } from "@t3tools/contracts";
 import { isLoopbackHostname } from "./environments/primary";
 
-const REMOTE_SSH_URL_SCHEMES = {
-  cursor: "cursor",
-  vscode: "vscode",
-  "vscode-insiders": "vscode-insiders",
-  vscodium: "vscodium",
-} as const satisfies Partial<Record<EditorId, string>>;
+type RemoteSshUrlBuilder = (host: string, encodedPath: string) => string;
 
-export type RemoteSshEditorId = keyof typeof REMOTE_SSH_URL_SCHEMES;
+const REMOTE_SSH_URL_BUILDERS = {
+  cursor: (host, p) => `cursor://vscode-remote/ssh-remote+${host}${p}`,
+  vscode: (host, p) => `vscode://vscode-remote/ssh-remote+${host}${p}`,
+  "vscode-insiders": (host, p) => `vscode-insiders://vscode-remote/ssh-remote+${host}${p}`,
+  vscodium: (host, p) => `vscodium://vscode-remote/ssh-remote+${host}${p}`,
+  zed: (host, p) => `zed://ssh/${host}${p}`,
+} as const satisfies Partial<Record<EditorId, RemoteSshUrlBuilder>>;
+
+export type RemoteSshEditorId = keyof typeof REMOTE_SSH_URL_BUILDERS;
 
 export const REMOTE_SSH_EDITOR_IDS = Object.keys(
-  REMOTE_SSH_URL_SCHEMES,
+  REMOTE_SSH_URL_BUILDERS,
 ) as ReadonlyArray<RemoteSshEditorId>;
 
 export function editorSupportsRemoteSshLaunch(editor: EditorId): editor is RemoteSshEditorId {
-  return editor in REMOTE_SSH_URL_SCHEMES;
+  return editor in REMOTE_SSH_URL_BUILDERS;
 }
 
 export interface ResolveRemoteSshLaunchUrlInput {
@@ -38,12 +44,11 @@ export function resolveRemoteSshLaunchUrl(input: ResolveRemoteSshLaunchUrlInput)
 
   const host = input.sshHost.trim();
   if (!host) return null;
-  // Bare hostnames + optional `user@host`. Reject anything that would break the URL authority.
+  // Bare hostnames + optional `user@host[:port]`. Reject anything that would break the URL authority.
   if (/[\s/?#]/.test(host)) return null;
 
   const path = input.cwd.startsWith("/") ? input.cwd : `/${input.cwd}`;
-  const scheme = REMOTE_SSH_URL_SCHEMES[input.editor];
-  return `${scheme}://vscode-remote/ssh-remote+${host}${encodeURI(path)}`;
+  return REMOTE_SSH_URL_BUILDERS[input.editor](host, encodeURI(path));
 }
 
 export function shouldUseRemoteSshLaunch(

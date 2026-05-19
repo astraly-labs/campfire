@@ -15,8 +15,11 @@ describe("editorSupportsRemoteSshLaunch", () => {
     expect(editorSupportsRemoteSshLaunch("vscodium")).toBe(true);
   });
 
+  it("returns true for Zed (has its own zed://ssh/... scheme)", () => {
+    expect(editorSupportsRemoteSshLaunch("zed")).toBe(true);
+  });
+
   it("returns false for unsupported editors", () => {
-    expect(editorSupportsRemoteSshLaunch("zed")).toBe(false);
     expect(editorSupportsRemoteSshLaunch("idea")).toBe(false);
     expect(editorSupportsRemoteSshLaunch("file-manager")).toBe(false);
     expect(editorSupportsRemoteSshLaunch("trae")).toBe(false);
@@ -68,8 +71,28 @@ describe("resolveRemoteSshLaunchUrl", () => {
     ).toBe("cursor://vscode-remote/ssh-remote+matt@macmini/x");
   });
 
+  it("builds a Zed URL using the zed://ssh/<host><path> scheme", () => {
+    expect(
+      resolveRemoteSshLaunchUrl({
+        editor: "zed",
+        cwd: "/Users/foo/proj",
+        sshHost: "mac-mini.tail-123.ts.net",
+      }),
+    ).toBe("zed://ssh/mac-mini.tail-123.ts.net/Users/foo/proj");
+  });
+
+  it("supports user@host authority and path encoding for Zed", () => {
+    expect(
+      resolveRemoteSshLaunchUrl({
+        editor: "zed",
+        cwd: "/Users/foo/my project",
+        sshHost: "alice@mac-mini",
+      }),
+    ).toBe("zed://ssh/alice@mac-mini/Users/foo/my%20project");
+  });
+
   it("returns null for editors without a known remote-SSH scheme", () => {
-    expect(resolveRemoteSshLaunchUrl({ editor: "zed", cwd: "/x", sshHost: "h" })).toBeNull();
+    expect(resolveRemoteSshLaunchUrl({ editor: "idea", cwd: "/x", sshHost: "h" })).toBeNull();
     expect(
       resolveRemoteSshLaunchUrl({ editor: "file-manager", cwd: "/x", sshHost: "h" }),
     ).toBeNull();

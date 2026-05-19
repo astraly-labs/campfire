@@ -1369,13 +1369,41 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       }
 
       const memberProjectRef = scopeProjectRef(member.environmentId, member.id);
-      const memberThreadCount = memberThreadCountByPhysicalKey.get(member.physicalProjectKey) ?? 0;
-      if (memberThreadCount > 0) {
+
+      const showRemoveErrorToast = (error: unknown) => {
+        const message = error instanceof Error ? error.message : "Unknown error removing project.";
+        console.error("Failed to remove project", {
+          projectId: member.id,
+          environmentId: member.environmentId,
+          error,
+        });
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: `Failed to remove "${member.name}"`,
+            description: message,
+          }),
+        );
+      };
+
+      // The server enforces a "no orphan threads" invariant on project.delete
+      // and surfaces it via OrchestrationCommandInvariantError. Detect that
+      // exact phrase so we can re-prompt the user with the same "Delete
+      // anyway" flow rather than dead-ending on a generic error toast.
+      const isProjectNotEmptyError = (error: unknown): boolean =>
+        error instanceof Error &&
+        error.message.includes("is not empty and cannot be deleted without force=true");
+
+      const promptDeleteAnyway = (reason: "local-count" | "server-invariant") => {
+        const description =
+          reason === "server-invariant"
+            ? "The project still has threads on the server. Delete anyway?"
+            : "Delete all threads in this project before removing it.";
         const warningToastId = toastManager.add(
           stackedThreadToast({
             type: "warning",
             title: "Project is not empty",
-            description: "Delete all threads in this project before removing it.",
+            description,
             actionVariant: "destructive",
             actionProps: {
               children: "Delete anyway",
@@ -1418,26 +1446,16 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
                   }
 
                   await removeProject(member, { force: true });
-                })().catch((error) => {
-                  const message =
-                    error instanceof Error ? error.message : "Unknown error removing project.";
-                  console.error("Failed to remove project", {
-                    projectId: member.id,
-                    environmentId: member.environmentId,
-                    error,
-                  });
-                  toastManager.add(
-                    stackedThreadToast({
-                      type: "error",
-                      title: `Failed to remove "${member.name}"`,
-                      description: message,
-                    }),
-                  );
-                });
+                })().catch(showRemoveErrorToast);
               },
             },
           }),
         );
+      };
+
+      const memberThreadCount = memberThreadCountByPhysicalKey.get(member.physicalProjectKey) ?? 0;
+      if (memberThreadCount > 0) {
+        promptDeleteAnyway("local-count");
         return;
       }
 
@@ -1455,19 +1473,11 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       try {
         await removeProject(member);
       } catch (error) {
-        const message = error instanceof Error ? error.message : "Unknown error removing project.";
-        console.error("Failed to remove project", {
-          projectId: member.id,
-          environmentId: member.environmentId,
-          error,
-        });
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: `Failed to remove "${member.name}"`,
-            description: message,
-          }),
-        );
+        if (isProjectNotEmptyError(error)) {
+          promptDeleteAnyway("server-invariant");
+          return;
+        }
+        showRemoveErrorToast(error);
       }
     },
     [memberThreadCountByPhysicalKey, removeProject],
