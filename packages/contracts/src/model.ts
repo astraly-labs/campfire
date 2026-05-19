@@ -152,6 +152,20 @@ export const DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER: Partial<
   [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
 };
 
+/**
+ * Models used for the "Take a look" conversation summary. Picked to be fast
+ * and cheap — the summary runs on every turn end while a recap is active, so
+ * latency/cost matters more than peak quality.
+ */
+export const CONVERSATION_SUMMARY_MODEL_BY_PROVIDER: Partial<
+  Record<ProviderDriverKind, string>
+> = {
+  [CODEX_DRIVER_KIND]: "gpt-5.3-codex-spark",
+  [CLAUDE_DRIVER_KIND]: "claude-haiku-4-5",
+  [CURSOR_DRIVER_KIND]: "composer-2",
+  [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
+};
+
 export const MODEL_SLUG_ALIASES_BY_PROVIDER: Partial<
   Record<ProviderDriverKind, Record<string, string>>
 > = {

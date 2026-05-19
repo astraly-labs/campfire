@@ -67,6 +67,23 @@ export async function takeALook(params: TakeALookParams): Promise<void> {
     text,
     mentions: targets,
   });
+
+  // Pre-warm the conversation summary so the teammate gets an instant recap
+  // when they open the thread from their inbox. Fire-and-forget — the worst
+  // case is the UI's "Generate" affordance kicking in on first open. Guarded
+  // because some test environments stub a partial EnvironmentApi.
+  try {
+    const orchestration = params.api.orchestration;
+    if (orchestration && typeof orchestration.generateConversationSummary === "function") {
+      void orchestration
+        .generateConversationSummary({ threadId: params.parentThreadId, force: false })
+        .catch(() => {
+          // Swallowed on purpose; the toggle in `ThreadSummaryBar` will retry.
+        });
+    }
+  } catch {
+    // Defensive: nothing to do — the recap just won't be pre-warmed.
+  }
 }
 
 /**

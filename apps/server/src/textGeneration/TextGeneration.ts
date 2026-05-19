@@ -110,6 +110,28 @@ export interface ThreadHandoffGenerationResult {
   prompt: string;
 }
 
+/**
+ * Input for the "Take a look" recap that surfaces above the composer. The
+ * caller forces a cheap model via `modelSelection` — Haiku for Claude, Spark
+ * for Codex — because this runs frequently (on every turn end while a summary
+ * exists) and accuracy matters less than latency/cost here.
+ */
+export interface ConversationSummaryGenerationInput {
+  /** Working directory of the source thread. */
+  cwd: string;
+  /** Optional thread title used to anchor the framing of the summary. */
+  threadTitle?: string | null | undefined;
+  /** Ordered transcript messages (oldest first). */
+  transcript: ReadonlyArray<ThreadHandoffTranscriptMessage>;
+  /** What model and provider to use for generation. */
+  modelSelection: ModelSelection;
+}
+
+export interface ConversationSummaryGenerationResult {
+  /** 2-3 sentence plain-prose recap of the conversation. */
+  summary: string;
+}
+
 export interface TextGenerationService {
   generateCommitMessage(
     input: CommitMessageGenerationInput,
@@ -120,6 +142,9 @@ export interface TextGenerationService {
   generateThreadHandoff(
     input: ThreadHandoffGenerationInput,
   ): Promise<ThreadHandoffGenerationResult>;
+  generateConversationSummary(
+    input: ConversationSummaryGenerationInput,
+  ): Promise<ConversationSummaryGenerationResult>;
 }
 
 /**
@@ -162,6 +187,14 @@ export interface TextGenerationShape {
   readonly generateThreadHandoff: (
     input: ThreadHandoffGenerationInput,
   ) => Effect.Effect<ThreadHandoffGenerationResult, TextGenerationError>;
+
+  /**
+   * Generate a 2-3 sentence recap of a conversation for a teammate joining
+   * mid-thread (the "Take a look" Summary toggle).
+   */
+  readonly generateConversationSummary: (
+    input: ConversationSummaryGenerationInput,
+  ) => Effect.Effect<ConversationSummaryGenerationResult, TextGenerationError>;
 }
 
 /**
@@ -181,7 +214,8 @@ export type TextGenerationOp =
   | "generatePrContent"
   | "generateBranchName"
   | "generateThreadTitle"
-  | "generateThreadHandoff";
+  | "generateThreadHandoff"
+  | "generateConversationSummary";
 
 const resolveInstance = (
   registry: ProviderInstanceRegistryShape,
@@ -223,6 +257,10 @@ export const makeTextGenerationFromRegistry = (
   generateThreadHandoff: (input) =>
     resolveInstance(registry, "generateThreadHandoff", input.modelSelection.instanceId).pipe(
       Effect.flatMap((textGeneration) => textGeneration.generateThreadHandoff(input)),
+    ),
+  generateConversationSummary: (input) =>
+    resolveInstance(registry, "generateConversationSummary", input.modelSelection.instanceId).pipe(
+      Effect.flatMap((textGeneration) => textGeneration.generateConversationSummary(input)),
     ),
 });
 

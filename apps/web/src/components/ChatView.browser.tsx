@@ -230,6 +230,9 @@ function createMockEnvironmentApi(input: {
       generateThreadHandoff: (() => {
         throw new Error("Not implemented in browser test.");
       }) as EnvironmentApi["orchestration"]["generateThreadHandoff"],
+      generateConversationSummary: (() => {
+        throw new Error("Not implemented in browser test.");
+      }) as EnvironmentApi["orchestration"]["generateConversationSummary"],
     },
     sideThread: {} as EnvironmentApi["sideThread"],
     identity: {} as EnvironmentApi["identity"],

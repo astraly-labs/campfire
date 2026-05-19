@@ -145,6 +145,7 @@ import {
 } from "../lib/terminalContext";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
+import { ThreadSummaryBar } from "./chat/ThreadSummaryBar";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
@@ -3634,6 +3635,13 @@ export default function ChatView(props: ChatViewProps) {
           >
             <div className="relative isolate">
               <ComposerBannerStack className="relative z-0" items={composerBannerItems} />
+              {activeThreadId && isServerThread && activeThread?.environmentId ? (
+                <ThreadSummaryBar
+                  environmentId={activeThread.environmentId}
+                  threadId={activeThreadId}
+                  latestTurnId={activeThread?.latestTurn?.turnId ?? null}
+                />
+              ) : null}
               <div className="relative z-10">
                 <ChatComposer
                   composerRef={composerRef}

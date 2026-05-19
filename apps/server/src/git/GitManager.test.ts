@@ -393,6 +393,10 @@ function createTextGeneration(overrides: Partial<FakeGitTextGeneration> = {}): T
       // loudly if a future test starts depending on it without configuring
       // the fake explicitly.
       Effect.die(new Error("generateThreadHandoff is not configured in GitManager tests")),
+    generateConversationSummary: () =>
+      Effect.die(
+        new Error("generateConversationSummary is not configured in GitManager tests"),
+      ),
   };
 }
 

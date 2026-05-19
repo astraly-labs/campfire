@@ -24,6 +24,7 @@ import {
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
+  buildConversationSummaryPrompt,
   buildPrContentPrompt,
   buildThreadHandoffPrompt,
   buildThreadTitlePrompt,
@@ -424,11 +425,33 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     };
   });
 
+  const generateConversationSummary: TextGenerationShape["generateConversationSummary"] = Effect.fn(
+    "CodexTextGeneration.generateConversationSummary",
+  )(function* (input) {
+    const { prompt, outputSchema } = buildConversationSummaryPrompt({
+      transcript: input.transcript,
+      threadTitle: input.threadTitle,
+    });
+
+    const generated = yield* runCodexJson({
+      operation: "generateConversationSummary",
+      cwd: input.cwd,
+      prompt,
+      outputSchemaJson: outputSchema,
+      modelSelection: input.modelSelection,
+    });
+
+    return {
+      summary: generated.summary.trim(),
+    };
+  });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
     generateThreadHandoff,
+    generateConversationSummary,
   } satisfies TextGenerationShape;
 });

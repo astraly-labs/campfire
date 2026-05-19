@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
+  buildConversationSummaryPrompt,
   buildPrContentPrompt,
   buildThreadHandoffPrompt,
   buildThreadTitlePrompt,
@@ -223,6 +224,48 @@ describe("buildThreadHandoffPrompt", () => {
     // limitSection appends a [truncated] marker for over-limit sections.
     expect(result.prompt).toContain("[truncated]");
     // The full payload should not survive verbatim.
+    expect(result.prompt.includes(huge)).toBe(false);
+  });
+});
+
+describe("buildConversationSummaryPrompt", () => {
+  it("frames the prompt for a teammate joining mid-thread", () => {
+    const result = buildConversationSummaryPrompt({
+      threadTitle: "Investigate adverse selection",
+      transcript: [
+        { role: "user", text: "Look into adverse selection on BTC-PERP." },
+        {
+          role: "agent",
+          text: "Found that fill ratios drop sharply after large quote moves.",
+        },
+      ],
+    });
+
+    expect(result.prompt).toContain("joining mid-thread");
+    expect(result.prompt).toContain("Return a JSON object with key: summary.");
+    expect(result.prompt).toContain("2 to 3 sentences");
+    expect(result.prompt).toContain("Under 60 words total.");
+    expect(result.prompt).toContain("Thread title: Investigate adverse selection");
+    expect(result.prompt).toContain("[1] User:");
+    expect(result.prompt).toContain("[2] Agent:");
+    expect(result.prompt).toContain("Look into adverse selection on BTC-PERP.");
+  });
+
+  it("omits the title line when no thread title is provided", () => {
+    const result = buildConversationSummaryPrompt({
+      transcript: [{ role: "user", text: "hello" }],
+    });
+
+    expect(result.prompt).not.toContain("Thread title:");
+  });
+
+  it("truncates oversized individual messages", () => {
+    const huge = "A".repeat(7_000);
+    const result = buildConversationSummaryPrompt({
+      transcript: [{ role: "agent", text: huge }],
+    });
+
+    expect(result.prompt).toContain("[truncated]");
     expect(result.prompt.includes(huge)).toBe(false);
   });
 });

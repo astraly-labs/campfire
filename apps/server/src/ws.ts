@@ -30,6 +30,7 @@ import {
   OrchestrationDispatchCommandError,
   type OrchestrationEvent,
   type OrchestrationShellStreamEvent,
+  OrchestrationGenerateConversationSummaryError,
   OrchestrationGenerateThreadHandoffError,
   OrchestrationGetFullThreadDiffError,
   OrchestrationGetSnapshotError,
@@ -69,6 +70,8 @@ import {
   observeRpcStream,
   observeRpcStreamEffect,
 } from "./observability/RpcInstrumentation.ts";
+import { summarizeConversation } from "./orchestration/conversationSummary.ts";
+import { ProviderInstanceRegistry } from "./provider/Services/ProviderInstanceRegistry.ts";
 import { ProviderRegistry } from "./provider/Services/ProviderRegistry.ts";
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
 import { ServerLifecycleEvents } from "./serverLifecycleEvents.ts";
@@ -197,6 +200,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId, initialIdentity: Resolv
       const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
       const terminalManager = yield* TerminalManager;
       const providerRegistry = yield* ProviderRegistry;
+      const providerInstanceRegistry = yield* ProviderInstanceRegistry;
       const providerMaintenanceRunner = yield* ProviderMaintenanceRunner.ProviderMaintenanceRunner;
       const config = yield* ServerConfig;
       const lifecycleEvents = yield* ServerLifecycleEvents;
@@ -1049,6 +1053,60 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId, initialIdentity: Resolv
                 );
 
               return { prompt: generated.prompt };
+            }),
+            { "rpc.aggregate": "orchestration" },
+          ),
+        [ORCHESTRATION_WS_METHODS.generateConversationSummary]: (input) =>
+          observeRpcEffect(
+            ORCHESTRATION_WS_METHODS.generateConversationSummary,
+            Effect.gen(function* () {
+              const threadOpt = yield* projectionSnapshotQuery
+                .getThreadDetailById(input.threadId)
+                .pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new OrchestrationGenerateConversationSummaryError({
+                        message: `Failed to load thread ${input.threadId}`,
+                        cause,
+                      }),
+                  ),
+                );
+              if (Option.isNone(threadOpt)) {
+                return yield* new OrchestrationGenerateConversationSummaryError({
+                  message: `Thread ${input.threadId} was not found`,
+                });
+              }
+              const thread = threadOpt.value;
+
+              const projectOpt = yield* projectionSnapshotQuery
+                .getProjectShellById(thread.projectId)
+                .pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new OrchestrationGenerateConversationSummaryError({
+                        message: "Failed to load project metadata for summary",
+                        cause,
+                      }),
+                  ),
+                );
+              const workspaceRoot = Option.match(projectOpt, {
+                onNone: () => null,
+                onSome: (project) => project.workspaceRoot,
+              });
+              if (workspaceRoot === null) {
+                return yield* new OrchestrationGenerateConversationSummaryError({
+                  message: `Project ${thread.projectId} was not found for summary generation`,
+                });
+              }
+
+              const now = yield* nowIso;
+              return yield* summarizeConversation({
+                thread,
+                workspaceRoot,
+                registry: providerInstanceRegistry,
+                force: input.force === true,
+                now,
+              });
             }),
             { "rpc.aggregate": "orchestration" },
           ),

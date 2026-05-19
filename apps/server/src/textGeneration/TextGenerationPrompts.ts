@@ -251,6 +251,66 @@ function formatTranscriptMessage(
   return `[${index + 1}] ${label}:\n${body}`;
 }
 
+// ---------------------------------------------------------------------------
+// Conversation summary (Take-a-look recap)
+// ---------------------------------------------------------------------------
+
+/**
+ * Same transcript shape as the handoff flow; reused to keep the type surface
+ * small. A teammate joining mid-conversation reads this to catch up without
+ * scrolling the entire thread.
+ */
+export interface ConversationSummaryPromptInput {
+  /** Ordered transcript messages from the source thread (oldest first). */
+  transcript: ReadonlyArray<ThreadHandoffTranscriptMessageInput>;
+  /** Optional thread title to anchor the summary's framing. */
+  threadTitle?: string | null | undefined;
+}
+
+const CONVERSATION_SUMMARY_PER_MESSAGE_CHAR_LIMIT = 6_000;
+const CONVERSATION_SUMMARY_TRANSCRIPT_CHAR_LIMIT = 60_000;
+
+function formatSummaryTranscriptMessage(
+  message: ThreadHandoffTranscriptMessageInput,
+  index: number,
+): string {
+  const label = message.role === "user" ? "User" : "Agent";
+  const body = limitSection(message.text.trim(), CONVERSATION_SUMMARY_PER_MESSAGE_CHAR_LIMIT);
+  return `[${index + 1}] ${label}:\n${body}`;
+}
+
+export function buildConversationSummaryPrompt(input: ConversationSummaryPromptInput) {
+  const transcriptBody = input.transcript.map(formatSummaryTranscriptMessage).join("\n\n");
+  const titleLine = input.threadTitle?.trim()
+    ? `Thread title: ${input.threadTitle.trim()}`
+    : null;
+
+  const prompt = [
+    "You write very short recaps of an ongoing coding conversation, intended for a",
+    "teammate who is joining mid-thread and has not read any of the messages.",
+    "",
+    "Return a JSON object with key: summary.",
+    "Rules for the `summary` field:",
+    "- Plain prose, 2 to 3 sentences. No Markdown headings, no bullet points.",
+    "- Lead with what the user is trying to accomplish.",
+    "- Then mention what has been decided, what is currently blocked, and the",
+    "  immediate next step if obvious from the transcript.",
+    "- Skip greetings, tool call noise, and verbatim quotes.",
+    "- Stay grounded in the transcript. Do not invent files, symbols, or facts.",
+    "- Under 60 words total.",
+    ...(titleLine ? ["", titleLine] : []),
+    "",
+    "Transcript (oldest first):",
+    limitSection(transcriptBody, CONVERSATION_SUMMARY_TRANSCRIPT_CHAR_LIMIT),
+  ].join("\n");
+
+  const outputSchema = Schema.Struct({
+    summary: Schema.String,
+  });
+
+  return { prompt, outputSchema };
+}
+
 export function buildThreadHandoffPrompt(input: ThreadHandoffPromptInput) {
   const transcriptBody = input.transcript.map(formatTranscriptMessage).join("\n\n");
   const sourceProjectLabel = input.sourceProjectName?.trim() || input.sourceCwd;

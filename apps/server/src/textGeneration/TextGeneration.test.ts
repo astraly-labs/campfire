@@ -22,6 +22,8 @@ const makeStubTextGeneration = (overrides: Partial<TextGenerationShape>): TextGe
   generateThreadTitle: () => Effect.die("generateThreadTitle stub not configured for this test"),
   generateThreadHandoff: () =>
     Effect.die("generateThreadHandoff stub not configured for this test"),
+  generateConversationSummary: () =>
+    Effect.die("generateConversationSummary stub not configured for this test"),
   ...overrides,
 });
 

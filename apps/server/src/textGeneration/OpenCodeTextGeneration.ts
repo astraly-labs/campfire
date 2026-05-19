@@ -20,6 +20,7 @@ import { resolveAttachmentPath } from "../attachmentStore.ts";
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
+  buildConversationSummaryPrompt,
   buildPrContentPrompt,
   buildThreadHandoffPrompt,
   buildThreadTitlePrompt,
@@ -476,11 +477,32 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
     };
   });
 
+  const generateConversationSummary: TextGenerationShape["generateConversationSummary"] = Effect.fn(
+    "OpenCodeTextGeneration.generateConversationSummary",
+  )(function* (input) {
+    const { prompt, outputSchema } = buildConversationSummaryPrompt({
+      transcript: input.transcript,
+      threadTitle: input.threadTitle,
+    });
+    const generated = yield* runOpenCodeJson({
+      operation: "generateConversationSummary",
+      cwd: input.cwd,
+      prompt,
+      outputSchemaJson: outputSchema,
+      modelSelection: input.modelSelection,
+    });
+
+    return {
+      summary: generated.summary.trim(),
+    };
+  });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
     generateThreadHandoff,
+    generateConversationSummary,
   } satisfies TextGenerationShape;
 });

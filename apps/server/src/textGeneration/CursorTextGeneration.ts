@@ -17,6 +17,7 @@ import {
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
+  buildConversationSummaryPrompt,
   buildPrContentPrompt,
   buildThreadHandoffPrompt,
   buildThreadTitlePrompt,
@@ -292,11 +293,33 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
     };
   });
 
+  const generateConversationSummary: TextGenerationShape["generateConversationSummary"] = Effect.fn(
+    "CursorTextGeneration.generateConversationSummary",
+  )(function* (input) {
+    const { prompt, outputSchema } = buildConversationSummaryPrompt({
+      transcript: input.transcript,
+      threadTitle: input.threadTitle,
+    });
+
+    const generated = yield* runCursorJson({
+      operation: "generateConversationSummary",
+      cwd: input.cwd,
+      prompt,
+      outputSchemaJson: outputSchema,
+      modelSelection: input.modelSelection,
+    });
+
+    return {
+      summary: generated.summary.trim(),
+    };
+  });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
     generateThreadHandoff,
+    generateConversationSummary,
   } satisfies TextGenerationShape;
 });

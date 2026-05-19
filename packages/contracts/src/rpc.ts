@@ -39,6 +39,7 @@ import {
   ClientOrchestrationCommand,
   ORCHESTRATION_WS_METHODS,
   OrchestrationDispatchCommandError,
+  OrchestrationGenerateConversationSummaryError,
   OrchestrationGenerateThreadHandoffError,
   OrchestrationGetFullThreadDiffError,
   OrchestrationGetFullThreadDiffInput,
@@ -473,6 +474,15 @@ export const WsOrchestrationGenerateThreadHandoffRpc = Rpc.make(
   },
 );
 
+export const WsOrchestrationGenerateConversationSummaryRpc = Rpc.make(
+  ORCHESTRATION_WS_METHODS.generateConversationSummary,
+  {
+    payload: OrchestrationRpcSchemas.generateConversationSummary.input,
+    success: OrchestrationRpcSchemas.generateConversationSummary.output,
+    error: OrchestrationGenerateConversationSummaryError,
+  },
+);
+
 export const WsIdentityGetCurrentUserRpc = Rpc.make(IDENTITY_WS_METHODS.getCurrentUser, {
   payload: IdentityRpcSchemas.getCurrentUser.input,
   success: IdentityRpcSchemas.getCurrentUser.output,
@@ -621,6 +631,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationSubscribeShellRpc,
   WsOrchestrationSubscribeThreadRpc,
   WsOrchestrationGenerateThreadHandoffRpc,
+  WsOrchestrationGenerateConversationSummaryRpc,
   WsSideThreadDispatchCommandRpc,
   WsSideThreadSubscribeRpc,
   WsSideThreadSubscribeParentRpc,

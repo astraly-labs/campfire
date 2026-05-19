@@ -89,6 +89,7 @@ import { ServerLifecycleEvents, type ServerLifecycleEventsShape } from "./server
 import { ServerRuntimeStartup, type ServerRuntimeStartupShape } from "./serverRuntimeStartup.ts";
 import { ServerSettingsService, type ServerSettingsShape } from "./serverSettings.ts";
 import { TerminalManager, type TerminalManagerShape } from "./terminal/Services/Manager.ts";
+import { ProviderInstanceRegistry } from "./provider/Services/ProviderInstanceRegistry.ts";
 import { TextGeneration } from "./textGeneration/TextGeneration.ts";
 import {
   BrowserTraceCollector,
@@ -788,9 +789,9 @@ const buildAppUnderTest = (options?: {
       Layer.provide(workspaceAndProjectServicesLayer),
       Layer.provideMerge(FetchHttpClient.layer),
       // WS router seam tests never exercise text generation; provide a
-      // failing stub so the new `generateThreadHandoff` requirement on
-      // `makeWsRpcLayer` does not force every test to wire up a provider
-      // instance registry.
+      // failing stub so the new `generateThreadHandoff` /
+      // `generateConversationSummary` requirements on `makeWsRpcLayer` do
+      // not force every test to wire up a provider instance registry.
       Layer.provide(
         Layer.mock(TextGeneration)({
           generateCommitMessage: () =>
@@ -800,6 +801,24 @@ const buildAppUnderTest = (options?: {
           generateThreadTitle: () => Effect.die("TextGeneration not configured in router test"),
           generateThreadHandoff: () =>
             Effect.die("TextGeneration not configured in router test"),
+          generateConversationSummary: () =>
+            Effect.die("TextGeneration not configured in router test"),
+        }),
+      ),
+      // `makeWsRpcLayer` injects ProviderInstanceRegistry to resolve the
+      // driver kind for the cheap conversation-summary model. Router seam
+      // tests never reach that codepath, but TypeScript still requires the
+      // service to be in scope.
+      Layer.provide(
+        Layer.mock(ProviderInstanceRegistry)({
+          getInstance: () =>
+            Effect.die("ProviderInstanceRegistry not configured in router test"),
+          listInstances: Effect.die("ProviderInstanceRegistry not configured in router test"),
+          listUnavailable: Effect.die("ProviderInstanceRegistry not configured in router test"),
+          streamChanges: Stream.empty,
+          subscribeChanges: Effect.die(
+            "ProviderInstanceRegistry not configured in router test",
+          ),
         }),
       ),
       Layer.provide(layerConfig),

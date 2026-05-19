@@ -167,6 +167,9 @@ export interface WsRpcClient {
     readonly generateThreadHandoff: RpcUnaryMethod<
       typeof ORCHESTRATION_WS_METHODS.generateThreadHandoff
     >;
+    readonly generateConversationSummary: RpcUnaryMethod<
+      typeof ORCHESTRATION_WS_METHODS.generateConversationSummary
+    >;
   };
   readonly sideThread: {
     readonly dispatchCommand: RpcUnaryMethod<typeof SIDETHREAD_WS_METHODS.dispatchCommand>;
@@ -359,6 +362,10 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
       generateThreadHandoff: (input) =>
         transport.request((client) =>
           client[ORCHESTRATION_WS_METHODS.generateThreadHandoff](input),
+        ),
+      generateConversationSummary: (input) =>
+        transport.request((client) =>
+          client[ORCHESTRATION_WS_METHODS.generateConversationSummary](input),
         ),
     },
     sideThread: {

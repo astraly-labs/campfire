@@ -42,6 +42,7 @@ export const ORCHESTRATION_WS_METHODS = {
   subscribeShell: "orchestration.subscribeShell",
   subscribeThread: "orchestration.subscribeThread",
   generateThreadHandoff: "orchestration.generateThreadHandoff",
+  generateConversationSummary: "orchestration.generateConversationSummary",
 } as const;
 
 export const ProviderApprovalPolicy = Schema.Literals([
@@ -1279,6 +1280,42 @@ export const OrchestrationGenerateThreadHandoffResult = Schema.Struct({
 export type OrchestrationGenerateThreadHandoffResult =
   typeof OrchestrationGenerateThreadHandoffResult.Type;
 
+/**
+ * Input for the "Take a look" Summary toggle that sits above the composer.
+ * - `threadId` names the thread to summarise (must exist).
+ * - `force` bypasses the server cache; defaults to false. The cache is keyed
+ *   by `(threadId, latestTurn.turnId)` so a fresh turn invalidates implicitly.
+ *   `force=true` is used by the on-demand "Regenerate" UI affordance.
+ */
+export const OrchestrationGenerateConversationSummaryInput = Schema.Struct({
+  threadId: ThreadId,
+  force: Schema.optional(Schema.Boolean),
+});
+export type OrchestrationGenerateConversationSummaryInput =
+  typeof OrchestrationGenerateConversationSummaryInput.Type;
+
+export const OrchestrationGenerateConversationSummaryResult = Schema.Struct({
+  /** 2-3 sentence recap of the conversation, plain prose. */
+  summary: Schema.String,
+  /** When the summary was produced (ISO-8601). */
+  generatedAt: Schema.String,
+  /**
+   * Model identifier that produced the summary (e.g. `claude-haiku-4-5`,
+   * `gpt-5.3-codex-spark`). Surfaced in the UI for transparency.
+   */
+  generatedByModel: Schema.String,
+  /**
+   * Turn id at the time of generation. The client uses this to detect when a
+   * new turn has rendered the summary stale and a regenerate is in order.
+   * Null when the thread has not yet completed any turn.
+   */
+  generatedFromTurnId: Schema.NullOr(Schema.String),
+  /** True when this response came from the server cache (no model call). */
+  fromCache: Schema.Boolean,
+});
+export type OrchestrationGenerateConversationSummaryResult =
+  typeof OrchestrationGenerateConversationSummaryResult.Type;
+
 export const OrchestrationRpcSchemas = {
   dispatchCommand: {
     input: ClientOrchestrationCommand,
@@ -1311,6 +1348,10 @@ export const OrchestrationRpcSchemas = {
   generateThreadHandoff: {
     input: OrchestrationGenerateThreadHandoffInput,
     output: OrchestrationGenerateThreadHandoffResult,
+  },
+  generateConversationSummary: {
+    input: OrchestrationGenerateConversationSummaryInput,
+    output: OrchestrationGenerateConversationSummaryResult,
   },
 } as const;
 
@@ -1356,6 +1397,14 @@ export class OrchestrationReplayEventsError extends Schema.TaggedErrorClass<Orch
 
 export class OrchestrationGenerateThreadHandoffError extends Schema.TaggedErrorClass<OrchestrationGenerateThreadHandoffError>()(
   "OrchestrationGenerateThreadHandoffError",
+  {
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {}
+
+export class OrchestrationGenerateConversationSummaryError extends Schema.TaggedErrorClass<OrchestrationGenerateConversationSummaryError>()(
+  "OrchestrationGenerateConversationSummaryError",
   {
     message: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect),
