@@ -9,8 +9,18 @@ export interface SideThreadAnchor {
 
 interface SideThreadStore {
   readonly anchor: SideThreadAnchor | null;
-  readonly open: (anchor: SideThreadAnchor) => void;
+  readonly open: (anchor: SideThreadAnchor, options?: { draftPrefill?: string }) => void;
   readonly close: () => void;
+
+  /**
+   * One-shot draft seed consumed by the drawer the next time it mounts on
+   * the current anchor. Used by the "quote excerpt" affordance to drop a
+   * `> ...` blockquote into the composer without coupling the store to the
+   * drawer's local state. Cleared by `consumeDraftPrefill` so a subsequent
+   * open of the same anchor doesn't replay the citation.
+   */
+  readonly pendingDraftPrefill: string | null;
+  readonly consumeDraftPrefill: () => string | null;
 
   /**
    * Parent index — the in-memory mirror of the server's
@@ -28,10 +38,21 @@ interface SideThreadStore {
   readonly clearParentIndex: () => void;
 }
 
-export const useSideThreadStore = create<SideThreadStore>((set) => ({
+export const useSideThreadStore = create<SideThreadStore>((set, get) => ({
   anchor: null,
-  open: (anchor) => set({ anchor }),
-  close: () => set({ anchor: null }),
+  open: (anchor, options) =>
+    set({
+      anchor,
+      pendingDraftPrefill: options?.draftPrefill ?? null,
+    }),
+  close: () => set({ anchor: null, pendingDraftPrefill: null }),
+
+  pendingDraftPrefill: null,
+  consumeDraftPrefill: () => {
+    const value = get().pendingDraftPrefill;
+    if (value !== null) set({ pendingDraftPrefill: null });
+    return value;
+  },
 
   parentIndexThreadId: null,
   summariesByAnchorMessageId: new Map(),

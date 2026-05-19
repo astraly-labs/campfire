@@ -14,6 +14,7 @@ import type {
   SideThreadCommand,
   SideThreadCreateCommand,
   SideThreadEvent,
+  SideThreadInboxDismissCommand,
   SideThreadMessagePostCommand,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -58,6 +59,8 @@ export const decideSideThreadCommand = Effect.fn("decideSideThreadCommand")(func
       return yield* decidePost({ command, readModel, now });
     case "sidethread.archive":
       return yield* decideArchive({ command, readModel, now });
+    case "sidethread.inbox.dismiss":
+      return yield* decideInboxDismiss({ command, readModel, now });
   }
 });
 
@@ -160,6 +163,35 @@ const decideArchive = ({
       payload: {
         sideThreadId: command.sideThreadId,
         archivedBy: command.archivedBy,
+      },
+    };
+  });
+
+const decideInboxDismiss = ({
+  command,
+  readModel,
+  now,
+}: {
+  command: SideThreadInboxDismissCommand;
+  readModel: SideThreadReadModel;
+  now: IsoDateTime;
+}): Effect.Effect<PlannedSideThreadEvent, SideThreadCommandInvariantError> =>
+  Effect.gen(function* () {
+    if (!readModel.sideThreads.has(command.sideThreadId)) {
+      return yield* new SideThreadCommandInvariantError({
+        commandType: command.type,
+        detail: `Unknown SideThread: ${command.sideThreadId}`,
+      });
+    }
+    // No "already dismissed" check — the projector upserts so repeated
+    // dismisses just bump dismissed_at forward, which is the desired
+    // behaviour ("dismiss again to clear newer mentions").
+    return {
+      ...baseEnvelope(command, command.sideThreadId, now),
+      type: "sidethread.inbox-dismissed" as const,
+      payload: {
+        sideThreadId: command.sideThreadId,
+        userId: command.userId,
       },
     };
   });

@@ -240,6 +240,10 @@ function mapProjectShellRow(
     scripts: row.scripts,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
+    createdBy:
+      row.createdByUserId !== null && row.createdByDisplayName !== null
+        ? { id: row.createdByUserId, displayName: row.createdByDisplayName }
+        : null,
   };
 }
 
@@ -313,7 +317,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           scripts_json AS "scripts",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
-          deleted_at AS "deletedAt"
+          deleted_at AS "deletedAt",
+          created_by_user_id AS "createdByUserId",
+          created_by_display_name AS "createdByDisplayName"
         FROM projection_projects
         ORDER BY created_at ASC, project_id ASC
       `,
@@ -682,7 +688,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           scripts_json AS "scripts",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
-          deleted_at AS "deletedAt"
+          deleted_at AS "deletedAt",
+          created_by_user_id AS "createdByUserId",
+          created_by_display_name AS "createdByDisplayName"
         FROM projection_projects
         WHERE workspace_root = ${workspaceRoot}
           AND deleted_at IS NULL
@@ -704,7 +712,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           scripts_json AS "scripts",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
-          deleted_at AS "deletedAt"
+          deleted_at AS "deletedAt",
+          created_by_user_id AS "createdByUserId",
+          created_by_display_name AS "createdByDisplayName"
         FROM projection_projects
         WHERE project_id = ${projectId}
           AND deleted_at IS NULL
@@ -1191,6 +1201,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 createdAt: row.createdAt,
                 updatedAt: row.updatedAt,
                 deletedAt: row.deletedAt,
+                createdBy:
+                  row.createdByUserId !== null && row.createdByDisplayName !== null
+                    ? { id: row.createdByUserId, displayName: row.createdByDisplayName }
+                    : null,
               }));
 
               const threads: ReadonlyArray<OrchestrationThread> = threadRows.map((row) => ({
@@ -1317,6 +1331,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   createdAt: row.createdAt,
                   updatedAt: row.updatedAt,
                   deletedAt: row.deletedAt,
+                  createdBy:
+                    row.createdByUserId !== null && row.createdByDisplayName !== null
+                      ? { id: row.createdByUserId, displayName: row.createdByDisplayName }
+                      : null,
                 });
               }
               for (let index = 0; index < threadRows.length; index += 1) {
@@ -1761,6 +1779,14 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                     createdAt: option.value.createdAt,
                     updatedAt: option.value.updatedAt,
                     deletedAt: option.value.deletedAt,
+                    createdBy:
+                      option.value.createdByUserId !== null &&
+                      option.value.createdByDisplayName !== null
+                        ? {
+                            id: option.value.createdByUserId,
+                            displayName: option.value.createdByDisplayName,
+                          }
+                        : null,
                   } satisfies OrchestrationProject),
                 ),
               ),

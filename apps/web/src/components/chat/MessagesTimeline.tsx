@@ -44,6 +44,7 @@ import { DiffStatLabel, hasNonZeroStat } from "./DiffStatLabel";
 import { MessageCopyButton } from "./MessageCopyButton";
 import { SideThreadAnchorButton } from "../../sidethread/SideThreadAnchorButton";
 import { TakeALookButton } from "../../sidethread/TakeALookButton";
+import { QuoteOnSelection } from "../../sidethread/QuoteOnSelection";
 import {
   computeStableMessagesTimelineRows,
   MAX_VISIBLE_WORK_LOG_ENTRIES,
@@ -455,12 +456,14 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
         <AssistantCompletionDivider completionSummary={row.completionSummary} />
       )}
       <div className="min-w-0 px-1 py-0.5">
-        <ChatMarkdown
-          text={messageText}
-          cwd={ctx.markdownCwd}
-          isStreaming={Boolean(row.message.streaming)}
-          skills={ctx.skills}
-        />
+        <QuoteOnSelection threadId={ctx.activeThreadId} messageId={row.message.id}>
+          <ChatMarkdown
+            text={messageText}
+            cwd={ctx.markdownCwd}
+            isStreaming={Boolean(row.message.streaming)}
+            skills={ctx.skills}
+          />
+        </QuoteOnSelection>
         <AssistantChangedFilesSection
           turnSummary={row.assistantTurnDiffSummary}
           routeThreadKey={ctx.routeThreadKey}

@@ -713,16 +713,21 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId, initialIdentity: Resolv
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.dispatchCommand,
             Effect.gen(function* () {
-              // Auto-assign the creator of a new thread to the authenticated
-              // session identity. The server is source-of-truth here — any
-              // client-provided `createdBy` is dropped.
+              // Auto-assign the creator of a new thread or project to the
+              // authenticated session identity. The server is source-of-truth
+              // here — any client-provided `createdBy` is dropped.
               const commandWithCreator =
                 command.type === "thread.create"
                   ? {
                       ...command,
                       createdBy: (yield* Ref.get(currentIdentityRef)).user,
                     }
-                  : command;
+                  : command.type === "project.create"
+                    ? {
+                        ...command,
+                        createdBy: (yield* Ref.get(currentIdentityRef)).user,
+                      }
+                    : command;
               const normalizedCommand = yield* normalizeDispatchCommand(commandWithCreator);
               const shouldStopSessionAfterArchive =
                 normalizedCommand.type === "thread.archive"
@@ -950,7 +955,17 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId, initialIdentity: Resolv
           observeRpcEffect(
             SIDETHREAD_WS_METHODS.dispatchCommand,
             Effect.gen(function* () {
-              yield* sideThreadEngine.dispatch(command);
+              // Inbox dismiss is per-user — override the client-supplied
+              // userId with the WS session's identity so a peer cannot
+              // dismiss another user's inbox row.
+              const safeCommand =
+                command.type === "sidethread.inbox.dismiss"
+                  ? {
+                      ...command,
+                      userId: (yield* Ref.get(currentIdentityRef)).user.id,
+                    }
+                  : command;
+              yield* sideThreadEngine.dispatch(safeCommand);
               const acceptedAt = yield* nowIso;
               return { acceptedAt, events: [] as const };
             }).pipe(
@@ -1088,11 +1103,13 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId, initialIdentity: Resolv
               const userId = identity.user.id;
               const initialItems = yield* inboxReadModel.listForUser(userId);
 
-              // We piggy-back on the side-thread engine's domain event stream:
-              // every `sidethread.message-posted` that mentions the current
-              // user re-queries the inbox and emits an `upserted` event so the
-              // client store stays in sync without polling.
-              const liveStream = sideThreadEngine.streamDomainEvents.pipe(
+              // Two derived streams merged into one push channel:
+              //  - mentionsStream: a new mention of the current user → re-query
+              //    the inbox and emit `upserted` so the row appears/updates.
+              //  - dismissalsStream: this user dismissed an inbox row → emit
+              //    `removed` so other tabs of the same user drop it without
+              //    re-querying.
+              const mentionsStream = sideThreadEngine.streamDomainEvents.pipe(
                 Stream.filter(
                   (event) =>
                     event.type === "sidethread.message-posted" &&
@@ -1118,6 +1135,22 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId, initialIdentity: Resolv
                     : Stream.empty,
                 ),
               );
+
+              const dismissalsStream = sideThreadEngine.streamDomainEvents.pipe(
+                Stream.filter(
+                  (event) =>
+                    event.type === "sidethread.inbox-dismissed" &&
+                    event.payload.userId === userId,
+                ),
+                Stream.map((event) => ({
+                  kind: "removed" as const,
+                  // Narrowed by the filter above — guaranteed inbox-dismissed.
+                  sideThreadId: (event as Extract<typeof event, { type: "sidethread.inbox-dismissed" }>)
+                    .payload.sideThreadId,
+                })),
+              );
+
+              const liveStream = Stream.merge(mentionsStream, dismissalsStream);
 
               return Stream.concat(
                 Stream.make({ kind: "snapshot" as const, items: initialItems }),

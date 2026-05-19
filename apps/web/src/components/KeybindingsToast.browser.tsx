@@ -151,6 +151,7 @@ function createMinimalSnapshot(): OrchestrationReadModel {
         createdAt: NOW_ISO,
         updatedAt: NOW_ISO,
         deletedAt: null,
+        createdBy: null,
       },
     ],
     threads: [

@@ -104,6 +104,13 @@ interface FakeGitTextGeneration {
     message: string;
     modelSelection: ModelSelection;
   }) => Effect.Effect<{ title: string }, TextGenerationError>;
+  generateThreadHandoff?: (input: {
+    sourceCwd: string;
+    targetCwd: string;
+    targetProjectName: string;
+    transcript: ReadonlyArray<{ role: "user" | "agent"; text: string }>;
+    modelSelection: ModelSelection;
+  }) => Effect.Effect<{ prompt: string }, TextGenerationError>;
 }
 
 type FakePullRequest = NonNullable<FakeGhScenario["pullRequest"]>;
@@ -381,6 +388,11 @@ function createTextGeneration(overrides: Partial<FakeGitTextGeneration> = {}): T
             }),
         ),
       ),
+    generateThreadHandoff: () =>
+      // Git workflow tests never exercise the thread-handoff path. Fail
+      // loudly if a future test starts depending on it without configuring
+      // the fake explicitly.
+      Effect.die(new Error("generateThreadHandoff is not configured in GitManager tests")),
   };
 }
 

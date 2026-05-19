@@ -185,6 +185,7 @@ export function projectEvent(
             workspaceRoot: payload.workspaceRoot,
             defaultModelSelection: payload.defaultModelSelection,
             scripts: payload.scripts,
+            createdBy: payload.createdBy,
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,
             deletedAt: null,

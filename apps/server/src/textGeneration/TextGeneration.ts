@@ -70,6 +70,46 @@ export interface ThreadTitleGenerationResult {
   title: string;
 }
 
+/**
+ * A single message from a source thread transcript, used as input when an
+ * agent summarises a conversation into a handoff prompt for a different
+ * project.
+ */
+export interface ThreadHandoffTranscriptMessage {
+  /** "user" for user-authored turns, "agent" for assistant responses. */
+  role: "user" | "agent";
+  /** Plain-text rendering of the message body. */
+  text: string;
+}
+
+export interface ThreadHandoffGenerationInput {
+  /** Working directory of the SOURCE thread (where the conversation happened). */
+  sourceCwd: string;
+  /** Optional branch context for the source thread. */
+  sourceBranch?: string | null | undefined;
+  /** Human-readable name of the source project (for transcript framing). */
+  sourceProjectName?: string | null | undefined;
+  /** Working directory of the TARGET project the handoff is destined for. */
+  targetCwd: string;
+  /** Human-readable name of the target project. */
+  targetProjectName: string;
+  /** Ordered transcript messages from the source thread. */
+  transcript: ReadonlyArray<ThreadHandoffTranscriptMessage>;
+  /** Optional free-form user note appended to the agent instructions. */
+  note?: string | undefined;
+  /** What model and provider to use for generation. */
+  modelSelection: ModelSelection;
+}
+
+export interface ThreadHandoffGenerationResult {
+  /**
+   * Markdown body intended to be pre-filled as the first user message of
+   * the new thread in the target project. Structured for another agent
+   * (no shared context with the source thread).
+   */
+  prompt: string;
+}
+
 export interface TextGenerationService {
   generateCommitMessage(
     input: CommitMessageGenerationInput,
@@ -77,6 +117,9 @@ export interface TextGenerationService {
   generatePrContent(input: PrContentGenerationInput): Promise<PrContentGenerationResult>;
   generateBranchName(input: BranchNameGenerationInput): Promise<BranchNameGenerationResult>;
   generateThreadTitle(input: ThreadTitleGenerationInput): Promise<ThreadTitleGenerationResult>;
+  generateThreadHandoff(
+    input: ThreadHandoffGenerationInput,
+  ): Promise<ThreadHandoffGenerationResult>;
 }
 
 /**
@@ -110,6 +153,15 @@ export interface TextGenerationShape {
   readonly generateThreadTitle: (
     input: ThreadTitleGenerationInput,
   ) => Effect.Effect<ThreadTitleGenerationResult, TextGenerationError>;
+
+  /**
+   * Generate a handoff prompt summarising a source thread for a fresh
+   * conversation in a different project. The output is intended to be
+   * pre-filled in the target project's composer as the first user message.
+   */
+  readonly generateThreadHandoff: (
+    input: ThreadHandoffGenerationInput,
+  ) => Effect.Effect<ThreadHandoffGenerationResult, TextGenerationError>;
 }
 
 /**
@@ -119,11 +171,17 @@ export class TextGeneration extends Context.Service<TextGeneration, TextGenerati
   "t3/text-generation/TextGeneration",
 ) {}
 
-type TextGenerationOp =
+/**
+ * Operation identifier carried on `TextGenerationError.operation` and used
+ * by provider implementations to label log lines and error payloads. Kept
+ * in one place so every provider stays in sync as we add new operations.
+ */
+export type TextGenerationOp =
   | "generateCommitMessage"
   | "generatePrContent"
   | "generateBranchName"
-  | "generateThreadTitle";
+  | "generateThreadTitle"
+  | "generateThreadHandoff";
 
 const resolveInstance = (
   registry: ProviderInstanceRegistryShape,
@@ -161,6 +219,10 @@ export const makeTextGenerationFromRegistry = (
   generateThreadTitle: (input) =>
     resolveInstance(registry, "generateThreadTitle", input.modelSelection.instanceId).pipe(
       Effect.flatMap((textGeneration) => textGeneration.generateThreadTitle(input)),
+    ),
+  generateThreadHandoff: (input) =>
+    resolveInstance(registry, "generateThreadHandoff", input.modelSelection.instanceId).pipe(
+      Effect.flatMap((textGeneration) => textGeneration.generateThreadHandoff(input)),
     ),
 });
 

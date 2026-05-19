@@ -342,4 +342,44 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
         }),
     ),
   );
+
+  it.effect("generates a thread handoff prompt addressed to a different agent", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({
+          structured_output: {
+            prompt:
+              "## Context\nI was looking into adverse selection.\n\n## What was found\nFill ratios degrade after large quote moves.\n",
+          },
+        }),
+        stdinMustContain: "summarising a coding conversation as a handoff",
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generateThreadHandoff({
+            sourceCwd: process.cwd(),
+            sourceBranch: "investigation/adverse-selection",
+            sourceProjectName: "analytics",
+            targetCwd: process.cwd(),
+            targetProjectName: "market-maker",
+            transcript: [
+              { role: "user", text: "Look into adverse selection on BTC-PERP." },
+              {
+                role: "agent",
+                text: "Fill ratios drop sharply after large quote moves.",
+              },
+            ],
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("claudeAgent"),
+              model: "claude-sonnet-4-6",
+            },
+          });
+
+          expect(generated.prompt).toContain("## Context");
+          expect(generated.prompt).toContain("## What was found");
+          // Trimmed output — no trailing whitespace.
+          expect(generated.prompt.endsWith("\n")).toBe(false);
+        }),
+    ),
+  );
 });

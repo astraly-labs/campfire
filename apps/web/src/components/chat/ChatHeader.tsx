@@ -18,8 +18,14 @@ import { Toggle } from "../ui/toggle";
 import { SidebarTrigger } from "../ui/sidebar";
 import { OpenInPicker } from "./OpenInPicker";
 import { WorkspaceFilesButton } from "./WorkspaceFilesButton";
+import { WorkspaceFileTreeButton } from "./WorkspaceFileTreeButton";
 import { usePrimaryEnvironmentId } from "../../environments/primary";
-import { AvatarStack, SOFT_PALETTE, colorIndexForUserId, initialsFor } from "../../presence/AvatarStack";
+import {
+  AvatarStack,
+  SOFT_PALETTE,
+  colorIndexForUserId,
+  initialsFor,
+} from "../../presence/AvatarStack";
 import { useViewersOfParentThread } from "../../presence/presenceStore";
 import { cn } from "~/lib/utils";
 
@@ -152,6 +158,10 @@ export const ChatHeader = memo(function ChatHeader({
             {...(draftId ? { draftId } : {})}
           />
         )}
+        <WorkspaceFileTreeButton
+          environmentId={activeThreadEnvironmentId}
+          threadId={activeThreadId}
+        />
         <WorkspaceFilesButton environmentId={activeThreadEnvironmentId} threadId={activeThreadId} />
         <Tooltip>
           <TooltipTrigger

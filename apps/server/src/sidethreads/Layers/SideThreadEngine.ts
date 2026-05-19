@@ -20,6 +20,7 @@ import type {
   SideThreadCreatedPayload,
   SideThreadDetailSnapshot,
   SideThreadEvent,
+  SideThreadInboxDismissedPayload,
   SideThreadMessagePostedPayload,
   SideThreadParentIndexSnapshot,
   SideThreadSummary,
@@ -63,6 +64,8 @@ const actorOf = (planned: PlannedSideThreadEvent): string => {
       return (planned.payload as SideThreadMessagePostedPayload).author.id;
     case "sidethread.archived":
       return (planned.payload as SideThreadArchivedPayload).archivedBy;
+    case "sidethread.inbox-dismissed":
+      return (planned.payload as SideThreadInboxDismissedPayload).userId;
   }
 };
 

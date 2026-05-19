@@ -185,7 +185,7 @@ function FetchedTextPreview({ target, mode, lang }: FetchedTextProps) {
 
   if (mode === "markdown") {
     return (
-      <div className="overflow-auto p-4">
+      <div className="h-full overflow-auto p-4">
         <ChatMarkdown text={state.text} cwd={target.cwd} />
       </div>
     );
@@ -194,7 +194,7 @@ function FetchedTextPreview({ target, mode, lang }: FetchedTextProps) {
   const language = lang ?? "text";
   const fenced = "```" + language + "\n" + state.text + "\n```";
   return (
-    <div className="overflow-auto p-4">
+    <div className="h-full overflow-auto p-4">
       <ChatMarkdown text={fenced} cwd={target.cwd} />
     </div>
   );

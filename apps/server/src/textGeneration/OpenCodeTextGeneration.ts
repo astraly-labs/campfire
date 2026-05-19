@@ -21,9 +21,10 @@ import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
   buildPrContentPrompt,
+  buildThreadHandoffPrompt,
   buildThreadTitlePrompt,
 } from "./TextGenerationPrompts.ts";
-import { type TextGenerationShape } from "./TextGeneration.ts";
+import { type TextGenerationOp, type TextGenerationShape } from "./TextGeneration.ts";
 import {
   sanitizeCommitSubject,
   sanitizePrTitle,
@@ -156,11 +157,7 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
 
   const acquireSharedServer = (input: {
     readonly binaryPath: string;
-    readonly operation:
-      | "generateCommitMessage"
-      | "generatePrContent"
-      | "generateBranchName"
-      | "generateThreadTitle";
+    readonly operation: TextGenerationOp;
   }) =>
     sharedServerMutex.withPermit(
       Effect.gen(function* () {
@@ -266,11 +263,7 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
   );
 
   const runOpenCodeJson = Effect.fn("runOpenCodeJson")(function* <S extends Schema.Top>(input: {
-    readonly operation:
-      | "generateCommitMessage"
-      | "generatePrContent"
-      | "generateBranchName"
-      | "generateThreadTitle";
+    readonly operation: TextGenerationOp;
     readonly cwd: string;
     readonly prompt: string;
     readonly outputSchemaJson: S;
@@ -458,10 +451,36 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
     };
   });
 
+  const generateThreadHandoff: TextGenerationShape["generateThreadHandoff"] = Effect.fn(
+    "OpenCodeTextGeneration.generateThreadHandoff",
+  )(function* (input) {
+    const { prompt, outputSchema } = buildThreadHandoffPrompt({
+      sourceCwd: input.sourceCwd,
+      sourceBranch: input.sourceBranch,
+      sourceProjectName: input.sourceProjectName,
+      targetCwd: input.targetCwd,
+      targetProjectName: input.targetProjectName,
+      transcript: input.transcript,
+      note: input.note,
+    });
+    const generated = yield* runOpenCodeJson({
+      operation: "generateThreadHandoff",
+      cwd: input.sourceCwd,
+      prompt,
+      outputSchemaJson: outputSchema,
+      modelSelection: input.modelSelection,
+    });
+
+    return {
+      prompt: generated.prompt.trim(),
+    };
+  });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    generateThreadHandoff,
   } satisfies TextGenerationShape;
 });

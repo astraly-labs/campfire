@@ -475,6 +475,8 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             createdAt: event.payload.createdAt,
             updatedAt: event.payload.updatedAt,
             deletedAt: null,
+            createdByUserId: event.payload.createdBy?.id ?? null,
+            createdByDisplayName: event.payload.createdBy?.displayName ?? null,
           });
           return;
 

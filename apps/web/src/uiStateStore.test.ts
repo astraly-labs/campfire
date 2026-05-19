@@ -5,6 +5,7 @@ import {
   clearThreadUi,
   hydratePersistedProjectState,
   markThreadVisited,
+  markThreadsVisited,
   markThreadUnread,
   PERSISTED_STATE_KEY,
   type PersistedUiState,
@@ -22,6 +23,8 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
   return {
     projectExpandedById: {},
     projectOrder: [],
+    projectAffiliationOverrideByLogicalKey: {},
+    projectsSectionCollapsed: true,
     threadLastVisitedAtById: {},
     threadChangedFilesExpandedById: {},
     defaultAdvertisedEndpointKey: null,
@@ -48,6 +51,61 @@ describe("uiStateStore pure functions", () => {
     });
 
     const next = markThreadVisited(initialState, threadId, "2026-02-25T12:30:00.000Z");
+
+    expect(next).toBe(initialState);
+  });
+
+  it("markThreadsVisited applies every entry in one pass", () => {
+    const a = ThreadId.make("thread-a");
+    const b = ThreadId.make("thread-b");
+    const initialState = makeUiState();
+
+    const next = markThreadsVisited(initialState, [
+      { threadId: a, visitedAt: "2026-02-25T12:30:00.000Z" },
+      { threadId: b, visitedAt: "2026-02-25T12:31:00.000Z" },
+    ]);
+
+    expect(next.threadLastVisitedAtById[a]).toBe("2026-02-25T12:30:00.000Z");
+    expect(next.threadLastVisitedAtById[b]).toBe("2026-02-25T12:31:00.000Z");
+  });
+
+  it("markThreadsVisited preserves the no-backwards rule per entry", () => {
+    const a = ThreadId.make("thread-a");
+    const b = ThreadId.make("thread-b");
+    const initialState = makeUiState({
+      threadLastVisitedAtById: {
+        [a]: "2026-02-25T12:30:00.700Z",
+      },
+    });
+
+    const next = markThreadsVisited(initialState, [
+      { threadId: a, visitedAt: "2026-02-25T12:30:00.000Z" },
+      { threadId: b, visitedAt: "2026-02-25T12:31:00.000Z" },
+    ]);
+
+    expect(next.threadLastVisitedAtById[a]).toBe("2026-02-25T12:30:00.700Z");
+    expect(next.threadLastVisitedAtById[b]).toBe("2026-02-25T12:31:00.000Z");
+  });
+
+  it("markThreadsVisited returns the same state when nothing advances", () => {
+    const a = ThreadId.make("thread-a");
+    const initialState = makeUiState({
+      threadLastVisitedAtById: {
+        [a]: "2026-02-25T12:30:00.700Z",
+      },
+    });
+
+    const next = markThreadsVisited(initialState, [
+      { threadId: a, visitedAt: "2026-02-25T12:30:00.000Z" },
+    ]);
+
+    expect(next).toBe(initialState);
+  });
+
+  it("markThreadsVisited is a no-op on an empty batch", () => {
+    const initialState = makeUiState();
+
+    const next = markThreadsVisited(initialState, []);
 
     expect(next).toBe(initialState);
   });

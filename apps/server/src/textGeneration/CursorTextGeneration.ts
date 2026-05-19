@@ -9,11 +9,16 @@ import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shar
 import { extractJsonObject } from "@t3tools/shared/schemaJson";
 
 import { TextGenerationError } from "@t3tools/contracts";
-import { type ThreadTitleGenerationResult, type TextGenerationShape } from "./TextGeneration.ts";
+import {
+  type TextGenerationOp,
+  type ThreadTitleGenerationResult,
+  type TextGenerationShape,
+} from "./TextGeneration.ts";
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
   buildPrContentPrompt,
+  buildThreadHandoffPrompt,
   buildThreadTitlePrompt,
 } from "./TextGenerationPrompts.ts";
 import {
@@ -29,11 +34,7 @@ import {
 const CURSOR_TIMEOUT_MS = 180_000;
 
 function mapCursorAcpError(
-  operation:
-    | "generateCommitMessage"
-    | "generatePrContent"
-    | "generateBranchName"
-    | "generateThreadTitle",
+  operation: TextGenerationOp,
   detail: string,
   cause: unknown,
 ): TextGenerationError {
@@ -70,11 +71,7 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
     outputSchemaJson,
     modelSelection,
   }: {
-    operation:
-      | "generateCommitMessage"
-      | "generatePrContent"
-      | "generateBranchName"
-      | "generateThreadTitle";
+    operation: TextGenerationOp;
     cwd: string;
     prompt: string;
     outputSchemaJson: S;
@@ -269,10 +266,37 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
     } satisfies ThreadTitleGenerationResult;
   });
 
+  const generateThreadHandoff: TextGenerationShape["generateThreadHandoff"] = Effect.fn(
+    "CursorTextGeneration.generateThreadHandoff",
+  )(function* (input) {
+    const { prompt, outputSchema } = buildThreadHandoffPrompt({
+      sourceCwd: input.sourceCwd,
+      sourceBranch: input.sourceBranch,
+      sourceProjectName: input.sourceProjectName,
+      targetCwd: input.targetCwd,
+      targetProjectName: input.targetProjectName,
+      transcript: input.transcript,
+      note: input.note,
+    });
+
+    const generated = yield* runCursorJson({
+      operation: "generateThreadHandoff",
+      cwd: input.sourceCwd,
+      prompt,
+      outputSchemaJson: outputSchema,
+      modelSelection: input.modelSelection,
+    });
+
+    return {
+      prompt: generated.prompt.trim(),
+    };
+  });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    generateThreadHandoff,
   } satisfies TextGenerationShape;
 });

@@ -216,3 +216,90 @@ export function buildThreadTitlePrompt(input: ThreadTitlePromptInput) {
 
   return { prompt, outputSchema };
 }
+
+// ---------------------------------------------------------------------------
+// Thread handoff
+// ---------------------------------------------------------------------------
+
+export interface ThreadHandoffTranscriptMessageInput {
+  role: "user" | "agent";
+  text: string;
+}
+
+export interface ThreadHandoffPromptInput {
+  sourceCwd: string;
+  sourceBranch?: string | null | undefined;
+  sourceProjectName?: string | null | undefined;
+  targetCwd: string;
+  targetProjectName: string;
+  transcript: ReadonlyArray<ThreadHandoffTranscriptMessageInput>;
+  note?: string | undefined;
+}
+
+// Cap individual transcript messages so a single runaway agent reply cannot
+// crowd out everything else when we serialise. The combined transcript is
+// then further capped by `limitSection` below.
+const THREAD_HANDOFF_PER_MESSAGE_CHAR_LIMIT = 6_000;
+const THREAD_HANDOFF_TRANSCRIPT_CHAR_LIMIT = 60_000;
+
+function formatTranscriptMessage(
+  message: ThreadHandoffTranscriptMessageInput,
+  index: number,
+): string {
+  const label = message.role === "user" ? "User" : "Agent";
+  const body = limitSection(message.text.trim(), THREAD_HANDOFF_PER_MESSAGE_CHAR_LIMIT);
+  return `[${index + 1}] ${label}:\n${body}`;
+}
+
+export function buildThreadHandoffPrompt(input: ThreadHandoffPromptInput) {
+  const transcriptBody = input.transcript.map(formatTranscriptMessage).join("\n\n");
+  const sourceProjectLabel = input.sourceProjectName?.trim() || input.sourceCwd;
+  const branchLine = input.sourceBranch
+    ? `Source branch: ${input.sourceBranch}`
+    : "Source branch: (unknown)";
+
+  const userNoteSection =
+    input.note && input.note.trim().length > 0
+      ? ["", "User note for the next agent:", limitSection(input.note.trim(), 2_000)]
+      : [];
+
+  const prompt = [
+    "You are summarising a coding conversation as a handoff for a different agent",
+    "who will work in a separate repository and has no visibility into the source",
+    "thread, the source repository, or its files.",
+    "",
+    "Return a JSON object with key: prompt.",
+    "Rules for the `prompt` field:",
+    "- It must read as a first-person user message addressed to the next agent.",
+    "- Use Markdown with these top-level sections (omit a section only if",
+    "  genuinely empty): `## Context`, `## What was found`, `## Files & references`,",
+    "  `## Suggested next step`.",
+    "- Under `## Context`, name the source project and what the user was doing in",
+    "  one or two sentences. Do NOT assume the next agent can read the source repo.",
+    "- Under `## What was found`, list concrete findings, hypotheses, or decisions",
+    "  with enough detail to be actionable in isolation.",
+    "- Under `## Files & references`, list files, symbols, URLs, or external IDs",
+    "  that the next agent should look at. Qualify cross-repo paths with the source",
+    "  project name so the next agent does not look for them locally.",
+    "- Under `## Suggested next step`, propose the concrete task to do in the",
+    "  target project. Be specific and grounded in the findings.",
+    "- Never invent files, symbols, or facts that are not in the transcript.",
+    "- Keep the whole prompt under ~400 words; favour density over prose.",
+    "",
+    `Source project: ${sourceProjectLabel}`,
+    `Source cwd: ${input.sourceCwd}`,
+    branchLine,
+    `Target project: ${input.targetProjectName}`,
+    `Target cwd: ${input.targetCwd}`,
+    ...userNoteSection,
+    "",
+    "Source transcript (oldest first):",
+    limitSection(transcriptBody, THREAD_HANDOFF_TRANSCRIPT_CHAR_LIMIT),
+  ].join("\n");
+
+  const outputSchema = Schema.Struct({
+    prompt: Schema.String,
+  });
+
+  return { prompt, outputSchema };
+}

@@ -126,10 +126,28 @@ export const SideThreadArchiveCommand = Schema.Struct({
 });
 export type SideThreadArchiveCommand = typeof SideThreadArchiveCommand.Type;
 
+/**
+ * Soft-dismiss the inbox row for `(userId, sideThreadId)`. The mention
+ * history stays in `projection_side_thread_message_mentions`; the inbox
+ * read model filters anything `<= dismissed_at`. Any future mention with a
+ * later `occurredAt` re-surfaces the row.
+ *
+ * The server overrides `userId` with the WebSocket session's identity so a
+ * peer cannot dismiss another user's inbox row.
+ */
+export const SideThreadInboxDismissCommand = Schema.Struct({
+  type: Schema.Literal("sidethread.inbox.dismiss"),
+  commandId: CommandId,
+  sideThreadId: SideThreadId,
+  userId: UserId,
+});
+export type SideThreadInboxDismissCommand = typeof SideThreadInboxDismissCommand.Type;
+
 export const SideThreadCommand = Schema.Union([
   SideThreadCreateCommand,
   SideThreadMessagePostCommand,
   SideThreadArchiveCommand,
+  SideThreadInboxDismissCommand,
 ]);
 export type SideThreadCommand = typeof SideThreadCommand.Type;
 
@@ -137,6 +155,7 @@ export const SideThreadCommandType = Schema.Literals([
   "sidethread.create",
   "sidethread.message.post",
   "sidethread.archive",
+  "sidethread.inbox.dismiss",
 ]);
 export type SideThreadCommandType = typeof SideThreadCommandType.Type;
 
@@ -182,6 +201,12 @@ export const SideThreadArchivedPayload = Schema.Struct({
 });
 export type SideThreadArchivedPayload = typeof SideThreadArchivedPayload.Type;
 
+export const SideThreadInboxDismissedPayload = Schema.Struct({
+  sideThreadId: SideThreadId,
+  userId: UserId,
+});
+export type SideThreadInboxDismissedPayload = typeof SideThreadInboxDismissedPayload.Type;
+
 export const SideThreadCreatedEvent = Schema.Struct({
   ...SideThreadEventBaseFields,
   type: Schema.Literal("sidethread.created"),
@@ -203,10 +228,18 @@ export const SideThreadArchivedEvent = Schema.Struct({
 });
 export type SideThreadArchivedEvent = typeof SideThreadArchivedEvent.Type;
 
+export const SideThreadInboxDismissedEvent = Schema.Struct({
+  ...SideThreadEventBaseFields,
+  type: Schema.Literal("sidethread.inbox-dismissed"),
+  payload: SideThreadInboxDismissedPayload,
+});
+export type SideThreadInboxDismissedEvent = typeof SideThreadInboxDismissedEvent.Type;
+
 export const SideThreadEvent = Schema.Union([
   SideThreadCreatedEvent,
   SideThreadMessagePostedEvent,
   SideThreadArchivedEvent,
+  SideThreadInboxDismissedEvent,
 ]);
 export type SideThreadEvent = typeof SideThreadEvent.Type;
 
@@ -214,6 +247,7 @@ export const SideThreadEventType = Schema.Literals([
   "sidethread.created",
   "sidethread.message-posted",
   "sidethread.archived",
+  "sidethread.inbox-dismissed",
 ]);
 export type SideThreadEventType = typeof SideThreadEventType.Type;
 

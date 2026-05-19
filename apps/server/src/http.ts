@@ -27,6 +27,7 @@ import { BrowserTraceCollector } from "./observability/Services/BrowserTraceColl
 import { ProjectFaviconResolver } from "./project/Services/ProjectFaviconResolver.ts";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import { WorkspacePaths } from "./workspace/Services/WorkspacePaths.ts";
+import { VcsDriverRegistry } from "./vcs/VcsDriverRegistry.ts";
 import { ServerAuth } from "./auth/Services/ServerAuth.ts";
 import { respondToAuthError } from "./auth/http.ts";
 import { ServerEnvironment } from "./environment/Services/ServerEnvironment.ts";
@@ -285,6 +286,67 @@ export const workspaceFileRouteLayer = HttpRouter.add(
       Effect.catch(() =>
         Effect.succeed(HttpServerResponse.text("Internal Server Error", { status: 500 })),
       ),
+    );
+  }).pipe(Effect.catchTag("AuthError", respondToAuthError)),
+);
+
+// Returns the flat list of files tracked by the project's VCS (cached + untracked
+// minus .gitignore). The client builds the tree view from this list. Same auth +
+// active-project guard as `/workspace-file`.
+export const workspaceFilesTreeRouteLayer = HttpRouter.add(
+  "GET",
+  "/workspace-files-tree",
+  Effect.gen(function* () {
+    yield* requireAuthenticatedRequest;
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const url = HttpServerRequest.toURL(request);
+    if (Option.isNone(url)) {
+      return HttpServerResponse.text("Bad Request", { status: 400 });
+    }
+
+    const cwd = url.value.searchParams.get("cwd");
+    if (!cwd) {
+      return HttpServerResponse.text("Missing cwd parameter", { status: 400 });
+    }
+
+    const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
+    const projectOption = yield* projectionSnapshotQuery
+      .getActiveProjectByWorkspaceRoot(cwd)
+      .pipe(Effect.catch(() => Effect.succeed(Option.none())));
+    if (Option.isNone(projectOption)) {
+      return HttpServerResponse.text("Unknown workspace", { status: 403 });
+    }
+    const workspaceRoot = projectOption.value.workspaceRoot;
+
+    const vcsRegistry = yield* VcsDriverRegistry;
+    const handle = yield* vcsRegistry
+      .detect({ cwd: workspaceRoot })
+      .pipe(Effect.catch(() => Effect.succeed(null)));
+    if (!handle) {
+      return HttpServerResponse.jsonUnsafe(
+        { paths: [], truncated: false, supported: false },
+        { status: 200, headers: { "Cache-Control": "no-store" } },
+      );
+    }
+
+    const listed = yield* handle.driver
+      .listWorkspaceFiles(workspaceRoot)
+      .pipe(Effect.catch(() => Effect.succeed(null)));
+    if (!listed) {
+      return HttpServerResponse.jsonUnsafe(
+        { paths: [], truncated: false, supported: true },
+        { status: 200, headers: { "Cache-Control": "no-store" } },
+      );
+    }
+
+    const paths = [...listed.paths]
+      .map((entry) => entry.replaceAll("\\", "/"))
+      .filter((entry) => entry.length > 0)
+      .sort((left, right) => left.localeCompare(right));
+
+    return HttpServerResponse.jsonUnsafe(
+      { paths, truncated: listed.truncated, supported: true },
+      { status: 200, headers: { "Cache-Control": "no-store" } },
     );
   }).pipe(Effect.catchTag("AuthError", respondToAuthError)),
 );

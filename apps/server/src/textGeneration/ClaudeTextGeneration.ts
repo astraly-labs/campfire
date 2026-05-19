@@ -17,11 +17,12 @@ import { type ClaudeSettings, type ModelSelection } from "@t3tools/contracts";
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
 
 import { TextGenerationError } from "@t3tools/contracts";
-import { type TextGenerationShape } from "./TextGeneration.ts";
+import { type TextGenerationOp, type TextGenerationShape } from "./TextGeneration.ts";
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
   buildPrContentPrompt,
+  buildThreadHandoffPrompt,
   buildThreadTitlePrompt,
 } from "./TextGenerationPrompts.ts";
 import {
@@ -79,11 +80,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     );
 
   const encodeJsonForOperation = (
-    operation:
-      | "generateCommitMessage"
-      | "generatePrContent"
-      | "generateBranchName"
-      | "generateThreadTitle",
+    operation: TextGenerationOp,
     value: unknown,
     detail: string,
   ): Effect.Effect<string, TextGenerationError> =>
@@ -109,11 +106,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     outputSchemaJson,
     modelSelection,
   }: {
-    operation:
-      | "generateCommitMessage"
-      | "generatePrContent"
-      | "generateBranchName"
-      | "generateThreadTitle";
+    operation: TextGenerationOp;
     cwd: string;
     prompt: string;
     outputSchemaJson: S;
@@ -352,10 +345,39 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     };
   });
 
+  const generateThreadHandoff: TextGenerationShape["generateThreadHandoff"] = Effect.fn(
+    "ClaudeTextGeneration.generateThreadHandoff",
+  )(function* (input) {
+    const { prompt, outputSchema } = buildThreadHandoffPrompt({
+      sourceCwd: input.sourceCwd,
+      sourceBranch: input.sourceBranch,
+      sourceProjectName: input.sourceProjectName,
+      targetCwd: input.targetCwd,
+      targetProjectName: input.targetProjectName,
+      transcript: input.transcript,
+      note: input.note,
+    });
+
+    const generated = yield* runClaudeJson({
+      operation: "generateThreadHandoff",
+      // Run the summariser inside the source repo so the CLI can resolve any
+      // file references the transcript mentions if it chooses to verify them.
+      cwd: input.sourceCwd,
+      prompt,
+      outputSchemaJson: outputSchema,
+      modelSelection: input.modelSelection,
+    });
+
+    return {
+      prompt: generated.prompt.trim(),
+    };
+  });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    generateThreadHandoff,
   } satisfies TextGenerationShape;
 });

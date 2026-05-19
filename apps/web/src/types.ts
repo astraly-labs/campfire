@@ -98,6 +98,12 @@ export interface Project {
   createdAt?: string | undefined;
   updatedAt?: string | undefined;
   scripts: ProjectScript[];
+  /**
+   * UserRef of whoever issued the original `project.create` command, or null
+   * for projects authored before per-user attribution shipped (the sidebar
+   * falls back to the primary-environment heuristic in that case).
+   */
+  createdBy: UserRef | null;
 }
 
 export interface Thread {

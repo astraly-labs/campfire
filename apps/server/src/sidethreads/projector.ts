@@ -77,5 +77,11 @@ export const projectSideThreadEvent = (
       nextSideThreads.set(updated.id, updated);
       return { ...nextBase, sideThreads: nextSideThreads };
     }
+
+    case "sidethread.inbox-dismissed": {
+      // Per-user inbox state — does not mutate the side-thread aggregate
+      // snapshot, only the dedicated dismissals projection table.
+      return nextBase;
+    }
   }
 };

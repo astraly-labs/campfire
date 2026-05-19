@@ -238,10 +238,34 @@ const makeSideThreadProjectionPipeline = Effect.gen(function* () {
           }
           break;
         }
+
+        case "sidethread.inbox-dismissed": {
+          // Upsert keeps replay idempotent and lets a user bump dismissed_at
+          // forward by dismissing again after newer mentions arrive.
+          yield* sql`
+            INSERT INTO projection_inbox_dismissals (
+              user_id,
+              side_thread_id,
+              dismissed_at
+            ) VALUES (
+              ${event.payload.userId},
+              ${event.payload.sideThreadId},
+              ${event.occurredAt}
+            )
+            ON CONFLICT(user_id, side_thread_id) DO UPDATE SET
+              dismissed_at = excluded.dismissed_at
+          `.pipe(
+            Effect.mapError(toPersistenceSqlError("SideThreadProjection.upsertInboxDismissal")),
+          );
+          break;
+        }
       }
     });
 
   const bootstrap: Effect.Effect<void, ProjectionRepositoryError> = Effect.gen(function* () {
+    yield* sql`DELETE FROM projection_inbox_dismissals`.pipe(
+      Effect.mapError(toPersistenceSqlError("SideThreadProjection.bootstrap:truncateDismissals")),
+    );
     yield* sql`DELETE FROM projection_side_thread_message_mentions`.pipe(
       Effect.mapError(toPersistenceSqlError("SideThreadProjection.bootstrap:truncateMentions")),
     );

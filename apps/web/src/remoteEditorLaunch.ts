@@ -19,6 +19,10 @@ const REMOTE_SSH_URL_SCHEMES = {
 
 export type RemoteSshEditorId = keyof typeof REMOTE_SSH_URL_SCHEMES;
 
+export const REMOTE_SSH_EDITOR_IDS = Object.keys(
+  REMOTE_SSH_URL_SCHEMES,
+) as ReadonlyArray<RemoteSshEditorId>;
+
 export function editorSupportsRemoteSshLaunch(editor: EditorId): editor is RemoteSshEditorId {
   return editor in REMOTE_SSH_URL_SCHEMES;
 }

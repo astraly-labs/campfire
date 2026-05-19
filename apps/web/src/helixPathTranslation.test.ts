@@ -38,8 +38,6 @@ describe("translateHelixPath", () => {
 
 describe("buildHelixUrl", () => {
   it("URI-encodes path components while keeping slashes", () => {
-    expect(buildHelixUrl("/Users/me/A B/file?#.ts")).toBe(
-      "helix:///Users/me/A%20B/file%3F%23.ts",
-    );
+    expect(buildHelixUrl("/Users/me/A B/file?#.ts")).toBe("helix:///Users/me/A%20B/file%3F%23.ts");
   });
 });

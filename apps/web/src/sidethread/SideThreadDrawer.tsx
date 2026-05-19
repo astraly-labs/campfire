@@ -159,54 +159,51 @@ function DrawerBody({
 
       if (cancelled) return;
 
-      unsubscribe = api.sideThread.subscribe(
-        { sideThreadId },
-        (item: SideThreadStreamItem) => {
-          if (cancelled) return;
-          if (item.kind === "snapshot") {
-            setSideThread(item.snapshot.sideThread);
-          } else {
-            const event = item.event;
-            if (event.type === "sidethread.created") {
-              const created = event.payload;
-              setSideThread({
-                id: created.sideThreadId,
-                parentThreadId: created.parentThreadId,
-                anchor: created.anchor,
-                createdBy: created.createdBy,
-                createdAt: event.occurredAt,
-                updatedAt: event.occurredAt,
-                archivedAt: null,
-                messages: [],
-              });
-            } else if (event.type === "sidethread.message-posted") {
-              const posted = event.payload;
-              setSideThread((current) =>
-                current
-                  ? {
-                      ...current,
-                      updatedAt: event.occurredAt,
-                      messages: [
-                        ...current.messages,
-                        {
-                          id: posted.messageId,
-                          author: posted.author,
-                          text: posted.text,
-                          createdAt: event.occurredAt,
-                          updatedAt: event.occurredAt,
-                          mentions: posted.mentions ?? [],
-                        },
-                      ],
-                    }
-                  : current,
-              );
-              // Re-mark visited so the anchor badge doesn't pop back on every new
-              // mention while the drawer is open.
-              markVisited(sideThreadId, event.occurredAt);
-            }
+      unsubscribe = api.sideThread.subscribe({ sideThreadId }, (item: SideThreadStreamItem) => {
+        if (cancelled) return;
+        if (item.kind === "snapshot") {
+          setSideThread(item.snapshot.sideThread);
+        } else {
+          const event = item.event;
+          if (event.type === "sidethread.created") {
+            const created = event.payload;
+            setSideThread({
+              id: created.sideThreadId,
+              parentThreadId: created.parentThreadId,
+              anchor: created.anchor,
+              createdBy: created.createdBy,
+              createdAt: event.occurredAt,
+              updatedAt: event.occurredAt,
+              archivedAt: null,
+              messages: [],
+            });
+          } else if (event.type === "sidethread.message-posted") {
+            const posted = event.payload;
+            setSideThread((current) =>
+              current
+                ? {
+                    ...current,
+                    updatedAt: event.occurredAt,
+                    messages: [
+                      ...current.messages,
+                      {
+                        id: posted.messageId,
+                        author: posted.author,
+                        text: posted.text,
+                        createdAt: event.occurredAt,
+                        updatedAt: event.occurredAt,
+                        mentions: posted.mentions ?? [],
+                      },
+                    ],
+                  }
+                : current,
+            );
+            // Re-mark visited so the anchor badge doesn't pop back on every new
+            // mention while the drawer is open.
+            markVisited(sideThreadId, event.occurredAt);
           }
-        },
-      );
+        }
+      });
     })();
 
     return () => {
@@ -219,6 +216,26 @@ function DrawerBody({
     const list = listRef.current;
     if (list) list.scrollTop = list.scrollHeight;
   }, [sideThread?.messages.length]);
+
+  // One-shot draft prefill — set by the "Cite excerpt" affordance via
+  // `open(anchor, { draftPrefill })`. Replace the draft when empty, otherwise
+  // prepend so we never silently destroy an in-progress message.
+  const pendingDraftPrefill = useSideThreadStore((state) => state.pendingDraftPrefill);
+  const consumeDraftPrefill = useSideThreadStore((state) => state.consumeDraftPrefill);
+  useEffect(() => {
+    if (pendingDraftPrefill === null) return;
+    setDraft((current) =>
+      current.trim().length === 0 ? pendingDraftPrefill : `${pendingDraftPrefill}${current}`,
+    );
+    consumeDraftPrefill();
+    requestAnimationFrame(() => {
+      const el = textareaRef.current;
+      if (!el) return;
+      el.focus();
+      const end = el.value.length;
+      el.setSelectionRange(end, end);
+    });
+  }, [pendingDraftPrefill, consumeDraftPrefill]);
 
   // Recompute the active mention token whenever the draft or caret moves.
   // Also prune `pendingMentions` whose handle no longer appears in the
@@ -311,6 +328,12 @@ function DrawerBody({
         return;
       }
       if (event.key === "Enter" && !event.metaKey && !event.ctrlKey) {
+        event.preventDefault();
+        const choice = mentionCandidates[mentionHighlight];
+        if (choice) selectMentionCandidate(choice);
+        return;
+      }
+      if (event.key === "Tab" && !event.shiftKey) {
         event.preventDefault();
         const choice = mentionCandidates[mentionHighlight];
         if (choice) selectMentionCandidate(choice);

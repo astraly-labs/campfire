@@ -7,7 +7,7 @@ import { scopeThreadRef } from "@t3tools/client-runtime";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import type { InboxItem, ThreadId } from "@t3tools/contracts";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { AtSignIcon, InboxIcon } from "lucide-react";
+import { AtSignIcon, CheckCheckIcon, InboxIcon, XIcon } from "lucide-react";
 import { useEffect, useMemo } from "react";
 
 import { Badge } from "../components/ui/badge";
@@ -18,7 +18,8 @@ import { toastManager } from "../components/ui/toast";
 import { ensureEnvironmentApi, readEnvironmentApi } from "../environmentApi";
 import { usePrimaryEnvironmentId } from "../environments/primary";
 import { retainThreadDetailSubscription } from "../environments/runtime/service";
-import { isInboxItemUnread, useInboxStore } from "../inbox/inboxStore";
+import { useCurrentUser } from "../identity/identityStore";
+import { isInboxItemUnread, useInboxStore, useInboxUnreadCount } from "../inbox/inboxStore";
 import { selectThreadExistsByRef, selectThreadMissingByRef, useStore } from "../store";
 import { buildThreadRouteParams } from "../threadRoutes";
 import { formatRelativeTimeLabel } from "../timestampFormat";
@@ -41,7 +42,11 @@ function InboxRouteView() {
   const status = useInboxStore((state) => state.status);
   const errorMessage = useInboxStore((state) => state.errorMessage);
   const refresh = useInboxStore((state) => state.refresh);
+  const dismiss = useInboxStore((state) => state.dismiss);
   const lastVisitedAtById = useUiStateStore((state) => state.threadLastVisitedAtById);
+  const markThreadsVisited = useUiStateStore((state) => state.markThreadsVisited);
+  const unreadCount = useInboxUnreadCount();
+  const currentUser = useCurrentUser();
   const openSideThread = useSideThreadStore((state) => state.open);
   const navigate = useNavigate();
 
@@ -125,9 +130,25 @@ function InboxRouteView() {
           <AtSignIcon className="size-4 text-muted-foreground" />
           <span className="text-sm font-medium text-foreground">Mentions</span>
           <Badge variant="secondary" className="ml-1 rounded-md px-1.5 py-0 text-[10px]">
-            {items.length}
+            {unreadCount}
           </Badge>
           <div className="ml-auto flex items-center gap-2">
+            <Button
+              size="xs"
+              variant="ghost"
+              disabled={unreadCount === 0}
+              onClick={() => {
+                markThreadsVisited(
+                  items.map((item) => ({
+                    threadId: item.sideThreadId,
+                    visitedAt: item.lastMentionAt,
+                  })),
+                );
+              }}
+            >
+              <CheckCheckIcon className="size-3.5" />
+              Mark all read
+            </Button>
             <Button
               size="xs"
               variant="ghost"
@@ -176,14 +197,14 @@ function InboxRouteView() {
                   {group.items.map((item) => {
                     const unread = isInboxItemUnread(item, lastVisitedAtById);
                     return (
-                      <li key={item.sideThreadId}>
+                      <li key={item.sideThreadId} className="group relative">
                         <button
                           type="button"
                           onClick={() => {
                             void openInboxItem(item);
                           }}
                           className={cn(
-                            "flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                            "flex w-full items-start gap-3 px-4 py-3 pr-12 text-left transition-colors hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                             unread && "bg-amber-500/5",
                           )}
                         >
@@ -212,6 +233,24 @@ function InboxRouteView() {
                               </span>
                             ) : null}
                           </div>
+                        </button>
+                        <button
+                          type="button"
+                          aria-label="Dismiss mention"
+                          title="Dismiss mention"
+                          disabled={!environmentId || !currentUser}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            if (!environmentId || !currentUser) return;
+                            void dismiss(
+                              ensureEnvironmentApi(environmentId),
+                              item.sideThreadId,
+                              currentUser.id,
+                            );
+                          }}
+                          className="absolute right-2 top-1/2 flex size-7 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground/60 opacity-0 transition-opacity hover:bg-accent hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-30"
+                        >
+                          <XIcon className="size-4" />
                         </button>
                       </li>
                     );

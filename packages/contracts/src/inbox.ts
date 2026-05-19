@@ -46,9 +46,10 @@ export const InboxSubscribeInput = Schema.Struct({});
 export type InboxSubscribeInput = typeof InboxSubscribeInput.Type;
 
 /**
- * Push event delivered when the user gains, loses (e.g. on archive) or sees
- * an update to one of their inbox items. The client merges this into its
- * local store without re-issuing a full `inbox.list` round-trip.
+ * Push event delivered when the user gains, loses (e.g. on archive or
+ * dismiss) or sees an update to one of their inbox items. The client merges
+ * this into its local store without re-issuing a full `inbox.list`
+ * round-trip.
  */
 export const InboxStreamEvent = Schema.Union([
   Schema.Struct({
@@ -58,6 +59,10 @@ export const InboxStreamEvent = Schema.Union([
   Schema.Struct({
     kind: Schema.Literal("upserted"),
     item: InboxItem,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("removed"),
+    sideThreadId: SideThreadId,
   }),
 ]);
 export type InboxStreamEvent = typeof InboxStreamEvent.Type;

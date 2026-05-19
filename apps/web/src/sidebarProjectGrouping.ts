@@ -1,5 +1,5 @@
 import { scopeProjectRef } from "@t3tools/client-runtime";
-import type { EnvironmentId, ScopedProjectRef } from "@t3tools/contracts";
+import type { EnvironmentId, ScopedProjectRef, UserId } from "@t3tools/contracts";
 import {
   deriveLogicalProjectKeyFromSettings,
   derivePhysicalProjectKey,
@@ -7,6 +7,7 @@ import {
   type ProjectGroupingSettings,
 } from "./logicalProject";
 import type { Project } from "./types";
+import type { ProjectAffiliationOverride } from "./uiStateStore";
 
 export type EnvironmentPresence = "local-only" | "remote-only" | "mixed";
 
@@ -115,4 +116,74 @@ export function buildSidebarProjectSnapshots(input: {
   }
 
   return result;
+}
+
+export interface ProjectAffiliationInput {
+  readonly snapshots: ReadonlyArray<SidebarProjectSnapshot>;
+  readonly currentUserId: UserId | null;
+  readonly primaryEnvironmentId: EnvironmentId | null;
+  readonly mentionedProjectKeys: ReadonlySet<string>;
+  readonly overrideByLogicalKey: Readonly<Record<string, ProjectAffiliationOverride>>;
+}
+
+export interface PartitionedSidebarProjects {
+  readonly mine: ReadonlyArray<SidebarProjectSnapshot>;
+  readonly others: ReadonlyArray<SidebarProjectSnapshot>;
+}
+
+/**
+ * Splits the sidebar project list into "My projects" (created-by-me OR
+ * mentioned OR manually pinned) and "Projects" (the rest). The auto rules
+ * can be overridden manually via the menu — overrides are sticky so the
+ * user keeps control even when mentions come and go.
+ *
+ * When `currentUserId` is null (identity still loading) we don't fail open
+ * by including everything in "My projects": we treat ownership signals as
+ * absent and rely on the persisted override map. The primary-environment
+ * fallback applies to legacy projects whose `createdBy` is null.
+ */
+export function isProjectAffiliatedWithMe(
+  snapshot: SidebarProjectSnapshot,
+  input: Omit<ProjectAffiliationInput, "snapshots">,
+): boolean {
+  const override = input.overrideByLogicalKey[snapshot.projectKey];
+  if (override === "mine") return true;
+  if (override === "other") return false;
+
+  if (input.mentionedProjectKeys.has(snapshot.projectKey)) {
+    return true;
+  }
+
+  for (const member of snapshot.memberProjects) {
+    if (input.currentUserId !== null && member.createdBy?.id === input.currentUserId) {
+      return true;
+    }
+    // Back-compat fallback for projects authored before per-user attribution
+    // shipped: anything living on the current primary environment is
+    // assumed to belong to this user.
+    if (
+      member.createdBy === null &&
+      input.primaryEnvironmentId !== null &&
+      member.environmentId === input.primaryEnvironmentId
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+export function partitionProjectsByAffiliation(
+  input: ProjectAffiliationInput,
+): PartitionedSidebarProjects {
+  const mine: SidebarProjectSnapshot[] = [];
+  const others: SidebarProjectSnapshot[] = [];
+  for (const snapshot of input.snapshots) {
+    if (isProjectAffiliatedWithMe(snapshot, input)) {
+      mine.push(snapshot);
+    } else {
+      others.push(snapshot);
+    }
+  }
+  return { mine, others };
 }

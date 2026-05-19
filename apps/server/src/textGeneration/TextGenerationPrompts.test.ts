@@ -4,6 +4,7 @@ import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
   buildPrContentPrompt,
+  buildThreadHandoffPrompt,
   buildThreadTitlePrompt,
 } from "./TextGenerationPrompts.ts";
 import { normalizeCliError, sanitizeThreadTitle } from "./TextGenerationUtils.ts";
@@ -133,6 +134,96 @@ describe("buildThreadTitlePrompt", () => {
     expect(result.prompt).toContain("thread.png");
     expect(result.prompt).toContain("image/png");
     expect(result.prompt).toContain("67890 bytes");
+  });
+});
+
+describe("buildThreadHandoffPrompt", () => {
+  const baseInput = {
+    sourceCwd: "/home/dev/repos/analytics",
+    sourceBranch: "investigation/adverse-selection",
+    sourceProjectName: "analytics",
+    targetCwd: "/home/dev/repos/market-maker",
+    targetProjectName: "market-maker",
+  } as const;
+
+  it("frames the prompt for an agent without source-repo visibility", () => {
+    const result = buildThreadHandoffPrompt({
+      ...baseInput,
+      transcript: [
+        { role: "user", text: "Look into adverse selection on BTC-PERP." },
+        {
+          role: "agent",
+          text: "Found that fill ratios drop sharply after large quote moves.",
+        },
+      ],
+    });
+
+    expect(result.prompt).toContain(
+      "summarising a coding conversation as a handoff for a different agent",
+    );
+    expect(result.prompt).toContain("no visibility into the source");
+    expect(result.prompt).toContain("Source project: analytics");
+    expect(result.prompt).toContain("Source cwd: /home/dev/repos/analytics");
+    expect(result.prompt).toContain("Source branch: investigation/adverse-selection");
+    expect(result.prompt).toContain("Target project: market-maker");
+    expect(result.prompt).toContain("Target cwd: /home/dev/repos/market-maker");
+    expect(result.prompt).toContain("[1] User:");
+    expect(result.prompt).toContain("[2] Agent:");
+    expect(result.prompt).toContain("Look into adverse selection on BTC-PERP.");
+    expect(result.prompt).toContain("fill ratios drop sharply after large quote moves.");
+  });
+
+  it("falls back to '(unknown)' when no source branch is provided", () => {
+    const result = buildThreadHandoffPrompt({
+      ...baseInput,
+      sourceBranch: null,
+      transcript: [{ role: "user", text: "hello" }],
+    });
+
+    expect(result.prompt).toContain("Source branch: (unknown)");
+  });
+
+  it("falls back to the source cwd when no source project name is provided", () => {
+    const result = buildThreadHandoffPrompt({
+      ...baseInput,
+      sourceProjectName: null,
+      transcript: [{ role: "user", text: "hello" }],
+    });
+
+    expect(result.prompt).toContain(`Source project: ${baseInput.sourceCwd}`);
+  });
+
+  it("includes an optional user note when provided", () => {
+    const result = buildThreadHandoffPrompt({
+      ...baseInput,
+      transcript: [{ role: "user", text: "hello" }],
+      note: "Focus on the order placement code path.",
+    });
+
+    expect(result.prompt).toContain("User note for the next agent:");
+    expect(result.prompt).toContain("Focus on the order placement code path.");
+  });
+
+  it("omits the user note section when no note is provided", () => {
+    const result = buildThreadHandoffPrompt({
+      ...baseInput,
+      transcript: [{ role: "user", text: "hello" }],
+    });
+
+    expect(result.prompt).not.toContain("User note for the next agent:");
+  });
+
+  it("truncates oversized individual transcript messages", () => {
+    const huge = "A".repeat(7_000);
+    const result = buildThreadHandoffPrompt({
+      ...baseInput,
+      transcript: [{ role: "agent", text: huge }],
+    });
+
+    // limitSection appends a [truncated] marker for over-limit sections.
+    expect(result.prompt).toContain("[truncated]");
+    // The full payload should not survive verbatim.
+    expect(result.prompt.includes(huge)).toBe(false);
   });
 });
 

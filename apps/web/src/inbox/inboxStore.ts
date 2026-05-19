@@ -9,10 +9,19 @@
  * which mirrors how regular threads track read state and keeps both surfaces
  * consistent if the user "marks read" by visiting.
  */
-import type { EnvironmentApi, InboxItem, InboxStreamEvent } from "@t3tools/contracts";
-import { useEffect } from "react";
+import type {
+  EnvironmentApi,
+  InboxItem,
+  InboxStreamEvent,
+  SideThreadId,
+  ThreadId,
+  UserId,
+} from "@t3tools/contracts";
+import { useEffect, useMemo } from "react";
 import { create } from "zustand";
+import { useShallow } from "zustand/react/shallow";
 
+import { newCommandId } from "../lib/utils";
 import { useUiStateStore } from "../uiStateStore";
 
 interface InboxStore {
@@ -21,6 +30,17 @@ interface InboxStore {
   readonly errorMessage: string | null;
   readonly refresh: (api: EnvironmentApi) => Promise<void>;
   readonly applyStreamEvent: (event: InboxStreamEvent) => void;
+  /**
+   * Soft-dismiss every current mention of `sideThreadId` for `userId`.
+   * Optimistic: removes the row locally first, then dispatches the command.
+   * The server echoes a `removed` stream event back so other tabs of the
+   * same user drop the row too. On failure, refresh to restore truth.
+   */
+  readonly dismiss: (
+    api: EnvironmentApi,
+    sideThreadId: SideThreadId,
+    userId: UserId,
+  ) => Promise<void>;
   readonly reset: () => void;
 }
 
@@ -47,9 +67,34 @@ export const useInboxStore = create<InboxStore>((set, get) => ({
       set({ items: sortByLastMention(event.items), status: "ready", errorMessage: null });
       return;
     }
+    if (event.kind === "removed") {
+      const current = get().items;
+      set({ items: current.filter((item) => item.sideThreadId !== event.sideThreadId) });
+      return;
+    }
     const current = get().items;
     const others = current.filter((item) => item.sideThreadId !== event.item.sideThreadId);
     set({ items: sortByLastMention([event.item, ...others]) });
+  },
+
+  dismiss: async (api, sideThreadId, userId) => {
+    const previous = get().items;
+    set({ items: previous.filter((item) => item.sideThreadId !== sideThreadId) });
+    try {
+      await api.sideThread.dispatchCommand({
+        type: "sidethread.inbox.dismiss",
+        commandId: newCommandId(),
+        sideThreadId,
+        userId,
+      });
+    } catch (cause) {
+      // Rollback to the previous state — the server rejected so our local
+      // truth is still the snapshot we had before the optimistic remove.
+      set({
+        items: previous,
+        errorMessage: cause instanceof Error ? cause.message : "Failed to dismiss mention",
+      });
+    }
   },
 
   reset: () => set({ items: [], status: "idle", errorMessage: null }),
@@ -100,4 +145,17 @@ export function isInboxItemUnread(
   const lastVisited = lastVisitedAtById[item.sideThreadId];
   if (!lastVisited) return true;
   return lastVisited < item.lastMentionAt;
+}
+
+/**
+ * Set of parent thread ids that currently carry @-mentions for this user.
+ * Drives the sidebar's "auto-promote to My projects on mention" rule —
+ * the consumer is responsible for mapping these thread ids to logical
+ * project keys via the regular sidebar threads → projects machinery.
+ */
+export function useMentionedParentThreadIds(): ReadonlySet<ThreadId> {
+  const parentThreadIds = useInboxStore(
+    useShallow((state) => state.items.map((item) => item.parentThreadId)),
+  );
+  return useMemo(() => new Set(parentThreadIds), [parentThreadIds]);
 }

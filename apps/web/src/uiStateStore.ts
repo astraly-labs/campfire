@@ -17,6 +17,15 @@ const LEGACY_PERSISTED_STATE_KEYS = [
   "codething:renderer-state:v1",
 ] as const;
 
+/**
+ * User's manual override for the sidebar "My projects" / "Projects" split.
+ * Keyed by the logical project key so the choice survives env churn.
+ * `"mine"` pins to My projects even if the auto rules wouldn't, `"other"`
+ * forces into Projects even if mentions or ownership would auto-include it.
+ * Absent → fall back to the auto partition (`partitionProjectsByAffiliation`).
+ */
+export type ProjectAffiliationOverride = "mine" | "other";
+
 export interface PersistedUiState {
   collapsedProjectCwds?: string[];
   expandedProjectCwds?: string[];
@@ -30,11 +39,22 @@ export interface PersistedUiState {
    * reseeded from the snapshot via `syncThreads` on boot.
    */
   sideThreadLastVisitedAtById?: Record<string, string>;
+  projectAffiliationOverrideByLogicalKey?: Record<string, ProjectAffiliationOverride>;
+  /**
+   * Whether the secondary "Projects" sidebar section is collapsed. Persisted
+   * so the user keeps a tidy sidebar across reloads; defaults to `true` on
+   * first install so "My projects" is the dominant surface.
+   */
+  projectsSectionCollapsed?: boolean;
 }
 
 export interface UiProjectState {
   projectExpandedById: Record<string, boolean>;
   projectOrder: string[];
+  /** Manual pin overrides for the My projects / Projects split. */
+  projectAffiliationOverrideByLogicalKey: Record<string, ProjectAffiliationOverride>;
+  /** Collapsed state of the secondary "Projects" sidebar section. */
+  projectsSectionCollapsed: boolean;
 }
 
 export interface UiThreadState {
@@ -64,6 +84,8 @@ export interface SyncThreadInput {
 const initialState: UiState = {
   projectExpandedById: {},
   projectOrder: [],
+  projectAffiliationOverrideByLogicalKey: {},
+  projectsSectionCollapsed: true,
   threadLastVisitedAtById: {},
   threadChangedFilesExpandedById: {},
   defaultAdvertisedEndpointKey: null,
@@ -114,6 +136,13 @@ function readPersistedState(): UiState {
       threadLastVisitedAtById: sanitizePersistedSideThreadVisits(
         parsed.sideThreadLastVisitedAtById,
       ),
+      projectAffiliationOverrideByLogicalKey: sanitizePersistedProjectAffiliationOverrides(
+        parsed.projectAffiliationOverrideByLogicalKey,
+      ),
+      projectsSectionCollapsed:
+        typeof parsed.projectsSectionCollapsed === "boolean"
+          ? parsed.projectsSectionCollapsed
+          : initialState.projectsSectionCollapsed,
     };
   } catch {
     return initialState;
@@ -136,6 +165,25 @@ function sanitizePersistedSideThreadVisits(
       Number.isFinite(Date.parse(visitedAt))
     ) {
       nextState[threadId] = visitedAt;
+    }
+  }
+  return nextState;
+}
+
+function sanitizePersistedProjectAffiliationOverrides(
+  value: PersistedUiState["projectAffiliationOverrideByLogicalKey"],
+): Record<string, ProjectAffiliationOverride> {
+  if (!value || typeof value !== "object") {
+    return {};
+  }
+  const nextState: Record<string, ProjectAffiliationOverride> = {};
+  for (const [logicalKey, choice] of Object.entries(value)) {
+    if (
+      typeof logicalKey === "string" &&
+      logicalKey.length > 0 &&
+      (choice === "mine" || choice === "other")
+    ) {
+      nextState[logicalKey] = choice;
     }
   }
   return nextState;
@@ -232,6 +280,8 @@ export function persistState(state: UiState): void {
         collapsedProjectCwds,
         expandedProjectCwds,
         projectOrderCwds,
+        projectAffiliationOverrideByLogicalKey: state.projectAffiliationOverrideByLogicalKey,
+        projectsSectionCollapsed: state.projectsSectionCollapsed,
         defaultAdvertisedEndpointKey: state.defaultAdvertisedEndpointKey,
         threadChangedFilesExpandedById,
         sideThreadLastVisitedAtById,
@@ -482,23 +532,54 @@ export function syncThreads(state: UiState, threads: readonly SyncThreadInput[])
 }
 
 export function markThreadVisited(state: UiState, threadId: string, visitedAt?: string): UiState {
-  const at = visitedAt ?? new Date().toISOString();
-  const visitedAtMs = Date.parse(at);
-  const previousVisitedAt = state.threadLastVisitedAtById[threadId];
-  const previousVisitedAtMs = previousVisitedAt ? Date.parse(previousVisitedAt) : NaN;
-  if (
-    Number.isFinite(previousVisitedAtMs) &&
-    Number.isFinite(visitedAtMs) &&
-    previousVisitedAtMs >= visitedAtMs
-  ) {
+  return markThreadsVisited(state, [
+    { threadId, visitedAt: visitedAt ?? new Date().toISOString() },
+  ]);
+}
+
+export interface ThreadVisitInput {
+  readonly threadId: string;
+  readonly visitedAt: string;
+}
+
+/**
+ * Batch variant of `markThreadVisited`. Applies the same "never move backwards
+ * under clock skew" rule per-entry, then returns a single new state (one
+ * render, one persist write) so callers like "mark all inbox read" don't
+ * thrash the store with N updates.
+ */
+export function markThreadsVisited(
+  state: UiState,
+  visits: ReadonlyArray<ThreadVisitInput>,
+): UiState {
+  if (visits.length === 0) {
+    return state;
+  }
+  let nextById = state.threadLastVisitedAtById;
+  let mutated = false;
+  for (const { threadId, visitedAt } of visits) {
+    const visitedAtMs = Date.parse(visitedAt);
+    const previousVisitedAt = nextById[threadId];
+    const previousVisitedAtMs = previousVisitedAt ? Date.parse(previousVisitedAt) : NaN;
+    if (
+      Number.isFinite(previousVisitedAtMs) &&
+      Number.isFinite(visitedAtMs) &&
+      previousVisitedAtMs >= visitedAtMs
+    ) {
+      continue;
+    }
+    if (!mutated) {
+      nextById = { ...nextById };
+      mutated = true;
+    }
+    nextById[threadId] = visitedAt;
+  }
+  if (!mutated) {
     return state;
   }
   return {
     ...state,
-    threadLastVisitedAtById: {
-      ...state.threadLastVisitedAtById,
-      [threadId]: at,
-    },
+    threadLastVisitedAtById: nextById,
   };
 }
 
@@ -615,6 +696,41 @@ export function toggleProject(state: UiState, projectId: string): UiState {
   };
 }
 
+export function setProjectAffiliation(
+  state: UiState,
+  logicalKey: string,
+  override: ProjectAffiliationOverride | null,
+): UiState {
+  const current = state.projectAffiliationOverrideByLogicalKey[logicalKey] ?? null;
+  if (current === override) {
+    return state;
+  }
+  if (override === null) {
+    const { [logicalKey]: _removed, ...rest } = state.projectAffiliationOverrideByLogicalKey;
+    return {
+      ...state,
+      projectAffiliationOverrideByLogicalKey: rest,
+    };
+  }
+  return {
+    ...state,
+    projectAffiliationOverrideByLogicalKey: {
+      ...state.projectAffiliationOverrideByLogicalKey,
+      [logicalKey]: override,
+    },
+  };
+}
+
+export function setProjectsSectionCollapsed(state: UiState, collapsed: boolean): UiState {
+  if (state.projectsSectionCollapsed === collapsed) {
+    return state;
+  }
+  return {
+    ...state,
+    projectsSectionCollapsed: collapsed,
+  };
+}
+
 export function setProjectExpanded(state: UiState, projectId: string, expanded: boolean): UiState {
   if ((state.projectExpandedById[projectId] ?? true) === expanded) {
     return state;
@@ -675,12 +791,16 @@ interface UiStateStore extends UiState {
   syncProjects: (projects: readonly SyncProjectInput[]) => void;
   syncThreads: (threads: readonly SyncThreadInput[]) => void;
   markThreadVisited: (threadId: string, visitedAt?: string) => void;
+  markThreadsVisited: (visits: ReadonlyArray<ThreadVisitInput>) => void;
   markThreadUnread: (threadId: string, latestTurnCompletedAt: string | null | undefined) => void;
   clearThreadUi: (threadId: string) => void;
   setThreadChangedFilesExpanded: (threadId: string, turnId: string, expanded: boolean) => void;
   setDefaultAdvertisedEndpointKey: (key: string | null) => void;
   toggleProject: (projectId: string) => void;
   setProjectExpanded: (projectId: string, expanded: boolean) => void;
+  setProjectAffiliation: (logicalKey: string, override: ProjectAffiliationOverride | null) => void;
+  setProjectsSectionCollapsed: (collapsed: boolean) => void;
+  toggleProjectsSection: () => void;
   reorderProjects: (
     draggedProjectIds: readonly string[],
     targetProjectIds: readonly string[],
@@ -693,6 +813,7 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
   syncThreads: (threads) => set((state) => syncThreads(state, threads)),
   markThreadVisited: (threadId, visitedAt) =>
     set((state) => markThreadVisited(state, threadId, visitedAt)),
+  markThreadsVisited: (visits) => set((state) => markThreadsVisited(state, visits)),
   markThreadUnread: (threadId, latestTurnCompletedAt) =>
     set((state) => markThreadUnread(state, threadId, latestTurnCompletedAt)),
   clearThreadUi: (threadId) => set((state) => clearThreadUi(state, threadId)),
@@ -703,6 +824,12 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
   toggleProject: (projectId) => set((state) => toggleProject(state, projectId)),
   setProjectExpanded: (projectId, expanded) =>
     set((state) => setProjectExpanded(state, projectId, expanded)),
+  setProjectAffiliation: (logicalKey, override) =>
+    set((state) => setProjectAffiliation(state, logicalKey, override)),
+  setProjectsSectionCollapsed: (collapsed) =>
+    set((state) => setProjectsSectionCollapsed(state, collapsed)),
+  toggleProjectsSection: () =>
+    set((state) => setProjectsSectionCollapsed(state, !state.projectsSectionCollapsed)),
   reorderProjects: (draggedProjectIds, targetProjectIds) =>
     set((state) => reorderProjects(state, draggedProjectIds, targetProjectIds)),
 }));

@@ -218,6 +218,12 @@ export const OrchestrationProject = Schema.Struct({
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   deletedAt: Schema.NullOr(IsoDateTime),
+  /**
+   * Identity of the user who created the project. Null for projects authored
+   * before per-user attribution shipped — sidebar callers fall back to the
+   * primary-environment heuristic in that case.
+   */
+  createdBy: Schema.NullOr(UserRef).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
 });
 export type OrchestrationProject = typeof OrchestrationProject.Type;
 
@@ -386,6 +392,7 @@ export const OrchestrationProjectShell = Schema.Struct({
   scripts: Schema.Array(ProjectScript),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
+  createdBy: Schema.NullOr(UserRef).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
 });
 export type OrchestrationProjectShell = typeof OrchestrationProjectShell.Type;
 
@@ -473,6 +480,12 @@ export const ProjectCreateCommand = Schema.Struct({
   workspaceRoot: TrimmedNonEmptyString,
   createWorkspaceRootIfMissing: Schema.optional(Schema.Boolean),
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
+  /**
+   * Author of the project creation. Optional on the command so legacy
+   * dispatchers that haven't been migrated still work; the WS handler fills it
+   * in from the authenticated session before forwarding to the decider.
+   */
+  createdBy: Schema.optional(Schema.NullOr(UserRef)),
   createdAt: IsoDateTime,
 });
 
@@ -824,6 +837,13 @@ export const ProjectCreatedPayload = Schema.Struct({
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
   defaultModelSelection: Schema.NullOr(ModelSelection),
   scripts: Schema.Array(ProjectScript),
+  /**
+   * Captured at write time. Null when the originating command lacked an
+   * authenticated session (pre-attribution events, CLI seed flows). The
+   * sidebar's "My projects" partition falls back to the primary-environment
+   * heuristic when this is null.
+   */
+  createdBy: Schema.NullOr(UserRef).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });

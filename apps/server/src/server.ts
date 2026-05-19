@@ -10,6 +10,7 @@ import {
   serverEnvironmentRouteLayer,
   staticAndDevRouteLayer,
   workspaceFileRouteLayer,
+  workspaceFilesTreeRouteLayer,
   browserApiCorsLayer,
 } from "./http.ts";
 import { fixPath } from "./os-jank.ts";
@@ -316,6 +317,7 @@ export const makeRoutesLayer = Layer.mergeAll(
   projectFaviconRouteLayer,
   serverEnvironmentRouteLayer,
   workspaceFileRouteLayer,
+  workspaceFilesTreeRouteLayer,
   staticAndDevRouteLayer,
   websocketRpcRouteLayer,
 ).pipe(Layer.provide(browserApiCorsLayer));

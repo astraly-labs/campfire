@@ -65,8 +65,29 @@ const makeInboxReadModel = Effect.gen(function* () {
 
   const listForUser: InboxReadModelShape["listForUser"] = (userId) =>
     Effect.gen(function* () {
+      // LEFT JOIN + `occurred_at > dismissed_at` hides every mention the
+      // user has soft-dismissed. A fresh mention with a later `occurred_at`
+      // re-surfaces the side-thread without an explicit undismiss step.
+      // `mentions_count` is computed after the dismiss filter so the badge
+      // only reflects the visible (post-dismiss) mentions.
       const rows = yield* sql<InboxRow>`
-        WITH ranked AS (
+        WITH visible AS (
+          SELECT
+            m.side_thread_id,
+            m.parent_thread_id,
+            m.anchor_message_id,
+            m.message_id,
+            m.occurred_at,
+            m.author_user_id,
+            m.author_display_name,
+            m.text_preview
+          FROM projection_side_thread_message_mentions m
+          LEFT JOIN projection_inbox_dismissals d
+            ON d.user_id = m.user_id AND d.side_thread_id = m.side_thread_id
+          WHERE m.user_id = ${userId}
+            AND (d.dismissed_at IS NULL OR m.occurred_at > d.dismissed_at)
+        ),
+        ranked AS (
           SELECT
             side_thread_id,
             parent_thread_id,
@@ -81,8 +102,7 @@ const makeInboxReadModel = Effect.gen(function* () {
               PARTITION BY side_thread_id
               ORDER BY occurred_at DESC, message_id DESC
             ) AS rn
-          FROM projection_side_thread_message_mentions
-          WHERE user_id = ${userId}
+          FROM visible
         )
         SELECT
           side_thread_id,

@@ -19,6 +19,7 @@ const clientSettings: ClientSettings = {
   diffIgnoreWhitespace: true,
   diffWordWrap: true,
   favorites: [],
+  helixPathMappings: [],
   providerModelPreferences: {},
   sidebarProjectGroupingMode: "repository_path",
   sidebarProjectGroupingOverrides: {

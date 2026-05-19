@@ -4,6 +4,7 @@ import { isOpenFavoriteEditorShortcut, shortcutLabelForCommand } from "../../key
 import { usePreferredEditor } from "../../editorPreferences";
 import {
   editorSupportsRemoteSshLaunch,
+  REMOTE_SSH_EDITOR_IDS,
   resolveRemoteSshHostFromLocation,
   resolveRemoteSshLaunchUrl,
   shouldUseRemoteSshLaunch,
@@ -173,25 +174,27 @@ export const OpenInPicker = memo(function OpenInPicker({
   openInCwd: string | null;
 }) {
   const helixPathMappings = useSettings((s) => s.helixPathMappings);
-  // Helix is a client-launched editor: visible only when the user has at
-  // least one path mapping configured. The server never reports it in
-  // `availableEditors` (see resolveAvailableEditors).
-  const effectiveAvailableEditors = useMemo<ReadonlyArray<EditorId>>(
-    () =>
-      helixPathMappings.length > 0
-        ? [...availableEditors, "helix" satisfies EditorId]
-        : availableEditors,
-    [availableEditors, helixPathMappings.length],
-  );
+  const isRemoteBrowser = shouldUseRemoteSshLaunch();
+  const sshHost = isRemoteBrowser ? resolveRemoteSshHostFromLocation() : "";
+  // Some editors don't need to be present on the backend at all:
+  //   - Helix (client-launched via `helix://` + a path mapping)
+  //   - Cursor / VS Code family in remote-SSH mode, where the browser
+  //     hands the OS a `cursor://vscode-remote/ssh-remote+host/...` URL
+  //     and the *local* editor connects back over SSH-remote.
+  // The server only reports editors it can spawn itself, so we splice
+  // these in client-side when their preconditions are met.
+  const effectiveAvailableEditors = useMemo<ReadonlyArray<EditorId>>(() => {
+    const set = new Set<EditorId>(availableEditors);
+    if (helixPathMappings.length > 0) set.add("helix");
+    if (isRemoteBrowser) for (const id of REMOTE_SSH_EDITOR_IDS) set.add(id);
+    return Array.from(set);
+  }, [availableEditors, helixPathMappings.length, isRemoteBrowser]);
   const [preferredEditor, setPreferredEditor] = usePreferredEditor(effectiveAvailableEditors);
   const options = useMemo(
     () => resolveOptions(navigator.platform, effectiveAvailableEditors),
     [effectiveAvailableEditors],
   );
   const primaryOption = options.find(({ value }) => value === preferredEditor) ?? null;
-
-  const isRemoteBrowser = shouldUseRemoteSshLaunch();
-  const sshHost = isRemoteBrowser ? resolveRemoteSshHostFromLocation() : "";
   // Helix has its own client-side launch path (helix:// URL scheme +
   // sshfs-mounted translation) that works regardless of remote backend, so
   // it shouldn't be treated as "remote-unsupported".

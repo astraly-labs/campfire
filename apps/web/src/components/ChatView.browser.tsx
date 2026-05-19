@@ -347,6 +347,7 @@ function createSnapshotForTargetUser(options: {
         createdAt: NOW_ISO,
         updatedAt: NOW_ISO,
         deletedAt: null,
+        createdBy: null,
       },
     ],
     threads: [
@@ -834,6 +835,7 @@ function createSnapshotWithSecondaryProject(options?: {
         createdAt: NOW_ISO,
         updatedAt: NOW_ISO,
         deletedAt: null,
+        createdBy: null,
       },
     ],
     threads: [...snapshot.threads, ...secondaryThreads, ...archivedSecondaryThreads],

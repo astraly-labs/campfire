@@ -17,6 +17,7 @@ import { expandHomePath } from "../pathExpansion.ts";
 import { TextGenerationError } from "@t3tools/contracts";
 import {
   type BranchNameGenerationInput,
+  type TextGenerationOp,
   type ThreadTitleGenerationResult,
   type TextGenerationShape,
 } from "./TextGeneration.ts";
@@ -24,6 +25,7 @@ import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
   buildPrContentPrompt,
+  buildThreadHandoffPrompt,
   buildThreadTitlePrompt,
 } from "./TextGenerationPrompts.ts";
 import {
@@ -101,11 +103,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     fileSystem.remove(filePath).pipe(Effect.catch(() => Effect.void));
 
   const encodeJsonForOperation = (
-    operation:
-      | "generateCommitMessage"
-      | "generatePrContent"
-      | "generateBranchName"
-      | "generateThreadTitle",
+    operation: TextGenerationOp,
     value: unknown,
   ): Effect.Effect<string, TextGenerationError> =>
     encodeJsonString(value).pipe(
@@ -120,11 +118,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     );
 
   const materializeImageAttachments = Effect.fn("materializeImageAttachments")(function* (
-    _operation:
-      | "generateCommitMessage"
-      | "generatePrContent"
-      | "generateBranchName"
-      | "generateThreadTitle",
+    _operation: TextGenerationOp,
     attachments: BranchNameGenerationInput["attachments"],
   ): Effect.fn.Return<MaterializedImageAttachments, TextGenerationError> {
     if (!attachments || attachments.length === 0) {
@@ -164,11 +158,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     cleanupPaths = [],
     modelSelection,
   }: {
-    operation:
-      | "generateCommitMessage"
-      | "generatePrContent"
-      | "generateBranchName"
-      | "generateThreadTitle";
+    operation: TextGenerationOp;
     cwd: string;
     prompt: string;
     outputSchemaJson: S;
@@ -408,10 +398,37 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     } satisfies ThreadTitleGenerationResult;
   });
 
+  const generateThreadHandoff: TextGenerationShape["generateThreadHandoff"] = Effect.fn(
+    "CodexTextGeneration.generateThreadHandoff",
+  )(function* (input) {
+    const { prompt, outputSchema } = buildThreadHandoffPrompt({
+      sourceCwd: input.sourceCwd,
+      sourceBranch: input.sourceBranch,
+      sourceProjectName: input.sourceProjectName,
+      targetCwd: input.targetCwd,
+      targetProjectName: input.targetProjectName,
+      transcript: input.transcript,
+      note: input.note,
+    });
+
+    const generated = yield* runCodexJson({
+      operation: "generateThreadHandoff",
+      cwd: input.sourceCwd,
+      prompt,
+      outputSchemaJson: outputSchema,
+      modelSelection: input.modelSelection,
+    });
+
+    return {
+      prompt: generated.prompt.trim(),
+    };
+  });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    generateThreadHandoff,
   } satisfies TextGenerationShape;
 });
