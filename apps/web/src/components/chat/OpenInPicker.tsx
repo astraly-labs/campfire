@@ -3,12 +3,14 @@ import { memo, useCallback, useEffect, useMemo } from "react";
 import { isOpenFavoriteEditorShortcut, shortcutLabelForCommand } from "../../keybindings";
 import { usePreferredEditor } from "../../editorPreferences";
 import {
+  applySshUsernameToHost,
   editorSupportsRemoteSshLaunch,
   REMOTE_SSH_EDITOR_IDS,
   resolveRemoteSshHostFromLocation,
   resolveRemoteSshLaunchUrl,
   shouldUseRemoteSshLaunch,
 } from "../../remoteEditorLaunch";
+import { readPrimaryEnvironmentDescriptor } from "../../environments/primary";
 import { useSettings } from "../../hooks/useSettings";
 import { buildHelixUrl, translateHelixPath } from "../../helixPathTranslation";
 import { ChevronDownIcon, FolderClosedIcon } from "lucide-react";
@@ -175,7 +177,15 @@ export const OpenInPicker = memo(function OpenInPicker({
 }) {
   const helixPathMappings = useSettings((s) => s.helixPathMappings);
   const isRemoteBrowser = shouldUseRemoteSshLaunch();
-  const sshHost = isRemoteBrowser ? resolveRemoteSshHostFromLocation() : "";
+  // The backend exposes its OS user via the environment descriptor — prepend
+  // it so the SSH-remote authority targets the account that owns the server,
+  // not whatever local user the viewer is logged in as.
+  const sshUsername = isRemoteBrowser
+    ? (readPrimaryEnvironmentDescriptor()?.sshUsername ?? null)
+    : null;
+  const sshHost = isRemoteBrowser
+    ? applySshUsernameToHost(resolveRemoteSshHostFromLocation(), sshUsername)
+    : "";
   // Some editors don't need to be present on the backend at all:
   //   - Helix (client-launched via `helix://` + a path mapping)
   //   - Cursor / VS Code family in remote-SSH mode, where the browser

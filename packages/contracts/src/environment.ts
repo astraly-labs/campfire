@@ -31,6 +31,11 @@ export const ExecutionEnvironmentDescriptor = Schema.Struct({
   platform: ExecutionEnvironmentPlatform,
   serverVersion: TrimmedNonEmptyString,
   capabilities: ExecutionEnvironmentCapabilities,
+  // OS username running the server process. Used by remote browsers to build
+  // a `ssh-remote+<user>@<host>` authority when launching VS Code-family
+  // editors — without it the local SSH client falls back to the *viewer*'s
+  // username, which generally has no account on the backend host.
+  sshUsername: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type ExecutionEnvironmentDescriptor = typeof ExecutionEnvironmentDescriptor.Type;
 

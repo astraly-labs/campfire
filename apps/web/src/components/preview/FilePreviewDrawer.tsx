@@ -1,4 +1,4 @@
-import { DownloadIcon, ExternalLinkIcon, XIcon } from "lucide-react";
+import { DownloadIcon, ExternalLinkIcon, HashIcon, XIcon } from "lucide-react";
 
 import { Button } from "../ui/button";
 import { InlineSlideDrawer } from "../ui/inline-slide-drawer";
@@ -32,6 +32,8 @@ function DrawerShell({ target, onClose }: { target: FilePreviewTarget; onClose: 
   const previewUrl = buildWorkspaceFilePreviewUrl({ cwd: target.cwd, path: target.filePath });
   const downloadUrl = buildWorkspaceFileDownloadUrl({ cwd: target.cwd, path: target.filePath });
   const basename = basenameOf(target.filePath);
+  const showLineNumbers = useFilePreviewStore((state) => state.showLineNumbers);
+  const toggleShowLineNumbers = useFilePreviewStore((state) => state.toggleShowLineNumbers);
 
   return (
     <div
@@ -45,7 +47,27 @@ function DrawerShell({ target, onClose }: { target: FilePreviewTarget; onClose: 
           title={target.filePath}
         >
           {basename}
+          {target.line !== undefined ? (
+            <span className="ml-1 text-muted-foreground/70">
+              :{target.line}
+              {target.column !== undefined ? `:${target.column}` : ""}
+            </span>
+          ) : null}
         </span>
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          onClick={toggleShowLineNumbers}
+          aria-label={showLineNumbers ? "Hide line numbers" : "Show line numbers"}
+          aria-pressed={showLineNumbers}
+          title={showLineNumbers ? "Hide line numbers" : "Show line numbers"}
+          className={cn(
+            "text-muted-foreground/60 hover:text-foreground",
+            showLineNumbers && "text-foreground",
+          )}
+        >
+          <HashIcon className="size-3.5" />
+        </Button>
         <Button
           variant="ghost"
           size="icon-xs"

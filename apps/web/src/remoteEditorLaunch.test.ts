@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  applySshUsernameToHost,
   editorSupportsRemoteSshLaunch,
   resolveRemoteSshLaunchUrl,
   shouldUseRemoteSshLaunch,
@@ -83,6 +84,28 @@ describe("resolveRemoteSshLaunchUrl", () => {
     expect(
       resolveRemoteSshLaunchUrl({ editor: "cursor", cwd: "/x", sshHost: "h/oops" }),
     ).toBeNull();
+  });
+});
+
+describe("applySshUsernameToHost", () => {
+  it("prepends user@ when a username is supplied", () => {
+    expect(applySshUsernameToHost("jeffs-mac-mini.tail-123.ts.net", "jeffbezos")).toBe(
+      "jeffbezos@jeffs-mac-mini.tail-123.ts.net",
+    );
+  });
+
+  it("leaves the host untouched when no username is provided", () => {
+    expect(applySshUsernameToHost("h", null)).toBe("h");
+    expect(applySshUsernameToHost("h", "")).toBe("h");
+    expect(applySshUsernameToHost("h", "   ")).toBe("h");
+  });
+
+  it("does not double-apply a username when the host already has one", () => {
+    expect(applySshUsernameToHost("alice@h", "bob")).toBe("alice@h");
+  });
+
+  it("returns an empty host as-is", () => {
+    expect(applySshUsernameToHost("", "jeffbezos")).toBe("");
   });
 });
 

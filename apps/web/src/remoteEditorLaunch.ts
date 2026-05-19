@@ -57,3 +57,23 @@ export function resolveRemoteSshHostFromLocation(): string {
   if (typeof window === "undefined") return "";
   return window.location.hostname;
 }
+
+/**
+ * Combine the browser-visible host with the backend's OS username so the
+ * SSH-remote authority targets the right account.
+ *
+ * Without this prefix, the local SSH client falls back to the *viewer*'s
+ * username (e.g. the person opening the link), which typically has no shell
+ * account on the backend host — leading to a password prompt that never
+ * succeeds. The username is exposed by the server via the environment
+ * descriptor (`ExecutionEnvironmentDescriptor.sshUsername`).
+ *
+ * If the host already contains a `user@` prefix, it's left untouched.
+ */
+export function applySshUsernameToHost(host: string, sshUsername: string | null): string {
+  if (!host) return host;
+  if (host.includes("@")) return host;
+  const user = sshUsername?.trim();
+  if (!user) return host;
+  return `${user}@${host}`;
+}

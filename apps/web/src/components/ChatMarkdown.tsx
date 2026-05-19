@@ -287,6 +287,8 @@ interface MarkdownFileLinkProps {
   theme: "light" | "dark";
   className?: string | undefined;
   cwd?: string | undefined;
+  line?: number | undefined;
+  column?: number | undefined;
 }
 
 const MARKDOWN_LINK_HREF_PATTERN = /\[[^\]]*]\(([^)\s]+)(?:\s+["'][^"']*["'])?\)/g;
@@ -379,6 +381,8 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
   theme,
   className,
   cwd,
+  line,
+  column,
 }: MarkdownFileLinkProps) {
   const openPreview = useFilePreviewStore((state) => state.open);
   const canPreview = typeof cwd === "string" && cwd.length > 0;
@@ -395,8 +399,13 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
 
   const handlePreview = useCallback(() => {
     if (!canPreview) return;
-    openPreview({ cwd: cwd as string, filePath });
-  }, [canPreview, cwd, filePath, openPreview]);
+    openPreview({
+      cwd: cwd as string,
+      filePath,
+      ...(line !== undefined ? { line } : {}),
+      ...(column !== undefined ? { column } : {}),
+    });
+  }, [canPreview, column, cwd, filePath, line, openPreview]);
 
   const handleOpenInEditor = useCallback(() => {
     const api = readLocalApi();
@@ -424,6 +433,16 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
       );
     });
   }, [canPreview, handlePreview, targetPath]);
+
+  // Primary click opens the in-app drawer at the targeted line. The native
+  // editor remains accessible via right-click context menu.
+  const handlePrimaryClick = useCallback(() => {
+    if (canPreview) {
+      handlePreview();
+      return;
+    }
+    handleOpenInEditor();
+  }, [canPreview, handleOpenInEditor, handlePreview]);
 
   const handleCopy = useCallback((value: string, title: string) => {
     if (typeof window === "undefined" || !navigator.clipboard?.writeText) {
@@ -541,7 +560,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
               onClick={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
-                handleOpenInEditor();
+                handlePrimaryClick();
               }}
               onContextMenu={handleContextMenu}
             >
@@ -621,7 +640,9 @@ function areMarkdownFileLinkPropsEqual(
     previous.label === next.label &&
     previous.theme === next.theme &&
     previous.className === next.className &&
-    previous.cwd === next.cwd
+    previous.cwd === next.cwd &&
+    previous.line === next.line &&
+    previous.column === next.column
   );
 }
 
@@ -691,6 +712,8 @@ function ChatMarkdown({
             theme={resolvedTheme}
             className={props.className}
             cwd={cwd}
+            line={fileLinkMeta.line}
+            column={fileLinkMeta.column}
           />
         );
       },

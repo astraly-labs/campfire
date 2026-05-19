@@ -1,11 +1,18 @@
-import { useEffect, useState } from "react";
+import { getSharedHighlighter, type SupportedLanguages } from "@pierre/diffs";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import ChatMarkdown from "../ChatMarkdown";
 import {
   buildWorkspaceFileDownloadUrl,
   buildWorkspaceFilePreviewUrl,
 } from "../../workspaceFileUrl";
-import type { FilePreviewTarget } from "../../preview/filePreviewStore";
+import { useTheme } from "../../hooks/useTheme";
+import { resolveDiffThemeName } from "../../lib/diffRendering";
+import { cn } from "../../lib/utils";
+import {
+  type FilePreviewTarget,
+  useFilePreviewStore,
+} from "../../preview/filePreviewStore";
 
 const HTML_EXTENSIONS = new Set(["html", "htm"]);
 const IMAGE_EXTENSIONS = new Set([
@@ -61,6 +68,9 @@ const TEXT_EXTENSIONS_TO_LANG: Record<string, string> = {
   gql: "graphql",
   proto: "proto",
   dockerfile: "dockerfile",
+  tf: "hcl",
+  tfvars: "hcl",
+  hcl: "hcl",
   ini: "ini",
   env: "ini",
   conf: "ini",
@@ -192,10 +202,190 @@ function FetchedTextPreview({ target, mode, lang }: FetchedTextProps) {
   }
 
   const language = lang ?? "text";
-  const fenced = "```" + language + "\n" + state.text + "\n```";
   return (
-    <div className="h-full overflow-auto p-4">
-      <ChatMarkdown text={fenced} cwd={target.cwd} />
+    <CodePreview
+      text={state.text}
+      lang={language}
+      targetLine={target.line}
+      targetColumn={target.column}
+    />
+  );
+}
+
+interface CodePreviewProps {
+  readonly text: string;
+  readonly lang: string;
+  readonly targetLine: number | undefined;
+  readonly targetColumn: number | undefined;
+}
+
+interface ParsedHighlight {
+  readonly background: string;
+  readonly color: string;
+  readonly lines: ReadonlyArray<string>;
+}
+
+const FALLBACK_LINE_HTML = "&#8203;"; // zero-width space to preserve empty row height
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
+function plainTextFallback(text: string): ParsedHighlight {
+  const rawLines = text.split("\n");
+  return {
+    background: "",
+    color: "",
+    lines: rawLines.map((line) => (line.length === 0 ? FALLBACK_LINE_HTML : escapeHtml(line))),
+  };
+}
+
+function parseShikiHtml(html: string, sourceText: string): ParsedHighlight {
+  if (typeof window === "undefined" || typeof DOMParser === "undefined") {
+    return plainTextFallback(sourceText);
+  }
+  try {
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    const pre = doc.querySelector("pre");
+    if (!pre) return plainTextFallback(sourceText);
+
+    const style = pre.getAttribute("style") ?? "";
+    const bgMatch = style.match(/background-color\s*:\s*([^;]+)/i);
+    const fgMatch = style.match(/(?:^|;)\s*color\s*:\s*([^;]+)/i);
+    const background = bgMatch?.[1]?.trim() ?? "";
+    const color = fgMatch?.[1]?.trim() ?? "";
+
+    const code = pre.querySelector("code") ?? pre;
+    const lineNodes = code.querySelectorAll(":scope > .line");
+    const lines: string[] = [];
+    lineNodes.forEach((node) => {
+      const inner = (node as HTMLElement).innerHTML;
+      lines.push(inner.length === 0 ? FALLBACK_LINE_HTML : inner);
+    });
+
+    if (lines.length === 0) return plainTextFallback(sourceText);
+    return { background, color, lines };
+  } catch {
+    return plainTextFallback(sourceText);
+  }
+}
+
+type HighlightState =
+  | { kind: "loading" }
+  | { kind: "ok"; parsed: ParsedHighlight }
+  | { kind: "fallback"; parsed: ParsedHighlight };
+
+function CodePreview({ text, lang, targetLine, targetColumn }: CodePreviewProps) {
+  const { resolvedTheme } = useTheme();
+  const themeName = resolveDiffThemeName(resolvedTheme);
+  const showLineNumbers = useFilePreviewStore((state) => state.showLineNumbers);
+  const [highlightState, setHighlightState] = useState<HighlightState>({ kind: "loading" });
+
+  useEffect(() => {
+    let cancelled = false;
+    setHighlightState({ kind: "loading" });
+    void getSharedHighlighter({
+      themes: [resolveDiffThemeName("dark"), resolveDiffThemeName("light")],
+      langs: [lang as SupportedLanguages],
+      preferredHighlighter: "shiki-js",
+    })
+      .then((highlighter) => {
+        if (cancelled) return;
+        let html: string;
+        try {
+          html = highlighter.codeToHtml(text, { lang, theme: themeName });
+        } catch {
+          html = highlighter.codeToHtml(text, { lang: "text", theme: themeName });
+        }
+        if (cancelled) return;
+        setHighlightState({ kind: "ok", parsed: parseShikiHtml(html, text) });
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setHighlightState({ kind: "fallback", parsed: plainTextFallback(text) });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [lang, text, themeName]);
+
+  const parsed = useMemo<ParsedHighlight>(() => {
+    if (highlightState.kind === "loading") return plainTextFallback(text);
+    return highlightState.parsed;
+  }, [highlightState, text]);
+
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const targetRowRef = useRef<HTMLDivElement | null>(null);
+
+  // Scroll the targeted line into view whenever the parsed lines or target change.
+  useEffect(() => {
+    if (highlightState.kind === "loading") return;
+    if (targetLine === undefined || targetLine < 1) return;
+    const row = targetRowRef.current;
+    if (!row) return;
+    // Defer to next frame so layout (esp. fonts/styles) settles first.
+    const id = window.requestAnimationFrame(() => {
+      row.scrollIntoView({ block: "center", behavior: "auto" });
+    });
+    return () => window.cancelAnimationFrame(id);
+  }, [highlightState.kind, parsed.lines.length, targetLine]);
+
+  const lineCount = parsed.lines.length;
+  const gutterWidth = `${Math.max(2, String(lineCount).length)}ch`;
+
+  return (
+    <div
+      ref={containerRef}
+      className="h-full overflow-auto font-mono text-[12.5px] leading-[1.55]"
+      style={{
+        background: parsed.background || undefined,
+        color: parsed.color || undefined,
+      }}
+    >
+      <div className="min-w-fit py-2">
+        {parsed.lines.map((lineHtml, index) => {
+          const lineNumber = index + 1;
+          const isTarget = targetLine === lineNumber;
+          return (
+            <div
+              key={index}
+              ref={isTarget ? targetRowRef : undefined}
+              data-line={lineNumber}
+              className={cn(
+                "group/code-line flex w-full min-w-fit items-start",
+                isTarget && "bg-amber-400/15 ring-1 ring-inset ring-amber-400/35",
+              )}
+            >
+              {showLineNumbers ? (
+                <span
+                  aria-hidden
+                  className="sticky left-0 z-[1] shrink-0 select-none whitespace-pre pl-3 pr-3 text-right text-muted-foreground/55 tabular-nums"
+                  style={{
+                    minWidth: `calc(${gutterWidth} + 1.5rem)`,
+                    background: parsed.background || undefined,
+                  }}
+                >
+                  {lineNumber}
+                </span>
+              ) : (
+                <span aria-hidden className="w-3 shrink-0" />
+              )}
+              <span
+                className="flex-1 whitespace-pre pr-4"
+                dangerouslySetInnerHTML={{ __html: lineHtml }}
+              />
+            </div>
+          );
+        })}
+      </div>
+      {targetColumn !== undefined && targetLine !== undefined ? (
+        <span className="sr-only">
+          Targeted line {targetLine}, column {targetColumn}
+        </span>
+      ) : null}
     </div>
   );
 }

@@ -2,6 +2,7 @@ import { EnvironmentId, type ExecutionEnvironmentDescriptor } from "@t3tools/con
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as os from "node:os";
 import * as Path from "effect/Path";
 import * as Random from "effect/Random";
 
@@ -75,6 +76,8 @@ export const makeServerEnvironment = Effect.fn("makeServerEnvironment")(function
     cwdBaseName,
   });
 
+  const osUsername = os.userInfo().username.trim();
+
   const descriptor: ExecutionEnvironmentDescriptor = {
     environmentId,
     label,
@@ -86,6 +89,7 @@ export const makeServerEnvironment = Effect.fn("makeServerEnvironment")(function
     capabilities: {
       repositoryIdentity: true,
     },
+    ...(osUsername.length > 0 ? { sshUsername: osUsername } : {}),
   };
 
   return {

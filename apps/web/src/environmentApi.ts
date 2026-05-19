@@ -5,6 +5,14 @@ import { readEnvironmentConnection } from "./environments/runtime";
 
 const environmentApiOverridesForTests = new Map<EnvironmentId, EnvironmentApi>();
 
+// Reuse the same EnvironmentApi facade per underlying WsRpcClient so callers
+// that destructure `readEnvironmentApi(...)` during render get a stable
+// reference. Without this, every render produced a fresh object, causing
+// `useEffect([api])` hooks (inbox/presence/side-thread live syncs, heartbeat)
+// to tear down and rebuild their subscriptions on every parent render —
+// the source of the "feature works sometimes" flakiness on the WS layer.
+const environmentApiCacheByClient = new WeakMap<WsRpcClient, EnvironmentApi>();
+
 export function createEnvironmentApi(rpcClient: WsRpcClient): EnvironmentApi {
   return {
     terminal: {
@@ -94,7 +102,17 @@ export function readEnvironmentApi(environmentId: EnvironmentId): EnvironmentApi
   }
 
   const connection = readEnvironmentConnection(environmentId);
-  return connection ? createEnvironmentApi(connection.client) : undefined;
+  if (!connection) {
+    return undefined;
+  }
+
+  const cached = environmentApiCacheByClient.get(connection.client);
+  if (cached) {
+    return cached;
+  }
+  const api = createEnvironmentApi(connection.client);
+  environmentApiCacheByClient.set(connection.client, api);
+  return api;
 }
 
 export function ensureEnvironmentApi(environmentId: EnvironmentId): EnvironmentApi {
