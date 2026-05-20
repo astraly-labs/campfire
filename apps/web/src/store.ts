@@ -1302,6 +1302,7 @@ function applyEnvironmentOrchestrationEvent(
           activities: [],
           checkpoints: [],
           session: null,
+          goal: null,
         },
         environmentId,
       );

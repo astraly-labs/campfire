@@ -509,6 +509,24 @@ export const WsOrchestrationCodexStartReviewRpc = Rpc.make(
   },
 );
 
+export const WsOrchestrationCodexSetThreadGoalRpc = Rpc.make(
+  ORCHESTRATION_WS_METHODS.codexSetThreadGoal,
+  {
+    payload: OrchestrationRpcSchemas.codexSetThreadGoal.input,
+    success: OrchestrationRpcSchemas.codexSetThreadGoal.output,
+    error: OrchestrationCodexCommandError,
+  },
+);
+
+export const WsOrchestrationCodexClearThreadGoalRpc = Rpc.make(
+  ORCHESTRATION_WS_METHODS.codexClearThreadGoal,
+  {
+    payload: OrchestrationRpcSchemas.codexClearThreadGoal.input,
+    success: OrchestrationRpcSchemas.codexClearThreadGoal.output,
+    error: OrchestrationCodexCommandError,
+  },
+);
+
 export const WsIdentityGetCurrentUserRpc = Rpc.make(IDENTITY_WS_METHODS.getCurrentUser, {
   payload: IdentityRpcSchemas.getCurrentUser.input,
   success: IdentityRpcSchemas.getCurrentUser.output,
@@ -661,6 +679,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationGenerateConversationSummaryRpc,
   WsOrchestrationCodexCompactThreadRpc,
   WsOrchestrationCodexStartReviewRpc,
+  WsOrchestrationCodexSetThreadGoalRpc,
+  WsOrchestrationCodexClearThreadGoalRpc,
   WsSideThreadDispatchCommandRpc,
   WsSideThreadSubscribeRpc,
   WsSideThreadSubscribeParentRpc,

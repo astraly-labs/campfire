@@ -64,6 +64,8 @@ export function createEnvironmentApi(rpcClient: WsRpcClient): EnvironmentApi {
       generateConversationSummary: rpcClient.orchestration.generateConversationSummary,
       codexCompactThread: rpcClient.orchestration.codexCompactThread,
       codexStartReview: rpcClient.orchestration.codexStartReview,
+      codexSetThreadGoal: rpcClient.orchestration.codexSetThreadGoal,
+      codexClearThreadGoal: rpcClient.orchestration.codexClearThreadGoal,
     },
     sideThread: {
       dispatchCommand: rpcClient.sideThread.dispatchCommand,

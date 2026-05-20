@@ -32,6 +32,23 @@ export interface CodexAdapterCommandsShape {
    * targeting the working tree's uncommitted changes by default.
    */
   readonly startReview: (threadId: ThreadId) => Effect.Effect<void, ProviderAdapterError>;
+  /**
+   * Trigger `thread/goal/set` on the codex app-server. Either creates a new
+   * goal (when `objective` is provided) or mutates an existing one (status,
+   * tokenBudget). The fresh goal state lands back via the
+   * `thread/goal/updated` notification path.
+   */
+  readonly setThreadGoal: (input: {
+    readonly threadId: ThreadId;
+    readonly objective?: string | undefined;
+    readonly status?: "active" | "paused" | "budgetLimited" | "complete" | undefined;
+    readonly tokenBudget?: number | null | undefined;
+  }) => Effect.Effect<void, ProviderAdapterError>;
+  /**
+   * Trigger `thread/goal/clear` on the codex app-server. The cleared state
+   * lands back via the `thread/goal/cleared` notification path.
+   */
+  readonly clearThreadGoal: (threadId: ThreadId) => Effect.Effect<void, ProviderAdapterError>;
 }
 
 /**

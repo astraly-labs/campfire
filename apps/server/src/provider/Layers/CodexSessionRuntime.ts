@@ -34,6 +34,7 @@ import * as CodexClient from "effect-codex-app-server/client";
 import * as CodexErrors from "effect-codex-app-server/errors";
 import * as CodexRpc from "effect-codex-app-server/rpc";
 import * as EffectCodexSchema from "effect-codex-app-server/schema";
+import * as CodexThreadGoal from "effect-codex-app-server/threadGoal";
 
 import { buildCodexInitializeParams } from "./CodexProvider.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
@@ -175,6 +176,21 @@ export interface CodexSessionRuntimeShape {
   readonly startReview: (
     input: CodexSessionRuntimeStartReviewInput,
   ) => Effect.Effect<void, CodexSessionRuntimeError>;
+  /**
+   * Trigger `thread/goal/set` on the codex app-server. Either creates a new
+   * goal (when `objective` is provided) or mutates an existing one. Fresh
+   * goal state lands back via the `thread/goal/updated` notification path.
+   */
+  readonly setThreadGoal: (input: {
+    readonly objective?: string | undefined;
+    readonly status?: "active" | "paused" | "budgetLimited" | "complete" | undefined;
+    readonly tokenBudget?: number | null | undefined;
+  }) => Effect.Effect<void, CodexSessionRuntimeError>;
+  /**
+   * Trigger `thread/goal/clear` on the codex app-server. Cleared state
+   * lands back via the `thread/goal/cleared` notification path.
+   */
+  readonly clearThreadGoal: Effect.Effect<void, CodexSessionRuntimeError>;
   readonly events: Stream.Stream<ProviderEvent, never>;
   readonly close: Effect.Effect<void>;
 }
@@ -1414,6 +1430,22 @@ export const makeCodexSessionRuntime = (
             target,
           });
         }),
+      setThreadGoal: (input) =>
+        Effect.gen(function* () {
+          const providerThreadId = yield* readProviderThreadId;
+          yield* CodexThreadGoal.setThreadGoal(client, {
+            threadId: providerThreadId,
+            ...(input.objective !== undefined ? { objective: input.objective } : {}),
+            ...(input.status !== undefined ? { status: input.status } : {}),
+            ...(input.tokenBudget !== undefined ? { tokenBudget: input.tokenBudget } : {}),
+          }).pipe(Effect.asVoid);
+        }),
+      clearThreadGoal: Effect.gen(function* () {
+        const providerThreadId = yield* readProviderThreadId;
+        yield* CodexThreadGoal.clearThreadGoal(client, {
+          threadId: providerThreadId,
+        }).pipe(Effect.asVoid);
+      }),
       events: Stream.fromQueue(events),
       close,
     } satisfies CodexSessionRuntimeShape;

@@ -45,6 +45,8 @@ export const ORCHESTRATION_WS_METHODS = {
   generateConversationSummary: "orchestration.generateConversationSummary",
   codexCompactThread: "orchestration.codexCompactThread",
   codexStartReview: "orchestration.codexStartReview",
+  codexSetThreadGoal: "orchestration.codexSetThreadGoal",
+  codexClearThreadGoal: "orchestration.codexClearThreadGoal",
 } as const;
 
 export const ProviderApprovalPolicy = Schema.Literals([
@@ -1380,6 +1382,31 @@ export const OrchestrationCodexStartReviewInput = Schema.Struct({
 export type OrchestrationCodexStartReviewInput =
   typeof OrchestrationCodexStartReviewInput.Type;
 
+// Status subset that callers are allowed to set on Codex. blocked/usageLimited
+// are only set by Codex itself in response to runtime conditions, so they're
+// not exposed here.
+const OrchestrationCodexThreadGoalSettableStatus = Schema.Literals([
+  "active",
+  "paused",
+  "budgetLimited",
+  "complete",
+]);
+
+export const OrchestrationCodexSetThreadGoalInput = Schema.Struct({
+  threadId: ThreadId,
+  objective: Schema.optional(Schema.String),
+  status: Schema.optional(OrchestrationCodexThreadGoalSettableStatus),
+  tokenBudget: Schema.optional(Schema.NullOr(Schema.Number)),
+});
+export type OrchestrationCodexSetThreadGoalInput =
+  typeof OrchestrationCodexSetThreadGoalInput.Type;
+
+export const OrchestrationCodexClearThreadGoalInput = Schema.Struct({
+  threadId: ThreadId,
+});
+export type OrchestrationCodexClearThreadGoalInput =
+  typeof OrchestrationCodexClearThreadGoalInput.Type;
+
 export const OrchestrationCodexCommandResult = Schema.Struct({
   acceptedAt: Schema.String,
 });
@@ -1428,6 +1455,14 @@ export const OrchestrationRpcSchemas = {
   },
   codexStartReview: {
     input: OrchestrationCodexStartReviewInput,
+    output: OrchestrationCodexCommandResult,
+  },
+  codexSetThreadGoal: {
+    input: OrchestrationCodexSetThreadGoalInput,
+    output: OrchestrationCodexCommandResult,
+  },
+  codexClearThreadGoal: {
+    input: OrchestrationCodexClearThreadGoalInput,
     output: OrchestrationCodexCommandResult,
   },
 } as const;

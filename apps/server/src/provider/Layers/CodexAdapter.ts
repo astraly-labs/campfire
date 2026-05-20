@@ -1674,6 +1674,32 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       ),
     );
 
+  const setThreadGoal: CodexAdapterShape["setThreadGoal"] = (input) =>
+    requireSession(input.threadId).pipe(
+      Effect.flatMap((session) =>
+        session.runtime.setThreadGoal({
+          ...(input.objective !== undefined ? { objective: input.objective } : {}),
+          ...(input.status !== undefined ? { status: input.status } : {}),
+          ...(input.tokenBudget !== undefined ? { tokenBudget: input.tokenBudget } : {}),
+        }),
+      ),
+      Effect.mapError((cause) =>
+        cause._tag === "ProviderAdapterSessionNotFoundError"
+          ? cause
+          : mapCodexRuntimeError(input.threadId, "thread/goal/set", cause),
+      ),
+    );
+
+  const clearThreadGoal: CodexAdapterShape["clearThreadGoal"] = (threadId) =>
+    requireSession(threadId).pipe(
+      Effect.flatMap((session) => session.runtime.clearThreadGoal),
+      Effect.mapError((cause) =>
+        cause._tag === "ProviderAdapterSessionNotFoundError"
+          ? cause
+          : mapCodexRuntimeError(threadId, "thread/goal/clear", cause),
+      ),
+    );
+
   const writeNativeEvent = Effect.fn("writeNativeEvent")(function* (event: ProviderEvent) {
     if (!nativeEventLogger) {
       return;
@@ -1741,6 +1767,8 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     respondToUserInput,
     compactThread,
     startReview,
+    setThreadGoal,
+    clearThreadGoal,
     stopSession,
     listSessions,
     hasSession,

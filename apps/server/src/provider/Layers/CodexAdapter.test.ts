@@ -119,6 +119,16 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
     (_input: { readonly target?: unknown }): Promise<void> => Promise.resolve(undefined),
   );
 
+  public readonly setThreadGoalImpl = vi.fn(
+    (_input: {
+      readonly objective?: string | undefined;
+      readonly status?: "active" | "paused" | "budgetLimited" | "complete" | undefined;
+      readonly tokenBudget?: number | null | undefined;
+    }): Promise<void> => Promise.resolve(undefined),
+  );
+
+  public readonly clearThreadGoalImpl = vi.fn((): Promise<void> => Promise.resolve(undefined));
+
   public readonly closeImpl = vi.fn(() => Promise.resolve(undefined));
 
   readonly options: CodexSessionRuntimeOptions;
@@ -160,6 +170,16 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
   startReview(input: { readonly target?: unknown }) {
     return Effect.promise(() => this.startReviewImpl(input));
   }
+
+  setThreadGoal(input: {
+    readonly objective?: string | undefined;
+    readonly status?: "active" | "paused" | "budgetLimited" | "complete" | undefined;
+    readonly tokenBudget?: number | null | undefined;
+  }) {
+    return Effect.promise(() => this.setThreadGoalImpl(input));
+  }
+
+  clearThreadGoal = Effect.promise(() => this.clearThreadGoalImpl());
 
   get events() {
     return Stream.fromQueue(this.eventQueue);

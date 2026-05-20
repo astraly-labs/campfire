@@ -6,6 +6,7 @@ import type {
   RepositoryIdentity,
   OrchestrationSessionStatus,
   OrchestrationThreadActivity,
+  OrchestrationThreadGoal,
   ProjectScript as ContractProjectScript,
   ThreadId,
   ProjectId,
@@ -128,6 +129,11 @@ export interface Thread {
   worktreePath: string | null;
   turnDiffSummaries: TurnDiffSummary[];
   activities: OrchestrationThreadActivity[];
+  /** Codex-only. Active /goal mirrored from Codex thread/goal/updated
+   * notifications. Null/undefined when no goal is set or the provider is
+   * not Codex. Optional so test fixtures and Thread shapes built before
+   * goal tracking shipped don't need to spell it out. */
+  goal?: OrchestrationThreadGoal | null;
   /** Creator of the thread, captured at `thread.create` time. Optional so test
    * fixtures and threads predating per-thread attribution don't need to spell
    * it out. */
