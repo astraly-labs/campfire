@@ -3,9 +3,11 @@ import {
   type EnvironmentId,
   type MessageId,
   type SideThread,
+  type SideThreadId,
   type SideThreadMessageId,
   type SideThreadStreamItem,
   type ThreadId,
+  type UserId,
   type UserRef,
 } from "@t3tools/contracts";
 import { CornerUpLeftIcon, XIcon } from "lucide-react";
@@ -32,6 +34,8 @@ import {
   useEnsureUserDirectoryLoaded,
   useUserDirectoryStore,
 } from "../inbox/userDirectoryStore";
+import { colorIndexForUserId, NAME_TEXT_PALETTE } from "../presence/AvatarStack";
+import { useViewersOfSideThread } from "../presence/presenceStore";
 import { useUiStateStore } from "../uiStateStore";
 import { clearTyping, notifyTyping } from "../presence/usePresenceHeartbeat";
 import { deriveSideThreadId, useSideThreadStore } from "./sideThreadStore";
@@ -398,10 +402,12 @@ function DrawerBody({
       </div>
 
       <ul ref={listRef} className="flex-1 space-y-3 overflow-y-auto px-3 py-3 text-sm">
-        {(sideThread?.messages ?? []).map((message) => (
+        {(sideThread?.messages ?? []).map((message) => {
+          const authorColor = NAME_TEXT_PALETTE[colorIndexForUserId(message.author.id)]!;
+          return (
           <li key={message.id} className="space-y-0.5">
             <div className="flex items-baseline justify-between gap-2">
-              <span className="text-[11px] font-medium text-foreground/90">
+              <span className={cn("text-[11px] font-medium", authorColor)}>
                 {message.author.displayName}
               </span>
               <span className="text-[10px] text-muted-foreground/50">
@@ -439,11 +445,14 @@ function DrawerBody({
               )}
             </p>
           </li>
-        ))}
+          );
+        })}
         {sideThread && sideThread.messages.length === 0 ? (
           <li className="text-xs text-muted-foreground/50">Start the discussion…</li>
         ) : null}
       </ul>
+
+      <TypingIndicator sideThreadId={sideThreadId} currentUserId={currentUser?.id} />
 
       {(identityError ?? error) ? (
         <div className="border-t border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
@@ -521,6 +530,53 @@ function DrawerBody({
           </Button>
         </div>
       </form>
+    </div>
+  );
+}
+
+// Reserve a fixed-height row above the composer so the indicator can fade
+// in/out without nudging the message list or composer. `aria-live="polite"`
+// lets screen readers announce who started typing without interrupting.
+function TypingIndicator({
+  sideThreadId,
+  currentUserId,
+}: {
+  sideThreadId: SideThreadId;
+  currentUserId: UserId | undefined;
+}) {
+  const viewers = useViewersOfSideThread(sideThreadId);
+  const typingOthers = useMemo(
+    () => viewers.filter((v) => v.isTyping && v.user.id !== currentUserId),
+    [viewers, currentUserId],
+  );
+
+  const label = (() => {
+    if (typingOthers.length === 0) return null;
+    if (typingOthers.length === 1) {
+      return `${typingOthers[0]!.user.displayName} is typing…`;
+    }
+    if (typingOthers.length === 2) {
+      return `${typingOthers[0]!.user.displayName} and ${typingOthers[1]!.user.displayName} are typing…`;
+    }
+    const rest = typingOthers.length - 2;
+    return `${typingOthers[0]!.user.displayName}, ${typingOthers[1]!.user.displayName} and ${rest} other${rest === 1 ? "" : "s"} are typing…`;
+  })();
+
+  return (
+    <div
+      aria-live="polite"
+      className="flex h-4 shrink-0 items-center gap-1.5 px-3 text-[11px] text-muted-foreground/70"
+    >
+      {label ? (
+        <>
+          <span className="inline-flex items-center gap-[3px]" aria-hidden>
+            <span className="h-1 w-1 rounded-full bg-muted-foreground/40 animate-pulse" />
+            <span className="h-1 w-1 rounded-full bg-muted-foreground/40 animate-pulse [animation-delay:200ms]" />
+            <span className="h-1 w-1 rounded-full bg-muted-foreground/40 animate-pulse [animation-delay:400ms]" />
+          </span>
+          <span className="truncate">{label}</span>
+        </>
+      ) : null}
     </div>
   );
 }

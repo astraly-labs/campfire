@@ -32,6 +32,18 @@ export const SOFT_PALETTE: ReadonlyArray<{ bg: string; text: string }> = [
   { bg: "bg-orange-200", text: "text-orange-900" },
 ];
 
+// Author-name text colors, aligned 1:1 with SOFT_PALETTE so an avatar chip
+// and a displayName for the same user share the same hue. Tuned for chat
+// labels — vivid enough to scan, not so loud it competes with the message.
+export const NAME_TEXT_PALETTE: ReadonlyArray<string> = [
+  "text-amber-600 dark:text-amber-300",
+  "text-emerald-600 dark:text-emerald-300",
+  "text-sky-600 dark:text-sky-300",
+  "text-violet-600 dark:text-violet-300",
+  "text-rose-600 dark:text-rose-300",
+  "text-orange-600 dark:text-orange-300",
+];
+
 /**
  * Exported for tests — a small FNV-1a-style hash on the user id mapped into
  * the palette index. Deterministic across reloads, which is the whole point

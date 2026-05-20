@@ -4054,6 +4054,17 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             "thread.turn.start",
           ],
         );
+        const bootstrapCreate = dispatchedCommands[0];
+        assertTrue(bootstrapCreate?.type === "thread.create");
+        // The bootstrap dispatch must inherit the authenticated identity so
+        // peers see the new conversation under "Projects" (not under "My
+        // projects" via the primary-environment fallback).
+        if (bootstrapCreate?.type === "thread.create") {
+          assert.deepEqual(bootstrapCreate.createdBy, {
+            id: "local:test",
+            displayName: "test",
+          });
+        }
         assert.deepEqual(createWorktree.mock.calls[0]?.[0], {
           cwd: "/tmp/project",
           refName: "main",

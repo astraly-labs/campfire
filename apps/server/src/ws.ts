@@ -603,6 +603,14 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId, initialIdentity: Resolv
 
           const bootstrapProgram = Effect.gen(function* () {
             if (bootstrap?.createThread) {
+              // Mirror the auto-assignment performed in the dispatchCommand
+              // handler above: threads created via the bootstrap path
+              // (client sends `thread.turn.start` for a brand-new draft)
+              // would otherwise land with `createdBy=null`, which makes the
+              // sidebar fall back to the primary-environment heuristic and
+              // hide the new conversation from collaborators' "Projects"
+              // section.
+              const bootstrapCreator = (yield* Ref.get(currentIdentityRef)).user;
               yield* orchestrationEngine.dispatch({
                 type: "thread.create",
                 commandId: serverCommandId("bootstrap-thread-create"),
@@ -615,6 +623,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId, initialIdentity: Resolv
                 branch: bootstrap.createThread.branch,
                 worktreePath: bootstrap.createThread.worktreePath,
                 createdAt: bootstrap.createThread.createdAt,
+                createdBy: bootstrapCreator,
               });
               createdThread = true;
 

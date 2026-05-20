@@ -62,7 +62,12 @@ import {
   type SidebarThreadSortOrder,
 } from "@t3tools/contracts/settings";
 import { usePrimaryEnvironmentId } from "../environments/primary";
-import { AvatarStack } from "../presence/AvatarStack";
+import {
+  AvatarStack,
+  SOFT_PALETTE,
+  colorIndexForUserId,
+  initialsFor,
+} from "../presence/AvatarStack";
 import { useViewersOfParentThread } from "../presence/presenceStore";
 import { isElectron } from "../env";
 import { APP_STAGE_LABEL, APP_VERSION } from "../branding";
@@ -298,6 +303,41 @@ function SidebarThreadViewers({ threadId }: { threadId: ThreadId }) {
   const viewers = useViewersOfParentThread(threadId);
   if (viewers.length === 0) return null;
   return <AvatarStack viewers={viewers} maxVisible={3} size="sm" />;
+}
+
+/**
+ * Static "this conv was created by X" chip. Distinct from the live
+ * SidebarThreadViewers stack (those are people *looking* at the thread right
+ * now). We hide the chip when the creator is the current user, since under
+ * "My projects" that would just paint my own initials onto every row — the
+ * useful signal in multiplayer is *who else* opened the conversation.
+ */
+function SidebarThreadCreatorBadge({ thread }: { thread: SidebarThreadSummary }) {
+  const currentUser = useCurrentUser();
+  const creator = thread.createdBy;
+  if (!creator) return null;
+  if (currentUser && creator.id === currentUser.id) return null;
+  const palette = SOFT_PALETTE[colorIndexForUserId(creator.id)]!;
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={(props) => (
+          <span
+            {...props}
+            aria-label={`Created by ${creator.displayName}`}
+            className={cn(
+              "inline-flex size-3.5 items-center justify-center rounded-full text-[8px] font-medium opacity-80 ring-1 ring-background",
+              palette.bg,
+              palette.text,
+            )}
+          >
+            {initialsFor(creator.displayName)}
+          </span>
+        )}
+      />
+      <TooltipPopup side="top">Created by {creator.displayName}</TooltipPopup>
+    </Tooltip>
+  );
 }
 
 interface SidebarThreadRowProps {
@@ -699,6 +739,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             <span className={threadMetaClassName}>
               <span className="inline-flex items-center gap-1">
                 <SidebarThreadViewers threadId={thread.id} />
+                <SidebarThreadCreatorBadge thread={thread} />
                 {isRemoteThread && (
                   <Tooltip>
                     <TooltipTrigger
