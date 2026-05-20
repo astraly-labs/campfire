@@ -106,10 +106,7 @@ export function HealthSettings() {
           }
         />
         {error ? (
-          <SettingsRow
-            title="Error"
-            description={<span className="text-red-400">{error}</span>}
-          />
+          <SettingsRow title="Error" description={<span className="text-red-400">{error}</span>} />
         ) : null}
       </SettingsSection>
 
@@ -142,10 +139,7 @@ export function HealthSettings() {
               control={<MetricBadge value={`${formatPercent(disk.usedPct)} used`} />}
             />
           ) : (
-            <SettingsRow
-              title="Disk"
-              description="Disk stats unavailable on this platform."
-            />
+            <SettingsRow title="Disk" description="Disk stats unavailable on this platform." />
           )}
         </SettingsSection>
       ) : null}

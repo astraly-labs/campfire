@@ -1373,14 +1373,12 @@ export type OrchestrationGenerateConversationSummaryResult =
 export const OrchestrationCodexCompactThreadInput = Schema.Struct({
   threadId: ThreadId,
 });
-export type OrchestrationCodexCompactThreadInput =
-  typeof OrchestrationCodexCompactThreadInput.Type;
+export type OrchestrationCodexCompactThreadInput = typeof OrchestrationCodexCompactThreadInput.Type;
 
 export const OrchestrationCodexStartReviewInput = Schema.Struct({
   threadId: ThreadId,
 });
-export type OrchestrationCodexStartReviewInput =
-  typeof OrchestrationCodexStartReviewInput.Type;
+export type OrchestrationCodexStartReviewInput = typeof OrchestrationCodexStartReviewInput.Type;
 
 // Status subset that callers are allowed to set on Codex. blocked/usageLimited
 // are only set by Codex itself in response to runtime conditions, so they're
@@ -1398,8 +1396,7 @@ export const OrchestrationCodexSetThreadGoalInput = Schema.Struct({
   status: Schema.optional(OrchestrationCodexThreadGoalSettableStatus),
   tokenBudget: Schema.optional(Schema.NullOr(Schema.Number)),
 });
-export type OrchestrationCodexSetThreadGoalInput =
-  typeof OrchestrationCodexSetThreadGoalInput.Type;
+export type OrchestrationCodexSetThreadGoalInput = typeof OrchestrationCodexSetThreadGoalInput.Type;
 
 export const OrchestrationCodexClearThreadGoalInput = Schema.Struct({
   threadId: ThreadId,

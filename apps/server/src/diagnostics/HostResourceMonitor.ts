@@ -25,7 +25,11 @@ export interface HostHealthSample {
   readonly loadAverage: readonly [number, number, number];
   readonly memUsedBytes: number;
   readonly memTotalBytes: number;
-  readonly disk: { readonly path: string; readonly freeBytes: number; readonly totalBytes: number } | null;
+  readonly disk: {
+    readonly path: string;
+    readonly freeBytes: number;
+    readonly totalBytes: number;
+  } | null;
   readonly uptimeSec: number;
 }
 
@@ -55,10 +59,7 @@ export function aggregateCpuTimes(cpus: ReadonlyArray<os.CpuInfo>): CpuTimesSnap
   return { idle, total };
 }
 
-export function computeCpuPercent(
-  prev: CpuTimesSnapshot | null,
-  curr: CpuTimesSnapshot,
-): number {
+export function computeCpuPercent(prev: CpuTimesSnapshot | null, curr: CpuTimesSnapshot): number {
   if (prev === null) {
     return 0;
   }

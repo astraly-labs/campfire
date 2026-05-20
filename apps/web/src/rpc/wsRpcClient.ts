@@ -171,15 +171,9 @@ export interface WsRpcClient {
     readonly generateConversationSummary: RpcUnaryMethod<
       typeof ORCHESTRATION_WS_METHODS.generateConversationSummary
     >;
-    readonly codexCompactThread: RpcUnaryMethod<
-      typeof ORCHESTRATION_WS_METHODS.codexCompactThread
-    >;
-    readonly codexStartReview: RpcUnaryMethod<
-      typeof ORCHESTRATION_WS_METHODS.codexStartReview
-    >;
-    readonly codexSetThreadGoal: RpcUnaryMethod<
-      typeof ORCHESTRATION_WS_METHODS.codexSetThreadGoal
-    >;
+    readonly codexCompactThread: RpcUnaryMethod<typeof ORCHESTRATION_WS_METHODS.codexCompactThread>;
+    readonly codexStartReview: RpcUnaryMethod<typeof ORCHESTRATION_WS_METHODS.codexStartReview>;
+    readonly codexSetThreadGoal: RpcUnaryMethod<typeof ORCHESTRATION_WS_METHODS.codexSetThreadGoal>;
     readonly codexClearThreadGoal: RpcUnaryMethod<
       typeof ORCHESTRATION_WS_METHODS.codexClearThreadGoal
     >;
@@ -385,21 +379,13 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
           client[ORCHESTRATION_WS_METHODS.generateConversationSummary](input),
         ),
       codexCompactThread: (input) =>
-        transport.request((client) =>
-          client[ORCHESTRATION_WS_METHODS.codexCompactThread](input),
-        ),
+        transport.request((client) => client[ORCHESTRATION_WS_METHODS.codexCompactThread](input)),
       codexStartReview: (input) =>
-        transport.request((client) =>
-          client[ORCHESTRATION_WS_METHODS.codexStartReview](input),
-        ),
+        transport.request((client) => client[ORCHESTRATION_WS_METHODS.codexStartReview](input)),
       codexSetThreadGoal: (input) =>
-        transport.request((client) =>
-          client[ORCHESTRATION_WS_METHODS.codexSetThreadGoal](input),
-        ),
+        transport.request((client) => client[ORCHESTRATION_WS_METHODS.codexSetThreadGoal](input)),
       codexClearThreadGoal: (input) =>
-        transport.request((client) =>
-          client[ORCHESTRATION_WS_METHODS.codexClearThreadGoal](input),
-        ),
+        transport.request((client) => client[ORCHESTRATION_WS_METHODS.codexClearThreadGoal](input)),
     },
     sideThread: {
       dispatchCommand: (input) =>

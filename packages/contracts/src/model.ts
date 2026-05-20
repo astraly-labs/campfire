@@ -157,9 +157,7 @@ export const DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER: Partial<
  * and cheap — the summary runs on every turn end while a recap is active, so
  * latency/cost matters more than peak quality.
  */
-export const CONVERSATION_SUMMARY_MODEL_BY_PROVIDER: Partial<
-  Record<ProviderDriverKind, string>
-> = {
+export const CONVERSATION_SUMMARY_MODEL_BY_PROVIDER: Partial<Record<ProviderDriverKind, string>> = {
   [CODEX_DRIVER_KIND]: "gpt-5.3-codex-spark",
   [CLAUDE_DRIVER_KIND]: "claude-haiku-4-5",
   [CURSOR_DRIVER_KIND]: "composer-2",

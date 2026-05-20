@@ -281,9 +281,7 @@ function formatSummaryTranscriptMessage(
 
 export function buildConversationSummaryPrompt(input: ConversationSummaryPromptInput) {
   const transcriptBody = input.transcript.map(formatSummaryTranscriptMessage).join("\n\n");
-  const titleLine = input.threadTitle?.trim()
-    ? `Thread title: ${input.threadTitle.trim()}`
-    : null;
+  const titleLine = input.threadTitle?.trim() ? `Thread title: ${input.threadTitle.trim()}` : null;
 
   const prompt = [
     "You write very short recaps of an ongoing coding conversation, intended for a",

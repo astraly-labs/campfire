@@ -64,22 +64,17 @@ const encodeClear = Schema.encodeEffect(ThreadGoalClearParams);
 const decodeClear = Schema.decodeUnknownEffect(ThreadGoalClearResponse);
 
 const wrapDecodeError = (method: string) => (error: { issue: unknown }) =>
-  CodexError.CodexAppServerRequestError.invalidParams(
-    `Invalid response for ${method}`,
-    { issue: error.issue },
-  );
+  CodexError.CodexAppServerRequestError.invalidParams(`Invalid response for ${method}`, {
+    issue: error.issue,
+  });
 
 const wrapEncodeError = (method: string) => (error: { issue: unknown }) =>
-  CodexError.CodexAppServerRequestError.invalidParams(
-    `Invalid params for ${method}`,
-    { issue: error.issue },
-  );
+  CodexError.CodexAppServerRequestError.invalidParams(`Invalid params for ${method}`, {
+    issue: error.issue,
+  });
 
-const requestRaw = (
-  client: CodexAppServerClientShape,
-  method: string,
-  encoded: unknown,
-) => client.raw.request(method, encoded);
+const requestRaw = (client: CodexAppServerClientShape, method: string, encoded: unknown) =>
+  client.raw.request(method, encoded);
 
 export const setThreadGoal = (
   client: CodexAppServerClientShape,

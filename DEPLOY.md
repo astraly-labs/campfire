@@ -51,15 +51,15 @@ Use it before deploying to confirm the remote checkout is clean, and after deplo
 
 All overridable via env vars when running the script:
 
-| Variable | Default | Purpose |
-|---|---|---|
-| `MACMINI_HOST` | `macmini` | SSH alias in your `~/.ssh/config` |
-| `MACMINI_REPO_PATH` | `agent-host/repos/campfire` | Remote checkout path |
-| `MACMINI_BUN` | `/opt/homebrew/bin/bun` | Remote `bun` binary |
-| `CAMPFIRE_TAILNET_HOSTNAME` | `jeffs-mac-mini.tail289246.ts.net` | MagicDNS hostname |
-| `CAMPFIRE_WEB_HTTPS_PORT` | `8443` | Tailscale Serve port for web |
-| `CAMPFIRE_BACKEND_HTTPS_PORT` | `8444` | Tailscale Serve port for backend |
-| `CAMPFIRE_BRANCH` | `campfire/v0` | Branch to deploy |
+| Variable                      | Default                            | Purpose                           |
+| ----------------------------- | ---------------------------------- | --------------------------------- |
+| `MACMINI_HOST`                | `macmini`                          | SSH alias in your `~/.ssh/config` |
+| `MACMINI_REPO_PATH`           | `agent-host/repos/campfire`        | Remote checkout path              |
+| `MACMINI_BUN`                 | `/opt/homebrew/bin/bun`            | Remote `bun` binary               |
+| `CAMPFIRE_TAILNET_HOSTNAME`   | `jeffs-mac-mini.tail289246.ts.net` | MagicDNS hostname                 |
+| `CAMPFIRE_WEB_HTTPS_PORT`     | `8443`                             | Tailscale Serve port for web      |
+| `CAMPFIRE_BACKEND_HTTPS_PORT` | `8444`                             | Tailscale Serve port for backend  |
+| `CAMPFIRE_BRANCH`             | `campfire/v0`                      | Branch to deploy                  |
 
 Example deploying a feature branch for a smoke test:
 
@@ -92,30 +92,36 @@ You'll also need:
 Campfire deploys are unusual because **the mac mini is both the deploy target and the shared dev environment**. A few classes of problem to keep in mind:
 
 ### Shared instance side effects
+
 - Every deploy kicks all paired sessions for ~30s. Coordinate on Slack/etc before deploying mid-day.
 - WS provider sessions in flight (Claude/Codex/Cursor responding) are dropped — paired teammates will see the turn fail and need to retry.
 
 ### Migrations are forward-only
+
 - Migrations under `apps/server/src/persistence/Migrations/` run on every backend startup against the shared SQLite store. There is no down-migration.
 - A bad migration that ships to the mac mini can corrupt projection state for the whole team. For schema changes, test locally first against a fresh DB.
 
 ### The mac's working tree IS the running server
+
 - The checkout at `agent-host/repos/campfire` is what the dev runner is serving. If a teammate paired into the mac uses an agent to edit files there, those edits **are** edits to the running backend's source — Vite/tsx watch will hot-reload (or crash on partial writes).
 - For risky refactors (decider, ws, persistence layers), prefer a separate laptop checkout, not editing via campfire-on-campfire.
 
 ### `/tmp/campfire-mac.log` is truncated on each deploy
+
 - The script `rm -f`s the log before restart. If you need post-incident logs, copy them off the mac before deploying again:
   ```bash
   ssh macmini 'cp /tmp/campfire-mac.log /tmp/campfire-mac.log.$(date +%s)'
   ```
 
 ### Working-tree dirt on the mac blocks pulls
+
 - If something on the mac dirtied the checkout (an agent editing files, an aborted `bun install`), `git pull --ff-only` will fail and the deploy aborts before restart. Check with `bun run mac-mini:status` and clean up manually:
   ```bash
   ssh macmini 'cd agent-host/repos/campfire && git stash && git status --short'
   ```
 
 ### Identity attribution
+
 - Threads, messages, and projects are attributed to the paired client's Tailscale identity (see migrations 036–038). Connecting from the mac's own browser will attribute work to the mac's identity, not yours.
 
 ## Troubleshooting

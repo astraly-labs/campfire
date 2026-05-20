@@ -60,9 +60,7 @@ export function ThreadSummaryBar({ environmentId, threadId, latestTurnId }: Prop
       const requestedTurnId = latestTurnId;
       inflightTurnRef.current = requestedTurnId;
       setState((prev) =>
-        prev.kind === "ready"
-          ? { kind: "loading", previous: prev.result }
-          : { kind: "loading" },
+        prev.kind === "ready" ? { kind: "loading", previous: prev.result } : { kind: "loading" },
       );
       try {
         const result = await api.orchestration.generateConversationSummary({
@@ -74,8 +72,7 @@ export function ThreadSummaryBar({ environmentId, threadId, latestTurnId }: Prop
         setState({ kind: "ready", result });
       } catch (cause) {
         if (inflightTurnRef.current !== requestedTurnId) return;
-        const message =
-          cause instanceof Error ? cause.message : "Could not generate summary";
+        const message = cause instanceof Error ? cause.message : "Could not generate summary";
         setState({ kind: "error", message });
       }
     },
@@ -140,9 +137,7 @@ export function ThreadSummaryBar({ environmentId, threadId, latestTurnId }: Prop
         {state.kind === "loading" ? (
           <LoaderIcon className="size-3 shrink-0 animate-spin opacity-60" aria-hidden />
         ) : null}
-        {state.kind === "error" ? (
-          <span className="text-destructive/80">unavailable</span>
-        ) : null}
+        {state.kind === "error" ? <span className="text-destructive/80">unavailable</span> : null}
       </button>
 
       {expanded ? (

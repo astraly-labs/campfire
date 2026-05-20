@@ -142,7 +142,6 @@ export interface CodexSessionRuntimeStartReviewInput {
   readonly target?: EffectCodexSchema.ClientRequest__ReviewTarget;
 }
 
-
 export interface CodexSessionRuntimeShape {
   readonly start: () => Effect.Effect<ProviderSession, CodexSessionRuntimeError>;
   readonly getSession: Effect.Effect<ProviderSession>;

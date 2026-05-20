@@ -130,7 +130,9 @@ export function ThreadGoalBar({ environmentId, threadId, goal }: Props) {
             disabled={pending !== null || isTerminal}
             className={iconButtonClass}
             aria-label={isActive ? "Pause goal" : "Resume goal"}
-            title={isActive ? "Pause goal" : isPaused ? "Resume goal" : "Goal is in a terminal state"}
+            title={
+              isActive ? "Pause goal" : isPaused ? "Resume goal" : "Goal is in a terminal state"
+            }
           >
             {pending === "toggle" ? (
               <LoaderIcon className="size-3.5 animate-spin" aria-hidden />

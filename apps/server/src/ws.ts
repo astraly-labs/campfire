@@ -730,23 +730,18 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId, initialIdentity: Resolv
         operation: "compact" | "review" | "goal-set" | "goal-clear",
         invoke: (
           codexAdapter: import("./provider/Services/CodexAdapter.ts").CodexAdapterShape,
-        ) => Effect.Effect<
-          void,
-          import("./provider/Errors.ts").ProviderAdapterError
-        >,
+        ) => Effect.Effect<void, import("./provider/Errors.ts").ProviderAdapterError>,
       ) =>
         Effect.gen(function* () {
-          const threadOpt = yield* projectionSnapshotQuery
-            .getThreadShellById(threadId)
-            .pipe(
-              Effect.mapError(
-                (cause) =>
-                  new OrchestrationCodexCommandError({
-                    message: `Failed to load thread ${threadId} for /${operation}`,
-                    cause,
-                  }),
-              ),
-            );
+          const threadOpt = yield* projectionSnapshotQuery.getThreadShellById(threadId).pipe(
+            Effect.mapError(
+              (cause) =>
+                new OrchestrationCodexCommandError({
+                  message: `Failed to load thread ${threadId} for /${operation}`,
+                  cause,
+                }),
+            ),
+          );
           if (Option.isNone(threadOpt)) {
             return yield* new OrchestrationCodexCommandError({
               message: `Thread ${threadId} was not found for /${operation}`,
@@ -1583,13 +1578,9 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId, initialIdentity: Resolv
             },
           ),
         [WS_METHODS.serverGetHostHealth]: (_input) =>
-          observeRpcEffect(
-            WS_METHODS.serverGetHostHealth,
-            hostResourceMonitor.readCurrent,
-            {
-              "rpc.aggregate": "server",
-            },
-          ),
+          observeRpcEffect(WS_METHODS.serverGetHostHealth, hostResourceMonitor.readCurrent, {
+            "rpc.aggregate": "server",
+          }),
         [WS_METHODS.serverSignalProcess]: (input) =>
           observeRpcEffect(WS_METHODS.serverSignalProcess, processDiagnostics.signal(input), {
             "rpc.aggregate": "server",

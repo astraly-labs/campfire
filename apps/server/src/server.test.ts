@@ -817,13 +817,11 @@ const buildAppUnderTest = (options?: {
       // not force every test to wire up a provider instance registry.
       Layer.provide(
         Layer.mock(TextGeneration)({
-          generateCommitMessage: () =>
-            Effect.die("TextGeneration not configured in router test"),
+          generateCommitMessage: () => Effect.die("TextGeneration not configured in router test"),
           generatePrContent: () => Effect.die("TextGeneration not configured in router test"),
           generateBranchName: () => Effect.die("TextGeneration not configured in router test"),
           generateThreadTitle: () => Effect.die("TextGeneration not configured in router test"),
-          generateThreadHandoff: () =>
-            Effect.die("TextGeneration not configured in router test"),
+          generateThreadHandoff: () => Effect.die("TextGeneration not configured in router test"),
           generateConversationSummary: () =>
             Effect.die("TextGeneration not configured in router test"),
         }),
@@ -834,14 +832,11 @@ const buildAppUnderTest = (options?: {
       // service to be in scope.
       Layer.provide(
         Layer.mock(ProviderInstanceRegistry)({
-          getInstance: () =>
-            Effect.die("ProviderInstanceRegistry not configured in router test"),
+          getInstance: () => Effect.die("ProviderInstanceRegistry not configured in router test"),
           listInstances: Effect.die("ProviderInstanceRegistry not configured in router test"),
           listUnavailable: Effect.die("ProviderInstanceRegistry not configured in router test"),
           streamChanges: Stream.empty,
-          subscribeChanges: Effect.die(
-            "ProviderInstanceRegistry not configured in router test",
-          ),
+          subscribeChanges: Effect.die("ProviderInstanceRegistry not configured in router test"),
         }),
       ),
       Layer.provide(layerConfig),

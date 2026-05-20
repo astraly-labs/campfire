@@ -56,5 +56,4 @@ export interface CodexAdapterCommandsShape {
  * a branded driver kind as the nominal discriminant.
  */
 export interface CodexAdapterShape
-  extends ProviderAdapterShape<ProviderAdapterError>,
-    CodexAdapterCommandsShape {}
+  extends ProviderAdapterShape<ProviderAdapterError>, CodexAdapterCommandsShape {}

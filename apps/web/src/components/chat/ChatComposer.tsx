@@ -1549,20 +1549,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           (item.command.name === "compact" || item.command.name === "review") &&
           activeThreadId
         ) {
-          const cleared = applyPromptReplacement(
-            trigger.rangeStart,
-            trigger.rangeEnd,
-            "",
-            { expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd) },
-          );
+          const cleared = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
+            expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
+          });
           if (cleared) {
             setComposerHighlightedItemId(null);
           }
           const api = ensureEnvironmentApi(props.environmentId);
           const commandName = item.command.name;
-          void (commandName === "compact"
-            ? api.orchestration.codexCompactThread({ threadId: activeThreadId })
-            : api.orchestration.codexStartReview({ threadId: activeThreadId })
+          void (
+            commandName === "compact"
+              ? api.orchestration.codexCompactThread({ threadId: activeThreadId })
+              : api.orchestration.codexStartReview({ threadId: activeThreadId })
           ).catch((cause: unknown) => {
             const message = cause instanceof Error ? cause.message : String(cause);
             props.setThreadError(activeThreadId, `Codex /${commandName} failed: ${message}`);

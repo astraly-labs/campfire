@@ -41,9 +41,7 @@ const MEM_CRIT = 95;
 const DISK_FREE_WARN = 15;
 const DISK_FREE_CRIT = 5;
 
-export function computeHostHealthStatus(
-  snapshot: ServerHostHealthResult | null,
-): HostHealthStatus {
+export function computeHostHealthStatus(snapshot: ServerHostHealthResult | null): HostHealthStatus {
   if (!snapshot || Option.isNone(snapshot.sampledAt)) {
     return "unknown";
   }

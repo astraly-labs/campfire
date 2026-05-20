@@ -55,50 +55,50 @@ describe("computeHostHealthStatus", () => {
   });
 
   it("returns green for healthy values", () => {
-    expect(
-      computeHostHealthStatus(snapshot({ cpu: 30, memUsedPct: 50, diskFreePct: 50 })),
-    ).toBe("green");
+    expect(computeHostHealthStatus(snapshot({ cpu: 30, memUsedPct: 50, diskFreePct: 50 }))).toBe(
+      "green",
+    );
   });
 
   it("returns yellow when CPU crosses warn threshold", () => {
-    expect(
-      computeHostHealthStatus(snapshot({ cpu: 75, memUsedPct: 50, diskFreePct: 50 })),
-    ).toBe("yellow");
+    expect(computeHostHealthStatus(snapshot({ cpu: 75, memUsedPct: 50, diskFreePct: 50 }))).toBe(
+      "yellow",
+    );
   });
 
   it("returns yellow when memory crosses warn threshold", () => {
-    expect(
-      computeHostHealthStatus(snapshot({ cpu: 10, memUsedPct: 85, diskFreePct: 50 })),
-    ).toBe("yellow");
+    expect(computeHostHealthStatus(snapshot({ cpu: 10, memUsedPct: 85, diskFreePct: 50 }))).toBe(
+      "yellow",
+    );
   });
 
   it("returns yellow when disk free drops below warn threshold", () => {
-    expect(
-      computeHostHealthStatus(snapshot({ cpu: 10, memUsedPct: 10, diskFreePct: 10 })),
-    ).toBe("yellow");
+    expect(computeHostHealthStatus(snapshot({ cpu: 10, memUsedPct: 10, diskFreePct: 10 }))).toBe(
+      "yellow",
+    );
   });
 
   it("returns red when CPU crosses critical threshold", () => {
-    expect(
-      computeHostHealthStatus(snapshot({ cpu: 95, memUsedPct: 10, diskFreePct: 50 })),
-    ).toBe("red");
+    expect(computeHostHealthStatus(snapshot({ cpu: 95, memUsedPct: 10, diskFreePct: 50 }))).toBe(
+      "red",
+    );
   });
 
   it("returns red when memory crosses critical threshold", () => {
-    expect(
-      computeHostHealthStatus(snapshot({ cpu: 10, memUsedPct: 96, diskFreePct: 50 })),
-    ).toBe("red");
+    expect(computeHostHealthStatus(snapshot({ cpu: 10, memUsedPct: 96, diskFreePct: 50 }))).toBe(
+      "red",
+    );
   });
 
   it("returns red when disk free drops below critical threshold", () => {
-    expect(
-      computeHostHealthStatus(snapshot({ cpu: 10, memUsedPct: 10, diskFreePct: 3 })),
-    ).toBe("red");
+    expect(computeHostHealthStatus(snapshot({ cpu: 10, memUsedPct: 10, diskFreePct: 3 }))).toBe(
+      "red",
+    );
   });
 
   it("ignores disk when unavailable", () => {
-    expect(
-      computeHostHealthStatus(snapshot({ cpu: 10, memUsedPct: 10, diskFreePct: null })),
-    ).toBe("green");
+    expect(computeHostHealthStatus(snapshot({ cpu: 10, memUsedPct: 10, diskFreePct: null }))).toBe(
+      "green",
+    );
   });
 });
