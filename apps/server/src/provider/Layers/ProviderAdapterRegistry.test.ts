@@ -35,6 +35,8 @@ const fakeCodexAdapter: CodexAdapterShape = {
   interruptTurn: vi.fn(),
   respondToRequest: vi.fn(),
   respondToUserInput: vi.fn(),
+  compactThread: vi.fn(),
+  startReview: vi.fn(),
   stopSession: vi.fn(),
   listSessions: vi.fn(),
   hasSession: vi.fn(),
