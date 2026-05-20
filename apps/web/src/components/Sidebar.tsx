@@ -103,6 +103,8 @@ import {
 } from "../threadRoutes";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { formatRelativeTimeLabel } from "../timestampFormat";
+import { useHostHealth } from "../lib/hostHealthState";
+import { HealthDot, HealthTooltipContent } from "./settings/HealthStatusIndicator";
 import { SettingsSidebarNav } from "./settings/SettingsSidebarNav";
 import { Kbd } from "./ui/kbd";
 import {
@@ -2575,6 +2577,12 @@ const SidebarChromeFooter = memo(function SidebarChromeFooter() {
     }
     void navigate({ to: "/inbox" });
   }, [isMobile, navigate, setOpenMobile]);
+  const handleHealthClick = useCallback(() => {
+    if (isMobile) {
+      setOpenMobile(false);
+    }
+    void navigate({ to: "/settings/health" });
+  }, [isMobile, navigate, setOpenMobile]);
 
   return (
     <SidebarFooter className="p-2">
@@ -2609,10 +2617,42 @@ const SidebarChromeFooter = memo(function SidebarChromeFooter() {
             <span className="text-xs">Settings</span>
           </SidebarMenuButton>
         </SidebarMenuItem>
+        <SidebarHealthFooterRow onClick={handleHealthClick} />
       </SidebarMenu>
     </SidebarFooter>
   );
 });
+
+function SidebarHealthFooterRow({ onClick }: { readonly onClick: () => void }) {
+  const health = useHostHealth();
+  const button = (
+    <SidebarMenuButton
+      size="sm"
+      className="gap-2 px-2 py-1.5 text-muted-foreground/70 hover:bg-accent hover:text-foreground"
+      onClick={onClick}
+    >
+      <span className="inline-flex size-3.5 items-center justify-center">
+        <HealthDot status={health.status} />
+      </span>
+      <span className="text-xs">Health</span>
+    </SidebarMenuButton>
+  );
+
+  return (
+    <SidebarMenuItem>
+      <Tooltip>
+        <TooltipTrigger render={(props) => <div {...props}>{button}</div>} />
+        <TooltipPopup side="right" align="center" className="max-w-sm p-3 text-xs">
+          <HealthTooltipContent
+            snapshot={health.data}
+            status={health.status}
+            error={health.error}
+          />
+        </TooltipPopup>
+      </Tooltip>
+    </SidebarMenuItem>
+  );
+}
 
 interface SidebarProjectsSectionsProps {
   myProjects: readonly SidebarProjectSectionInstance[];
