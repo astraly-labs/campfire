@@ -146,6 +146,10 @@ function trimText(value: string | undefined | null): string | undefined {
   return trimmed && trimmed.length > 0 ? trimmed : undefined;
 }
 
+function epochMsToIso(epochMs: number): string {
+  return new Date(epochMs).toISOString();
+}
+
 const FATAL_CODEX_STDERR_SNIPPETS = ["failed to connect to websocket"];
 
 function isFatalCodexProcessStderrMessage(message: string): boolean {
@@ -742,14 +746,10 @@ function mapToRuntimeEvents(
   }
 
   if (event.method === "thread/goal/updated") {
-    const payload = readPayload(
-      EffectCodexSchema.V2ThreadGoalUpdatedNotification,
-      event.payload,
-    );
+    const payload = readPayload(EffectCodexSchema.V2ThreadGoalUpdatedNotification, event.payload);
     if (!payload) {
       return [];
     }
-    const epochMsToIso = (epochMs: number): string => new Date(epochMs).toISOString();
     return [
       {
         type: "thread.goal.updated",
