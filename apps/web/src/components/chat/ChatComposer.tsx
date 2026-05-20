@@ -69,6 +69,7 @@ import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
+import { ThreadGoalDialog } from "./ThreadGoalDialog";
 import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
 import { searchSlashCommandItems } from "./composerSlashCommandSearch";
 import {
@@ -799,6 +800,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const [isComposerPrimaryActionsCompact, setIsComposerPrimaryActionsCompact] = useState(false);
   const [isComposerModelPickerOpen, setIsComposerModelPickerOpen] = useState(false);
   const [isComposerFocused, setIsComposerFocused] = useState(false);
+  const [isGoalDialogOpen, setIsGoalDialogOpen] = useState(false);
   const isMobileViewport = useMediaQuery("max-sm");
   const isComposerCollapsedMobile = isMobileViewport && !isComposerFocused;
 
@@ -1567,10 +1569,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           });
           return;
         }
-        // `/goal` needs an objective string. Reset the prompt, then prompt
-        // the user for the objective — same UX as the pencil button in
-        // ThreadGoalBar.tsx, just exposed from the slash palette. Empty
-        // input clears the goal; cancel is a no-op.
+        // `/goal` opens a styled dialog instead of dispatching directly —
+        // it needs an objective string from the user (or a Clear action),
+        // which is too much for the inline palette and too ugly with
+        // `window.prompt`. ThreadGoalDialog handles set / update / clear
+        // via the codexSetThreadGoal / codexClearThreadGoal RPCs.
         if (
           item.provider === CODEX_DRIVER_KIND &&
           item.command.name === "goal" &&
@@ -1582,21 +1585,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           if (cleared) {
             setComposerHighlightedItemId(null);
           }
-          const objective = window.prompt("Set thread goal", "");
-          if (objective === null) return;
-          const trimmed = objective.trim();
-          const api = ensureEnvironmentApi(props.environmentId);
-          void (
-            trimmed.length === 0
-              ? api.orchestration.codexClearThreadGoal({ threadId: activeThreadId })
-              : api.orchestration.codexSetThreadGoal({
-                  threadId: activeThreadId,
-                  objective: trimmed,
-                })
-          ).catch((cause: unknown) => {
-            const message = cause instanceof Error ? cause.message : String(cause);
-            props.setThreadError(activeThreadId, `Codex /goal failed: ${message}`);
-          });
+          setIsGoalDialogOpen(true);
           return;
         }
         const replacement = `/${item.command.name} `;
@@ -2021,6 +2010,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // Render
   // ------------------------------------------------------------------
   return (
+    <>
+      {activeThreadId ? (
+        <ThreadGoalDialog
+          open={isGoalDialogOpen}
+          onOpenChange={setIsGoalDialogOpen}
+          environmentId={props.environmentId}
+          threadId={activeThreadId}
+          initialObjective={props.activeThread?.goal?.objective}
+          onError={(message) => props.setThreadError(activeThreadId, message)}
+        />
+      ) : null}
     <form
       ref={composerFormRef}
       onSubmit={submitComposer}
@@ -2486,5 +2486,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         </div>
       </div>
     </form>
+    </>
   );
 });
