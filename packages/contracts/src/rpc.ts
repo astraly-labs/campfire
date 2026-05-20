@@ -38,6 +38,7 @@ import { KeybindingsConfigError } from "./keybindings.ts";
 import {
   ClientOrchestrationCommand,
   ORCHESTRATION_WS_METHODS,
+  OrchestrationCodexCommandError,
   OrchestrationDispatchCommandError,
   OrchestrationGenerateConversationSummaryError,
   OrchestrationGenerateThreadHandoffError,
@@ -483,6 +484,24 @@ export const WsOrchestrationGenerateConversationSummaryRpc = Rpc.make(
   },
 );
 
+export const WsOrchestrationCodexCompactThreadRpc = Rpc.make(
+  ORCHESTRATION_WS_METHODS.codexCompactThread,
+  {
+    payload: OrchestrationRpcSchemas.codexCompactThread.input,
+    success: OrchestrationRpcSchemas.codexCompactThread.output,
+    error: OrchestrationCodexCommandError,
+  },
+);
+
+export const WsOrchestrationCodexStartReviewRpc = Rpc.make(
+  ORCHESTRATION_WS_METHODS.codexStartReview,
+  {
+    payload: OrchestrationRpcSchemas.codexStartReview.input,
+    success: OrchestrationRpcSchemas.codexStartReview.output,
+    error: OrchestrationCodexCommandError,
+  },
+);
+
 export const WsIdentityGetCurrentUserRpc = Rpc.make(IDENTITY_WS_METHODS.getCurrentUser, {
   payload: IdentityRpcSchemas.getCurrentUser.input,
   success: IdentityRpcSchemas.getCurrentUser.output,
@@ -632,6 +651,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationSubscribeThreadRpc,
   WsOrchestrationGenerateThreadHandoffRpc,
   WsOrchestrationGenerateConversationSummaryRpc,
+  WsOrchestrationCodexCompactThreadRpc,
+  WsOrchestrationCodexStartReviewRpc,
   WsSideThreadDispatchCommandRpc,
   WsSideThreadSubscribeRpc,
   WsSideThreadSubscribeParentRpc,

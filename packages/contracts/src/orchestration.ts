@@ -43,6 +43,8 @@ export const ORCHESTRATION_WS_METHODS = {
   subscribeThread: "orchestration.subscribeThread",
   generateThreadHandoff: "orchestration.generateThreadHandoff",
   generateConversationSummary: "orchestration.generateConversationSummary",
+  codexCompactThread: "orchestration.codexCompactThread",
+  codexStartReview: "orchestration.codexStartReview",
 } as const;
 
 export const ProviderApprovalPolicy = Schema.Literals([
@@ -350,6 +352,30 @@ export const OrchestrationLatestTurn = Schema.Struct({
 });
 export type OrchestrationLatestTurn = typeof OrchestrationLatestTurn.Type;
 
+// Mirror of Codex thread/goal state. Source of truth is Codex app-server;
+// campfire just surfaces the latest snapshot pushed via thread/goal/updated
+// notifications so peers can see the active goal in the UI.
+export const OrchestrationThreadGoalStatus = Schema.Literals([
+  "active",
+  "paused",
+  "blocked",
+  "usageLimited",
+  "budgetLimited",
+  "complete",
+]);
+export type OrchestrationThreadGoalStatus = typeof OrchestrationThreadGoalStatus.Type;
+
+export const OrchestrationThreadGoal = Schema.Struct({
+  objective: Schema.String,
+  status: OrchestrationThreadGoalStatus,
+  tokenBudget: Schema.NullOr(Schema.Number),
+  tokensUsed: Schema.Number,
+  timeUsedSeconds: Schema.Number,
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+export type OrchestrationThreadGoal = typeof OrchestrationThreadGoal.Type;
+
 export const OrchestrationThread = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
@@ -374,6 +400,9 @@ export const OrchestrationThread = Schema.Struct({
   activities: Schema.Array(OrchestrationThreadActivity),
   checkpoints: Schema.Array(OrchestrationCheckpointSummary),
   session: Schema.NullOr(OrchestrationSession),
+  goal: Schema.NullOr(OrchestrationThreadGoal).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
 });
 export type OrchestrationThread = typeof OrchestrationThread.Type;
 
@@ -785,6 +814,16 @@ const ThreadRevertCompleteCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+// Internal command: emitted by the Codex session runtime when a thread/goal
+// notification arrives from Codex. goal=null represents a cleared goal.
+const ThreadGoalSyncCommand = Schema.Struct({
+  type: Schema.Literal("thread.goal.sync"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  goal: Schema.NullOr(OrchestrationThreadGoal),
+  createdAt: IsoDateTime,
+});
+
 const InternalOrchestrationCommand = Schema.Union([
   ThreadSessionSetCommand,
   ThreadMessageAssistantDeltaCommand,
@@ -793,6 +832,7 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadTurnDiffCompleteCommand,
   ThreadActivityAppendCommand,
   ThreadRevertCompleteCommand,
+  ThreadGoalSyncCommand,
 ]);
 export type InternalOrchestrationCommand = typeof InternalOrchestrationCommand.Type;
 
@@ -825,6 +865,7 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.proposed-plan-upserted",
   "thread.turn-diff-completed",
   "thread.activity-appended",
+  "thread.goal-updated",
 ]);
 export type OrchestrationEventType = typeof OrchestrationEventType.Type;
 
@@ -1010,6 +1051,12 @@ export const ThreadActivityAppendedPayload = Schema.Struct({
   activity: OrchestrationThreadActivity,
 });
 
+export const ThreadGoalUpdatedPayload = Schema.Struct({
+  threadId: ThreadId,
+  goal: Schema.NullOr(OrchestrationThreadGoal),
+  updatedAt: IsoDateTime,
+});
+
 export const OrchestrationEventMetadata = Schema.Struct({
   providerTurnId: Schema.optional(TrimmedNonEmptyString),
   providerItemId: Schema.optional(ProviderItemId),
@@ -1141,6 +1188,11 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.activity-appended"),
     payload: ThreadActivityAppendedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.goal-updated"),
+    payload: ThreadGoalUpdatedPayload,
   }),
 ]);
 export type OrchestrationEvent = typeof OrchestrationEvent.Type;
@@ -1316,6 +1368,23 @@ export const OrchestrationGenerateConversationSummaryResult = Schema.Struct({
 export type OrchestrationGenerateConversationSummaryResult =
   typeof OrchestrationGenerateConversationSummaryResult.Type;
 
+export const OrchestrationCodexCompactThreadInput = Schema.Struct({
+  threadId: ThreadId,
+});
+export type OrchestrationCodexCompactThreadInput =
+  typeof OrchestrationCodexCompactThreadInput.Type;
+
+export const OrchestrationCodexStartReviewInput = Schema.Struct({
+  threadId: ThreadId,
+});
+export type OrchestrationCodexStartReviewInput =
+  typeof OrchestrationCodexStartReviewInput.Type;
+
+export const OrchestrationCodexCommandResult = Schema.Struct({
+  acceptedAt: Schema.String,
+});
+export type OrchestrationCodexCommandResult = typeof OrchestrationCodexCommandResult.Type;
+
 export const OrchestrationRpcSchemas = {
   dispatchCommand: {
     input: ClientOrchestrationCommand,
@@ -1352,6 +1421,14 @@ export const OrchestrationRpcSchemas = {
   generateConversationSummary: {
     input: OrchestrationGenerateConversationSummaryInput,
     output: OrchestrationGenerateConversationSummaryResult,
+  },
+  codexCompactThread: {
+    input: OrchestrationCodexCompactThreadInput,
+    output: OrchestrationCodexCommandResult,
+  },
+  codexStartReview: {
+    input: OrchestrationCodexStartReviewInput,
+    output: OrchestrationCodexCommandResult,
   },
 } as const;
 
@@ -1405,6 +1482,14 @@ export class OrchestrationGenerateThreadHandoffError extends Schema.TaggedErrorC
 
 export class OrchestrationGenerateConversationSummaryError extends Schema.TaggedErrorClass<OrchestrationGenerateConversationSummaryError>()(
   "OrchestrationGenerateConversationSummaryError",
+  {
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {}
+
+export class OrchestrationCodexCommandError extends Schema.TaggedErrorClass<OrchestrationCodexCommandError>()(
+  "OrchestrationCodexCommandError",
   {
     message: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect),

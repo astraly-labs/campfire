@@ -27,6 +27,7 @@ import {
   type OrchestrationCommand,
   type GitActionProgressEvent,
   type GitManagerServiceError,
+  OrchestrationCodexCommandError,
   OrchestrationDispatchCommandError,
   type OrchestrationEvent,
   type OrchestrationShellStreamEvent,
@@ -715,6 +716,76 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId, initialIdentity: Resolv
           .refreshStatus(cwd)
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
 
+      // Dispatch a Codex-only adapter command for `threadId`. Walks the
+      // thread → session → providerInstance graph, refuses non-Codex
+      // providers, and normalises every failure into
+      // `OrchestrationCodexCommandError` so the wire contract stays narrow.
+      // Returns `{ acceptedAt }` once the underlying app-server RPC has
+      // accepted the request — actual completion is observed through the
+      // existing thread event stream.
+      const runCodexThreadCommand = (
+        threadId: ThreadId,
+        operation: "compact" | "review",
+        invoke: (
+          codexAdapter: import("./provider/Services/CodexAdapter.ts").CodexAdapterShape,
+        ) => Effect.Effect<
+          void,
+          import("./provider/Errors.ts").ProviderAdapterError
+        >,
+      ) =>
+        Effect.gen(function* () {
+          const threadOpt = yield* projectionSnapshotQuery
+            .getThreadShellById(threadId)
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationCodexCommandError({
+                    message: `Failed to load thread ${threadId} for /${operation}`,
+                    cause,
+                  }),
+              ),
+            );
+          if (Option.isNone(threadOpt)) {
+            return yield* new OrchestrationCodexCommandError({
+              message: `Thread ${threadId} was not found for /${operation}`,
+            });
+          }
+          const session = threadOpt.value.session;
+          if (session === null || session.providerInstanceId === undefined) {
+            return yield* new OrchestrationCodexCommandError({
+              message: `Thread ${threadId} has no active Codex session — start a turn first`,
+            });
+          }
+          const instance = yield* providerInstanceRegistry.getInstance(session.providerInstanceId);
+          if (!instance) {
+            return yield* new OrchestrationCodexCommandError({
+              message: `Provider instance ${session.providerInstanceId} is no longer available`,
+            });
+          }
+          if (instance.driverKind !== "codex") {
+            return yield* new OrchestrationCodexCommandError({
+              message: `/${operation} is only available for Codex threads (got ${instance.driverKind})`,
+            });
+          }
+          // Safe cast: `instance.driverKind === "codex"` guarantees the
+          // adapter satisfies CodexAdapterShape (it's how CodexDriver builds
+          // it). Going through the common ProviderAdapterShape would mask
+          // the Codex-only methods.
+          const codexAdapter =
+            instance.adapter as unknown as import("./provider/Services/CodexAdapter.ts").CodexAdapterShape;
+          yield* invoke(codexAdapter).pipe(
+            Effect.mapError(
+              (cause) =>
+                new OrchestrationCodexCommandError({
+                  message: `Codex /${operation} failed`,
+                  cause,
+                }),
+            ),
+          );
+          const acceptedAt = yield* nowIso;
+          return { acceptedAt };
+        });
+
       return WsRpcGroup.of({
         [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
           observeRpcEffect(
@@ -1108,6 +1179,22 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId, initialIdentity: Resolv
                 now,
               });
             }),
+            { "rpc.aggregate": "orchestration" },
+          ),
+        [ORCHESTRATION_WS_METHODS.codexCompactThread]: (input) =>
+          observeRpcEffect(
+            ORCHESTRATION_WS_METHODS.codexCompactThread,
+            runCodexThreadCommand(input.threadId, "compact", (codexAdapter) =>
+              codexAdapter.compactThread(input.threadId),
+            ),
+            { "rpc.aggregate": "orchestration" },
+          ),
+        [ORCHESTRATION_WS_METHODS.codexStartReview]: (input) =>
+          observeRpcEffect(
+            ORCHESTRATION_WS_METHODS.codexStartReview,
+            runCodexThreadCommand(input.threadId, "review", (codexAdapter) =>
+              codexAdapter.startReview(input.threadId),
+            ),
             { "rpc.aggregate": "orchestration" },
           ),
         [SIDETHREAD_WS_METHODS.dispatchCommand]: (command) =>
