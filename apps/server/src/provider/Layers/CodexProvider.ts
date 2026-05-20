@@ -53,6 +53,10 @@ const CODEX_BUILTIN_SLASH_COMMANDS: ReadonlyArray<ServerProviderSlashCommand> = 
     name: "review",
     description: "Run a code review on the working tree",
   },
+  {
+    name: "goal",
+    description: "Set or edit the thread goal",
+  },
   // `/approvals` is intentionally not surfaced yet: the codex app-server
   // protocol exposes `PermissionProfileSelectionParams` as a *parameter*
   // schema but not as a stand-alone client request — switching profiles

@@ -1567,6 +1567,38 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           });
           return;
         }
+        // `/goal` needs an objective string. Reset the prompt, then prompt
+        // the user for the objective — same UX as the pencil button in
+        // ThreadGoalBar.tsx, just exposed from the slash palette. Empty
+        // input clears the goal; cancel is a no-op.
+        if (
+          item.provider === CODEX_DRIVER_KIND &&
+          item.command.name === "goal" &&
+          activeThreadId
+        ) {
+          const cleared = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
+            expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
+          });
+          if (cleared) {
+            setComposerHighlightedItemId(null);
+          }
+          const objective = window.prompt("Set thread goal", "");
+          if (objective === null) return;
+          const trimmed = objective.trim();
+          const api = ensureEnvironmentApi(props.environmentId);
+          void (
+            trimmed.length === 0
+              ? api.orchestration.codexClearThreadGoal({ threadId: activeThreadId })
+              : api.orchestration.codexSetThreadGoal({
+                  threadId: activeThreadId,
+                  objective: trimmed,
+                })
+          ).catch((cause: unknown) => {
+            const message = cause instanceof Error ? cause.message : String(cause);
+            props.setThreadError(activeThreadId, `Codex /goal failed: ${message}`);
+          });
+          return;
+        }
         const replacement = `/${item.command.name} `;
         const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
           snapshot.value,
