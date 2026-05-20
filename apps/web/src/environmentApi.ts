@@ -62,6 +62,8 @@ export function createEnvironmentApi(rpcClient: WsRpcClient): EnvironmentApi {
         rpcClient.orchestration.subscribeThread(input, callback, options),
       generateThreadHandoff: rpcClient.orchestration.generateThreadHandoff,
       generateConversationSummary: rpcClient.orchestration.generateConversationSummary,
+      codexCompactThread: rpcClient.orchestration.codexCompactThread,
+      codexStartReview: rpcClient.orchestration.codexStartReview,
     },
     sideThread: {
       dispatchCommand: rpcClient.sideThread.dispatchCommand,

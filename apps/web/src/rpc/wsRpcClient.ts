@@ -170,6 +170,12 @@ export interface WsRpcClient {
     readonly generateConversationSummary: RpcUnaryMethod<
       typeof ORCHESTRATION_WS_METHODS.generateConversationSummary
     >;
+    readonly codexCompactThread: RpcUnaryMethod<
+      typeof ORCHESTRATION_WS_METHODS.codexCompactThread
+    >;
+    readonly codexStartReview: RpcUnaryMethod<
+      typeof ORCHESTRATION_WS_METHODS.codexStartReview
+    >;
   };
   readonly sideThread: {
     readonly dispatchCommand: RpcUnaryMethod<typeof SIDETHREAD_WS_METHODS.dispatchCommand>;
@@ -366,6 +372,14 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
       generateConversationSummary: (input) =>
         transport.request((client) =>
           client[ORCHESTRATION_WS_METHODS.generateConversationSummary](input),
+        ),
+      codexCompactThread: (input) =>
+        transport.request((client) =>
+          client[ORCHESTRATION_WS_METHODS.codexCompactThread](input),
+        ),
+      codexStartReview: (input) =>
+        transport.request((client) =>
+          client[ORCHESTRATION_WS_METHODS.codexStartReview](input),
         ),
     },
     sideThread: {

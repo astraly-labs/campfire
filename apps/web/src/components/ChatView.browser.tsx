@@ -233,6 +233,12 @@ function createMockEnvironmentApi(input: {
       generateConversationSummary: (() => {
         throw new Error("Not implemented in browser test.");
       }) as EnvironmentApi["orchestration"]["generateConversationSummary"],
+      codexCompactThread: (() => {
+        throw new Error("Not implemented in browser test.");
+      }) as EnvironmentApi["orchestration"]["codexCompactThread"],
+      codexStartReview: (() => {
+        throw new Error("Not implemented in browser test.");
+      }) as EnvironmentApi["orchestration"]["codexStartReview"],
     },
     sideThread: {} as EnvironmentApi["sideThread"],
     identity: {} as EnvironmentApi["identity"],

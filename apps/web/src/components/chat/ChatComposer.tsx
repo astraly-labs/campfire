@@ -41,6 +41,7 @@ import {
   replaceTextRange,
 } from "../../composer-logic";
 import { deriveComposerSendState, readFileAsDataUrl } from "../ChatView.logic";
+import { ensureEnvironmentApi } from "../../environmentApi";
 import {
   type ComposerImageAttachment,
   type DraftId,
@@ -137,6 +138,10 @@ const runtimeModeConfig: Record<
 
 const runtimeModeOptions = Object.keys(runtimeModeConfig) as RuntimeMode[];
 const COMPOSER_PATH_QUERY_DEBOUNCE_MS = 120;
+// Skills currently only flow through Codex's app-server. Other drivers don't
+// publish a `skills` array on their `ServerProvider` status, so we gate the
+// slash autocomplete on this kind to avoid showing them an empty section.
+const CODEX_DRIVER_KIND = ProviderDriverKind.make("codex");
 const EMPTY_PROJECT_ENTRIES: ProjectEntry[] = [];
 const COMPOSER_FLOATING_LAYER_SELECTOR = [
   '[data-slot="popover-popup"]',
@@ -897,26 +902,43 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         }),
       );
       const query = composerTrigger.query.trim().toLowerCase();
-      const slashCommandItems = [...builtInSlashCommandItems, ...providerSlashCommandItems];
+      // Skills only surface in the slash menu for the Codex driver. The other
+      // providers keep `/` as a pure slash-command palette so we don't dilute
+      // their built-in command UX with skill entries that wouldn't run
+      // anyway.
+      const skillItems =
+        selectedProvider === CODEX_DRIVER_KIND
+          ? searchProviderSkills(selectedProviderStatus?.skills ?? [], composerTrigger.query).map(
+              (skill) =>
+                ({
+                  id: `skill:${selectedProvider}:${skill.name}`,
+                  type: "skill" as const,
+                  provider: selectedProvider,
+                  skill,
+                  label: formatProviderSkillDisplayName(skill),
+                  description:
+                    skill.shortDescription ??
+                    skill.description ??
+                    (skill.scope ? `${skill.scope} skill` : "Run provider skill"),
+                }) satisfies Extract<ComposerCommandItem, { type: "skill" }>,
+            )
+          : [];
+      const slashCommandItems = [
+        ...builtInSlashCommandItems,
+        ...providerSlashCommandItems,
+        ...skillItems,
+      ];
       if (!query) {
         return slashCommandItems;
       }
-      return searchSlashCommandItems(slashCommandItems, query);
-    }
-    if (composerTrigger.kind === "skill") {
-      return searchProviderSkills(selectedProviderStatus?.skills ?? [], composerTrigger.query).map(
-        (skill) => ({
-          id: `skill:${selectedProvider}:${skill.name}`,
-          type: "skill" as const,
-          provider: selectedProvider,
-          skill,
-          label: formatProviderSkillDisplayName(skill),
-          description:
-            skill.shortDescription ??
-            skill.description ??
-            (skill.scope ? `${skill.scope} skill` : "Run provider skill"),
-        }),
+      // Filter slash commands by name; skills already filtered by
+      // `searchProviderSkills` against the same query so we pass them
+      // through untouched.
+      const filteredSlash = searchSlashCommandItems(
+        [...builtInSlashCommandItems, ...providerSlashCommandItems],
+        query,
       );
+      return [...filteredSlash, ...skillItems];
     }
     return [];
   }, [composerTrigger, selectedProvider, selectedProviderStatus, workspaceEntries]);
@@ -1517,6 +1539,36 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         return;
       }
       if (item.type === "provider-slash-command") {
+        // Codex built-ins are routed straight to dedicated WS RPCs instead
+        // of being inserted as prompt text — sending `/compact` through
+        // `turn/start` would reach the model verbatim instead of triggering
+        // `thread/compact/start` on the codex app-server. Keep this list
+        // aligned with CODEX_BUILTIN_SLASH_COMMANDS in CodexProvider.ts.
+        if (
+          item.provider === CODEX_DRIVER_KIND &&
+          (item.command.name === "compact" || item.command.name === "review") &&
+          activeThreadId
+        ) {
+          const cleared = applyPromptReplacement(
+            trigger.rangeStart,
+            trigger.rangeEnd,
+            "",
+            { expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd) },
+          );
+          if (cleared) {
+            setComposerHighlightedItemId(null);
+          }
+          const api = ensureEnvironmentApi(props.environmentId);
+          const commandName = item.command.name;
+          void (commandName === "compact"
+            ? api.orchestration.codexCompactThread({ threadId: activeThreadId })
+            : api.orchestration.codexStartReview({ threadId: activeThreadId })
+          ).catch((cause: unknown) => {
+            const message = cause instanceof Error ? cause.message : String(cause);
+            props.setThreadError(activeThreadId, `Codex /${commandName} failed: ${message}`);
+          });
+          return;
+        }
         const replacement = `/${item.command.name} `;
         const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
           snapshot.value,
