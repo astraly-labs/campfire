@@ -114,6 +114,7 @@ function createBaseServerConfig(): ServerConfig {
           homePath: "",
           shadowHomePath: "",
           customModels: [],
+          disabledSkills: [],
         },
         claudeAgent: {
           enabled: true,

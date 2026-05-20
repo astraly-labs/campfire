@@ -204,7 +204,7 @@ function appendCustomCodexModels(
   return customEntries.length === 0 ? models : [...models, ...customEntries];
 }
 
-function parseCodexSkillsListResponse(
+export function parseCodexSkillsListResponse(
   response: CodexSchema.V2SkillsListResponse,
   cwd: string,
   disabledSkills: ReadonlySet<string>,
@@ -280,6 +280,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
   readonly homePath?: string;
   readonly cwd: string;
   readonly customModels?: ReadonlyArray<string>;
+  readonly disabledSkills?: ReadonlyArray<string>;
   readonly environment?: NodeJS.ProcessEnv;
 }) {
   // `~` is not shell-expanded when env vars are set via `child_process.spawn`,
@@ -342,7 +343,11 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     account: accountResponse,
     version,
     models: appendCustomCodexModels(models, input.customModels ?? []),
-    skills: parseCodexSkillsListResponse(skillsResponse, input.cwd),
+    skills: parseCodexSkillsListResponse(
+      skillsResponse,
+      input.cwd,
+      new Set(input.disabledSkills ?? []),
+    ),
   } satisfies CodexAppServerProviderSnapshot;
 });
 
@@ -435,6 +440,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     readonly homePath?: string;
     readonly cwd: string;
     readonly customModels: ReadonlyArray<string>;
+    readonly disabledSkills: ReadonlyArray<string>;
     readonly environment?: NodeJS.ProcessEnv;
   }) => Effect.Effect<
     CodexAppServerProviderSnapshot,
@@ -473,6 +479,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     homePath: codexSettings.homePath,
     cwd: process.cwd(),
     customModels: codexSettings.customModels,
+    disabledSkills: codexSettings.disabledSkills,
     environment,
   }).pipe(
     Effect.scoped,

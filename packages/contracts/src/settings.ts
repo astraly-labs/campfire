@@ -208,6 +208,15 @@ export const CodexSettings = makeProviderSettingsSchema(
       Schema.withDecodingDefault(Effect.succeed([])),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
+    // Local override layered on top of the Codex app-server's per-skill
+    // `enabled` flag. Skills whose `name` is in this list are returned with
+    // `enabled: false` from the provider snapshot, which hides them from the
+    // composer's `/` autocomplete. Managed from the Skills section of the
+    // provider card, not the auto-generated settings form.
+    disabledSkills: Schema.Array(Schema.String).pipe(
+      Schema.withDecodingDefault(Effect.succeed([])),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
   },
   {
     order: ["binaryPath", "homePath", "shadowHomePath"],
@@ -433,6 +442,7 @@ const CodexSettingsPatch = Schema.Struct({
   homePath: Schema.optionalKey(TrimmedString),
   shadowHomePath: Schema.optionalKey(TrimmedString),
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
+  disabledSkills: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 
 const ClaudeSettingsPatch = Schema.Struct({

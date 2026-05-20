@@ -33,6 +33,7 @@ import { ScrollArea } from "../ui/scroll-area";
 import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { CodexSkillsSection } from "./CodexSkillsSection";
 import type { DriverOption } from "./providerDriverMeta";
 import { ProviderSettingsForm } from "./ProviderSettingsForm";
 import { ProviderModelsSection } from "./ProviderModelsSection";
@@ -516,6 +517,10 @@ export function ProviderInstanceCard({
     : null;
 
   const customModels = readConfigStringArray(instance.config, "customModels");
+  // Codex-only: skills disabled locally by the user. The Codex app-server
+  // also has its own per-skill enabled flag, but this list is the Campfire
+  // override we layer on top — see CodexProvider.parseCodexSkillsListResponse.
+  const disabledCodexSkills = readConfigStringArray(instance.config, "disabledSkills");
   // Server-returned models may lag behind settings writes. Treat probe
   // models as the source for built-ins only; custom rows come directly
   // from the current instance config so add/remove reflects immediately.
@@ -559,6 +564,12 @@ export function ProviderInstanceCard({
 
   const updateCustomModels = (next: ReadonlyArray<string>) => {
     const nextConfig = nextConfigBlobWithValue(instance.config, "customModels", [...next]);
+    const { config: _omit, ...rest } = instance;
+    onUpdate({ ...rest, config: nextConfig } as ProviderInstanceConfig);
+  };
+
+  const updateDisabledCodexSkills = (next: ReadonlyArray<string>) => {
+    const nextConfig = nextConfigBlobWithValue(instance.config, "disabledSkills", [...next]);
     const { config: _omit, ...rest } = instance;
     onUpdate({ ...rest, config: nextConfig } as ProviderInstanceConfig);
   };
@@ -844,19 +855,29 @@ export function ProviderInstanceCard({
             ) : null}
 
             {driverOption !== undefined ? (
-              <ProviderModelsSection
-                instanceId={instanceId}
-                driverKind={driverKind}
-                models={modelsForDisplay}
-                customModels={customModels}
-                hiddenModels={hiddenModels}
-                favoriteModels={favoriteModels}
-                modelOrder={modelOrder}
-                onChange={updateCustomModels}
-                onHiddenModelsChange={onHiddenModelsChange}
-                onFavoriteModelsChange={onFavoriteModelsChange}
-                onModelOrderChange={onModelOrderChange}
-              />
+              <>
+                <ProviderModelsSection
+                  instanceId={instanceId}
+                  driverKind={driverKind}
+                  models={modelsForDisplay}
+                  customModels={customModels}
+                  hiddenModels={hiddenModels}
+                  favoriteModels={favoriteModels}
+                  modelOrder={modelOrder}
+                  onChange={updateCustomModels}
+                  onHiddenModelsChange={onHiddenModelsChange}
+                  onFavoriteModelsChange={onFavoriteModelsChange}
+                  onModelOrderChange={onModelOrderChange}
+                />
+                {driverKind === "codex" ? (
+                  <CodexSkillsSection
+                    instanceId={instanceId}
+                    skills={liveProvider?.skills ?? []}
+                    disabledSkills={disabledCodexSkills}
+                    onDisabledSkillsChange={updateDisabledCodexSkills}
+                  />
+                ) : null}
+              </>
             ) : (
               <div className="border-t border-border/60 px-4 py-3 sm:px-5">
                 <p className="text-xs text-muted-foreground">

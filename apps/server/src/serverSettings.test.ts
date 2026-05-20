@@ -119,6 +119,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         homePath: "/Users/julius/.codex",
         shadowHomePath: "",
         customModels: [],
+        disabledSkills: [],
       });
       assert.deepEqual(next.providers.claudeAgent, {
         enabled: true,
@@ -360,6 +361,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         homePath: "",
         shadowHomePath: "",
         customModels: [],
+        disabledSkills: [],
       });
       assert.deepEqual(next.providers.claudeAgent, {
         enabled: true,

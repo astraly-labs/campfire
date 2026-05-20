@@ -59,6 +59,7 @@ const makeCodexConfig = (overrides: Partial<CodexSettings>): CodexSettings => ({
   homePath: "",
   shadowHomePath: "",
   customModels: [],
+  disabledSkills: [],
   ...overrides,
 });
 
