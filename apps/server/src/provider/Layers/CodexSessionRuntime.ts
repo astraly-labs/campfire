@@ -127,6 +127,21 @@ export interface CodexThreadSnapshot {
   readonly turns: ReadonlyArray<CodexThreadTurnSnapshot>;
 }
 
+/**
+ * Inputs for the Codex-specific built-in slash commands. The shape is kept
+ * intentionally narrow — only the bits Campfire's composer can reasonably
+ * supply. Richer overrides (e.g. custom review prompts) can be added later.
+ */
+export interface CodexSessionRuntimeStartReviewInput {
+  /**
+   * Optional override of the review target. When omitted the codex
+   * app-server falls back to "review the working tree" — matching the
+   * default UX users get from typing `/review` with no args in the TUI.
+   */
+  readonly target?: EffectCodexSchema.ClientRequest__ReviewTarget;
+}
+
+
 export interface CodexSessionRuntimeShape {
   readonly start: () => Effect.Effect<ProviderSession, CodexSessionRuntimeError>;
   readonly getSession: Effect.Effect<ProviderSession>;
@@ -145,6 +160,20 @@ export interface CodexSessionRuntimeShape {
   readonly respondToUserInput: (
     requestId: ApprovalRequestId,
     answers: ProviderUserInputAnswers,
+  ) => Effect.Effect<void, CodexSessionRuntimeError>;
+  /**
+   * Trigger `thread/compact/start` on the underlying codex app-server.
+   * Async fire-and-forget: completion is observed via the `thread/compacted`
+   * notification stream rather than the response of this call.
+   */
+  readonly compactThread: Effect.Effect<void, CodexSessionRuntimeError>;
+  /**
+   * Trigger `review/start` for the current session. Returns once the
+   * app-server has accepted the review request; the review itself runs as
+   * a side-thread observable through the normal event stream.
+   */
+  readonly startReview: (
+    input: CodexSessionRuntimeStartReviewInput,
   ) => Effect.Effect<void, CodexSessionRuntimeError>;
   readonly events: Stream.Stream<ProviderEvent, never>;
   readonly close: Effect.Effect<void>;
@@ -510,6 +539,8 @@ function readNotificationThreadId(notification: CodexServerNotification): string
     case "thread/realtime/sdp":
     case "thread/realtime/error":
     case "thread/realtime/closed":
+    case "thread/goal/updated":
+    case "thread/goal/cleared":
       return notification.params.threadId;
     default:
       return undefined;
@@ -1363,6 +1394,24 @@ export const makeCodexSessionRuntime = (
             payload: {
               answers: codexAnswers,
             },
+          });
+        }),
+      compactThread: Effect.gen(function* () {
+        const providerThreadId = yield* readProviderThreadId;
+        yield* client.request("thread/compact/start", {
+          threadId: providerThreadId,
+        });
+      }),
+      startReview: (input) =>
+        Effect.gen(function* () {
+          const providerThreadId = yield* readProviderThreadId;
+          // `target` is a required field — when the caller hasn't picked one
+          // we mirror the Codex TUI default for bare `/review` (uncommitted
+          // working-tree changes).
+          const target = input.target ?? { type: "uncommittedChanges" as const };
+          yield* client.request("review/start", {
+            threadId: providerThreadId,
+            target,
           });
         }),
       events: Stream.fromQueue(events),

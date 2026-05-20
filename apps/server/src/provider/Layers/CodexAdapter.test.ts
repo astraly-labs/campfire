@@ -113,6 +113,12 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
       Promise.resolve(undefined),
   );
 
+  public readonly compactThreadImpl = vi.fn((): Promise<void> => Promise.resolve(undefined));
+
+  public readonly startReviewImpl = vi.fn(
+    (_input: { readonly target?: unknown }): Promise<void> => Promise.resolve(undefined),
+  );
+
   public readonly closeImpl = vi.fn(() => Promise.resolve(undefined));
 
   readonly options: CodexSessionRuntimeOptions;
@@ -147,6 +153,12 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
 
   respondToUserInput(requestId: ApprovalRequestId, answers: ProviderUserInputAnswers) {
     return Effect.promise(() => this.respondToUserInputImpl(requestId, answers));
+  }
+
+  compactThread = Effect.promise(() => this.compactThreadImpl());
+
+  startReview(input: { readonly target?: unknown }) {
+    return Effect.promise(() => this.startReviewImpl(input));
   }
 
   get events() {

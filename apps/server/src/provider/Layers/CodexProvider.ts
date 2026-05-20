@@ -53,10 +53,11 @@ const CODEX_BUILTIN_SLASH_COMMANDS: ReadonlyArray<ServerProviderSlashCommand> = 
     name: "review",
     description: "Run a code review on the working tree",
   },
-  {
-    name: "approvals",
-    description: "Switch the Codex approval / permission profile",
-  },
+  // `/approvals` is intentionally not surfaced yet: the codex app-server
+  // protocol exposes `PermissionProfileSelectionParams` as a *parameter*
+  // schema but not as a stand-alone client request — switching profiles
+  // mid-session would need plumbing through `config/value/write` or a
+  // future dedicated endpoint.
 ];
 
 export interface CodexAppServerProviderSnapshot {
@@ -206,6 +207,7 @@ function appendCustomCodexModels(
 function parseCodexSkillsListResponse(
   response: CodexSchema.V2SkillsListResponse,
   cwd: string,
+  disabledSkills: ReadonlySet<string>,
 ): ReadonlyArray<ServerProviderSkill> {
   const matchingEntry = response.data.find((entry) => entry.cwd === cwd);
   const skills = matchingEntry
@@ -219,7 +221,10 @@ function parseCodexSkillsListResponse(
     const parsedSkill: Types.Mutable<ServerProviderSkill> = {
       name: skill.name,
       path: skill.path,
-      enabled: skill.enabled,
+      // `disabledSkills` is a local Campfire override layered on top of the
+      // Codex app-server's own enabled flag. Either side flipping the skill
+      // off should hide it from the composer autocomplete.
+      enabled: skill.enabled && !disabledSkills.has(skill.name),
     };
 
     if (skill.description) {
