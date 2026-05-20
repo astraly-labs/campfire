@@ -380,6 +380,45 @@ export const ServerProcessResourceHistoryResult = Schema.Struct({
 });
 export type ServerProcessResourceHistoryResult = typeof ServerProcessResourceHistoryResult.Type;
 
+export const ServerHostHealthDisk = Schema.Struct({
+  path: TrimmedNonEmptyString,
+  freeBytes: NonNegativeInt,
+  totalBytes: NonNegativeInt,
+});
+export type ServerHostHealthDisk = typeof ServerHostHealthDisk.Type;
+
+export const ServerHostHealthCpu = Schema.Struct({
+  percent: Schema.Number,
+  count: NonNegativeInt,
+  loadAverage1m: Schema.Number,
+  loadAverage5m: Schema.Number,
+  loadAverage15m: Schema.Number,
+});
+export type ServerHostHealthCpu = typeof ServerHostHealthCpu.Type;
+
+export const ServerHostHealthMemory = Schema.Struct({
+  usedBytes: NonNegativeInt,
+  totalBytes: NonNegativeInt,
+});
+export type ServerHostHealthMemory = typeof ServerHostHealthMemory.Type;
+
+export const ServerHostHealthResult = Schema.Struct({
+  readAt: Schema.DateTimeUtc,
+  sampledAt: Schema.Option(Schema.DateTimeUtc),
+  hostname: TrimmedNonEmptyString,
+  platform: TrimmedNonEmptyString,
+  uptimeSec: NonNegativeInt,
+  cpu: ServerHostHealthCpu,
+  memory: ServerHostHealthMemory,
+  disk: Schema.Option(ServerHostHealthDisk),
+  error: Schema.Option(
+    Schema.Struct({
+      message: TrimmedNonEmptyString,
+    }),
+  ),
+});
+export type ServerHostHealthResult = typeof ServerHostHealthResult.Type;
+
 export const ServerSignalProcessInput = Schema.Struct({
   pid: PositiveInt,
   signal: ServerProcessSignal,

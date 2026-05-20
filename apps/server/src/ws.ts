@@ -89,6 +89,7 @@ import { ProjectSetupScriptRunner } from "./project/Services/ProjectSetupScriptR
 import { RepositoryIdentityResolver } from "./project/Services/RepositoryIdentityResolver.ts";
 import { ServerEnvironment } from "./environment/Services/ServerEnvironment.ts";
 import { ServerAuth } from "./auth/Services/ServerAuth.ts";
+import * as HostResourceMonitor from "./diagnostics/HostResourceMonitor.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
@@ -228,6 +229,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId, initialIdentity: Resolv
       const sessions = yield* SessionCredentialService;
       const processDiagnostics = yield* ProcessDiagnostics.ProcessDiagnostics;
       const processResourceMonitor = yield* ProcessResourceMonitor.ProcessResourceMonitor;
+      const hostResourceMonitor = yield* HostResourceMonitor.HostResourceMonitor;
       const serverCommandId = (tag: string) =>
         CommandId.make(`server:${tag}:${crypto.randomUUID()}`);
 
@@ -725,7 +727,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId, initialIdentity: Resolv
       // existing thread event stream.
       const runCodexThreadCommand = (
         threadId: ThreadId,
-        operation: "compact" | "review",
+        operation: "compact" | "review" | "goal-set" | "goal-clear",
         invoke: (
           codexAdapter: import("./provider/Services/CodexAdapter.ts").CodexAdapterShape,
         ) => Effect.Effect<
@@ -1197,6 +1199,27 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId, initialIdentity: Resolv
             ),
             { "rpc.aggregate": "orchestration" },
           ),
+        [ORCHESTRATION_WS_METHODS.codexSetThreadGoal]: (input) =>
+          observeRpcEffect(
+            ORCHESTRATION_WS_METHODS.codexSetThreadGoal,
+            runCodexThreadCommand(input.threadId, "goal-set", (codexAdapter) =>
+              codexAdapter.setThreadGoal({
+                threadId: input.threadId,
+                ...(input.objective !== undefined ? { objective: input.objective } : {}),
+                ...(input.status !== undefined ? { status: input.status } : {}),
+                ...(input.tokenBudget !== undefined ? { tokenBudget: input.tokenBudget } : {}),
+              }),
+            ),
+            { "rpc.aggregate": "orchestration" },
+          ),
+        [ORCHESTRATION_WS_METHODS.codexClearThreadGoal]: (input) =>
+          observeRpcEffect(
+            ORCHESTRATION_WS_METHODS.codexClearThreadGoal,
+            runCodexThreadCommand(input.threadId, "goal-clear", (codexAdapter) =>
+              codexAdapter.clearThreadGoal(input.threadId),
+            ),
+            { "rpc.aggregate": "orchestration" },
+          ),
         [SIDETHREAD_WS_METHODS.dispatchCommand]: (command) =>
           observeRpcEffect(
             SIDETHREAD_WS_METHODS.dispatchCommand,
@@ -1555,6 +1578,14 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId, initialIdentity: Resolv
           observeRpcEffect(
             WS_METHODS.serverGetProcessResourceHistory,
             processResourceMonitor.readHistory(input),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.serverGetHostHealth]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.serverGetHostHealth,
+            hostResourceMonitor.readCurrent,
             {
               "rpc.aggregate": "server",
             },
