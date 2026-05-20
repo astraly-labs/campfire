@@ -4,6 +4,7 @@ import {
   ArchiveIcon,
   ArrowLeftIcon,
   BotIcon,
+  FolderTreeIcon,
   GitBranchIcon,
   KeyboardIcon,
   Link2Icon,
@@ -32,6 +33,7 @@ export type SettingsSectionPath =
   | "/settings/keybindings"
   | "/settings/providers"
   | "/settings/source-control"
+  | "/settings/worktrees"
   | "/settings/connections"
   | "/settings/health"
   | "/settings/archived";
@@ -48,6 +50,7 @@ export const SETTINGS_NAV_ITEMS: ReadonlyArray<SettingsNavItem> = [
   { label: "Keybindings", to: "/settings/keybindings", icon: KeyboardIcon },
   { label: "Providers", to: "/settings/providers", icon: BotIcon },
   { label: "Source Control", to: "/settings/source-control", icon: GitBranchIcon },
+  { label: "Worktrees", to: "/settings/worktrees", icon: FolderTreeIcon },
   { label: "Connections", to: "/settings/connections", icon: Link2Icon },
   { label: "Health", to: "/settings/health", icon: ActivityIcon },
   { label: "Archive", to: "/settings/archived", icon: ArchiveIcon },
