@@ -63,7 +63,12 @@ const TURN_LIFECYCLE_LOG_TAG = "[🚨 TurnLifecycle]";
 const TURN_DELTA_LOG_INTERVAL_MS = 5_000;
 const TURN_DELTA_LOG_COUNT_INTERVAL = 25;
 const STUCK_TURN_SWEEP_INTERVAL_MS = 30_000;
-const STUCK_TURN_THRESHOLD_MS = 120_000;
+// Tighter threshold when the provider hasn't emitted any deltas yet (true
+// "stuck before first token" case); looser one once deltas have streamed,
+// since Codex routinely pauses 2+ minutes between tool calls without being
+// stuck.
+const STUCK_TURN_NO_DELTA_THRESHOLD_MS = 120_000;
+const STUCK_TURN_WITH_DELTA_THRESHOLD_MS = 300_000;
 
 interface TurnActivity {
   readonly threadId: ThreadId;
@@ -1762,7 +1767,11 @@ const make = Effect.gen(function* () {
     const nowMs = yield* Clock.currentTimeMillis;
     for (const tracker of turnActivityByKey.values()) {
       const stuckMs = nowMs - tracker.lastEventAt;
-      if (stuckMs < STUCK_TURN_THRESHOLD_MS || tracker.stuckLogged) {
+      const threshold =
+        tracker.deltaCount === 0
+          ? STUCK_TURN_NO_DELTA_THRESHOLD_MS
+          : STUCK_TURN_WITH_DELTA_THRESHOLD_MS;
+      if (stuckMs < threshold || tracker.stuckLogged) {
         continue;
       }
       tracker.stuckLogged = true;
@@ -1773,6 +1782,7 @@ const make = Effect.gen(function* () {
         stuckMs,
         deltaCount: tracker.deltaCount,
         elapsedMs: nowMs - tracker.startedAt,
+        thresholdMs: threshold,
       });
     }
   });
