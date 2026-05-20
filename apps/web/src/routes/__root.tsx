@@ -20,6 +20,7 @@ import {
   WebSocketConnectionCoordinator,
   WebSocketConnectionSurface,
 } from "../components/WebSocketConnectionSurface";
+import { StuckTurnWatchdog } from "../stuckTurnWatchdog";
 import { Button } from "../components/ui/button";
 import {
   AnchoredToastProvider,
@@ -141,6 +142,7 @@ function RootRouteView() {
         {primaryEnvironmentAuthenticated ? <ProviderUpdateLaunchNotification /> : null}
         {primaryEnvironmentAuthenticated ? <WebSocketConnectionCoordinator /> : null}
         {primaryEnvironmentAuthenticated ? <SlowRpcAckToastCoordinator /> : null}
+        {primaryEnvironmentAuthenticated ? <StuckTurnWatchdog /> : null}
         {primaryEnvironmentAuthenticated ? (
           <WebSocketConnectionSurface>{appShell}</WebSocketConnectionSurface>
         ) : (

@@ -19,10 +19,12 @@ import {
 } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
@@ -56,6 +58,23 @@ const BUFFERED_PROPOSED_PLAN_BY_ID_CACHE_CAPACITY = 10_000;
 const BUFFERED_PROPOSED_PLAN_BY_ID_TTL = Duration.minutes(120);
 const MAX_BUFFERED_ASSISTANT_CHARS = 24_000;
 const STRICT_PROVIDER_LIFECYCLE_GUARD = process.env.T3CODE_STRICT_PROVIDER_LIFECYCLE_GUARD !== "0";
+
+const TURN_LIFECYCLE_LOG_TAG = "[🚨 TurnLifecycle]";
+const TURN_DELTA_LOG_INTERVAL_MS = 5_000;
+const TURN_DELTA_LOG_COUNT_INTERVAL = 25;
+const STUCK_TURN_SWEEP_INTERVAL_MS = 30_000;
+const STUCK_TURN_THRESHOLD_MS = 120_000;
+
+interface TurnActivity {
+  readonly threadId: ThreadId;
+  readonly turnId: TurnId;
+  readonly provider: string;
+  readonly startedAt: number;
+  lastEventAt: number;
+  deltaCount: number;
+  lastDeltaLogAt: number;
+  stuckLogged: boolean;
+}
 
 type TurnStartRequestedDomainEvent = Extract<
   OrchestrationEvent,
@@ -640,6 +659,8 @@ const make = Effect.gen(function* () {
     lookup: () => Effect.succeed({ text: "", createdAt: "" }),
   });
 
+  const turnActivityByKey = new Map<string, TurnActivity>();
+
   const resolveThreadDetail = Effect.fn("resolveThreadDetail")(function* (threadId: ThreadId) {
     return yield* projectionSnapshotQuery
       .getThreadDetailById(threadId)
@@ -1199,6 +1220,66 @@ const make = Effect.gen(function* () {
         activeTurnId !== null && eventTurnId !== undefined && !sameId(activeTurnId, eventTurnId);
       const missingTurnForActiveTurn = activeTurnId !== null && eventTurnId === undefined;
 
+      // Turn lifecycle tracing — see `[🚨 TurnLifecycle]` logs. The tracker
+      // also feeds the stuck-turn sweep started in `start()`.
+      if (event.type === "turn.started" && eventTurnId !== undefined) {
+        const key = providerTurnKey(thread.id, eventTurnId);
+        const nowMs = yield* Clock.currentTimeMillis;
+        const previous = turnActivityByKey.get(key);
+        turnActivityByKey.set(key, {
+          threadId: thread.id,
+          turnId: eventTurnId,
+          provider: event.provider,
+          startedAt: nowMs,
+          lastEventAt: nowMs,
+          deltaCount: 0,
+          lastDeltaLogAt: 0,
+          stuckLogged: false,
+        });
+        yield* Effect.logInfo(`${TURN_LIFECYCLE_LOG_TAG} turn-started`, {
+          threadId: thread.id,
+          turnId: eventTurnId,
+          provider: event.provider,
+          previousTrackerHadProgress: previous !== undefined,
+          conflictsWithActiveTurn,
+        });
+      } else if (event.type === "turn.completed" && eventTurnId !== undefined) {
+        const key = providerTurnKey(thread.id, eventTurnId);
+        const tracker = turnActivityByKey.get(key);
+        const nowMs = yield* Clock.currentTimeMillis;
+        const durationMs = tracker ? nowMs - tracker.startedAt : null;
+        const outcome = normalizeRuntimeTurnState(event.payload.state);
+        turnActivityByKey.delete(key);
+        yield* Effect.logInfo(`${TURN_LIFECYCLE_LOG_TAG} turn-completed`, {
+          threadId: thread.id,
+          turnId: eventTurnId,
+          provider: event.provider,
+          outcome,
+          durationMs,
+          deltaCount: tracker?.deltaCount ?? null,
+          ...(outcome === "failed" && "errorMessage" in event.payload
+            ? { errorMessage: event.payload.errorMessage ?? null }
+            : {}),
+        });
+      } else if (event.type === "session.exited") {
+        const staleKeys: Array<string> = [];
+        for (const [key, tracker] of turnActivityByKey) {
+          if (tracker.threadId === thread.id) {
+            staleKeys.push(key);
+          }
+        }
+        if (staleKeys.length > 0) {
+          yield* Effect.logWarning(`${TURN_LIFECYCLE_LOG_TAG} session-exited-with-active-turns`, {
+            threadId: thread.id,
+            provider: event.provider,
+            droppedTurns: staleKeys.length,
+          });
+          for (const key of staleKeys) {
+            turnActivityByKey.delete(key);
+          }
+        }
+      }
+
       const shouldApplyThreadLifecycle = (() => {
         if (!STRICT_PROVIDER_LIFECYCLE_GUARD) {
           return true;
@@ -1331,6 +1412,28 @@ const make = Effect.gen(function* () {
         });
         if (turnId) {
           yield* rememberAssistantMessageId(thread.id, turnId, assistantMessageId);
+
+          const tracker = turnActivityByKey.get(providerTurnKey(thread.id, turnId));
+          if (tracker) {
+            const nowMs = yield* Clock.currentTimeMillis;
+            tracker.lastEventAt = nowMs;
+            tracker.deltaCount += 1;
+            tracker.stuckLogged = false;
+            const sinceLastLog = nowMs - tracker.lastDeltaLogAt;
+            if (
+              tracker.deltaCount % TURN_DELTA_LOG_COUNT_INTERVAL === 0 ||
+              sinceLastLog >= TURN_DELTA_LOG_INTERVAL_MS
+            ) {
+              tracker.lastDeltaLogAt = nowMs;
+              yield* Effect.logDebug(`${TURN_LIFECYCLE_LOG_TAG} turn-progress`, {
+                threadId: thread.id,
+                turnId,
+                provider: tracker.provider,
+                deltaCount: tracker.deltaCount,
+                elapsedMs: nowMs - tracker.startedAt,
+              });
+            }
+          }
         }
 
         const assistantDeliveryMode: AssistantDeliveryMode = yield* Effect.map(
@@ -1655,6 +1758,25 @@ const make = Effect.gen(function* () {
 
   const worker = yield* makeDrainableWorker(processInputSafely);
 
+  const stuckTurnSweep = Effect.gen(function* () {
+    const nowMs = yield* Clock.currentTimeMillis;
+    for (const tracker of turnActivityByKey.values()) {
+      const stuckMs = nowMs - tracker.lastEventAt;
+      if (stuckMs < STUCK_TURN_THRESHOLD_MS || tracker.stuckLogged) {
+        continue;
+      }
+      tracker.stuckLogged = true;
+      yield* Effect.logWarning(`${TURN_LIFECYCLE_LOG_TAG} stuck-turn-detected`, {
+        threadId: tracker.threadId,
+        turnId: tracker.turnId,
+        provider: tracker.provider,
+        stuckMs,
+        deltaCount: tracker.deltaCount,
+        elapsedMs: nowMs - tracker.startedAt,
+      });
+    }
+  });
+
   const start: ProviderRuntimeIngestionShape["start"] = () =>
     Effect.gen(function* () {
       yield* Effect.forkScoped(
@@ -1669,6 +1791,12 @@ const make = Effect.gen(function* () {
           }
           return worker.enqueue({ source: "domain", event });
         }),
+      );
+      yield* Effect.forkScoped(
+        Effect.repeat(
+          stuckTurnSweep,
+          Schedule.spaced(Duration.millis(STUCK_TURN_SWEEP_INTERVAL_MS)),
+        ),
       );
     });
 

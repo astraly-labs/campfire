@@ -2026,6 +2026,58 @@ export function setThreadBranch(
   return commitEnvironmentState(state, threadRef.environmentId, nextEnvironmentState);
 }
 
+/**
+ * Locally mark a still-"running" turn as interrupted when the client has
+ * observed no progress for an unreasonable amount of time. This is purely a
+ * client-side safety net — no RPC is sent. If real progress resumes (a late
+ * delta lands), the `thread.message-sent` reducer above will flip the turn
+ * back to "running" naturally.
+ */
+export function markStuckTurnInterrupted(
+  state: AppState,
+  environmentId: EnvironmentId,
+  threadId: ThreadId,
+  turnId: TurnId,
+): AppState {
+  const envState = getStoredEnvironmentState(state, environmentId);
+  const nextEnvironmentState = updateThreadState(envState, threadId, (thread) => {
+    const latestTurn = thread.latestTurn;
+    if (
+      latestTurn === null ||
+      latestTurn.turnId !== turnId ||
+      latestTurn.state !== "running"
+    ) {
+      return thread;
+    }
+    const now = new Date().toISOString();
+    const interruptedLatestTurn = buildLatestTurn({
+      previous: latestTurn,
+      turnId,
+      state: "interrupted",
+      requestedAt: latestTurn.requestedAt,
+      startedAt: latestTurn.startedAt ?? now,
+      completedAt: latestTurn.completedAt ?? now,
+      assistantMessageId: latestTurn.assistantMessageId,
+    });
+    const assistantMessageId = latestTurn.assistantMessageId;
+    const nextMessages =
+      assistantMessageId === null
+        ? thread.messages
+        : thread.messages.map((message) =>
+            message.id === assistantMessageId && message.streaming
+              ? { ...message, streaming: false, completedAt: message.completedAt ?? now }
+              : message,
+          );
+    return {
+      ...thread,
+      messages: nextMessages,
+      latestTurn: interruptedLatestTurn,
+      updatedAt: now,
+    };
+  });
+  return commitEnvironmentState(state, environmentId, nextEnvironmentState);
+}
+
 interface AppStore extends AppState {
   setActiveEnvironmentId: (environmentId: EnvironmentId) => void;
   removeEnvironmentState: (environmentId: EnvironmentId) => void;
@@ -2048,6 +2100,11 @@ interface AppStore extends AppState {
   ) => void;
   markThreadMissing: (environmentId: EnvironmentId, threadId: ThreadId) => void;
   clearThreadMissing: (environmentId: EnvironmentId, threadId: ThreadId) => void;
+  markStuckTurnInterrupted: (
+    environmentId: EnvironmentId,
+    threadId: ThreadId,
+    turnId: TurnId,
+  ) => void;
 }
 
 export const useStore = create<AppStore>((set) => ({
@@ -2073,4 +2130,6 @@ export const useStore = create<AppStore>((set) => ({
     set((state) => markThreadMissing(state, environmentId, threadId)),
   clearThreadMissing: (environmentId, threadId) =>
     set((state) => clearThreadMissing(state, environmentId, threadId)),
+  markStuckTurnInterrupted: (environmentId, threadId, turnId) =>
+    set((state) => markStuckTurnInterrupted(state, environmentId, threadId, turnId)),
 }));
