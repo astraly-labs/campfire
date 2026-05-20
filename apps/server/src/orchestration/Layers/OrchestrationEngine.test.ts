@@ -154,6 +154,7 @@ describe("OrchestrationEngine", () => {
           activities: [],
           checkpoints: [],
           session: null,
+          goal: null,
         },
       ],
     };
@@ -165,6 +166,7 @@ describe("OrchestrationEngine", () => {
         proposedPlans: [],
         activities: [],
         checkpoints: [],
+        goal: null,
       })),
     };
     let fullSnapshotReadCount = 0;

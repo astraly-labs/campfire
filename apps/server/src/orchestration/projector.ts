@@ -16,6 +16,7 @@ import {
   ProjectMetaUpdatedPayload,
   ThreadActivityAppendedPayload,
   ThreadArchivedPayload,
+  ThreadGoalUpdatedPayload,
   ThreadCreatedPayload,
   ThreadDeletedPayload,
   ThreadInteractionModeSetPayload,
@@ -270,6 +271,7 @@ export function projectEvent(
             activities: [],
             checkpoints: [],
             session: null,
+            goal: null,
           },
           event.type,
           "thread",
@@ -644,6 +646,23 @@ export function projectEvent(
             ...nextBase,
             threads: updateThread(nextBase.threads, payload.threadId, {
               activities,
+              updatedAt: event.occurredAt,
+            }),
+          };
+        }),
+      );
+
+    case "thread.goal-updated":
+      return decodeForEvent(ThreadGoalUpdatedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread) {
+            return nextBase;
+          }
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              goal: payload.goal,
               updatedAt: event.occurredAt,
             }),
           };

@@ -22,6 +22,10 @@
     "./errors": {
       "types": "./src/errors.ts",
       "import": "./src/errors.ts"
+    },
+    "./threadGoal": {
+      "types": "./src/threadGoal.ts",
+      "import": "./src/threadGoal.ts"
     }
   },
   "scripts": {

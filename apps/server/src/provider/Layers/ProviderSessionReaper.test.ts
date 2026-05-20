@@ -111,6 +111,7 @@ function makeReadModel(
       activities: [],
       proposedPlans: [],
       checkpoints: [],
+      goal: null,
       deletedAt: null,
       createdBy: null,
     })),
