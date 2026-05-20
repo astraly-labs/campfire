@@ -150,6 +150,7 @@ export interface WsRpcClient {
     readonly getProcessResourceHistory: RpcUnaryMethod<
       typeof WS_METHODS.serverGetProcessResourceHistory
     >;
+    readonly getHostHealth: RpcUnaryNoArgMethod<typeof WS_METHODS.serverGetHostHealth>;
     readonly signalProcess: RpcUnaryMethod<typeof WS_METHODS.serverSignalProcess>;
     readonly subscribeConfig: RpcStreamMethod<typeof WS_METHODS.subscribeServerConfig>;
     readonly subscribeLifecycle: RpcStreamMethod<typeof WS_METHODS.subscribeServerLifecycle>;
@@ -175,6 +176,12 @@ export interface WsRpcClient {
     >;
     readonly codexStartReview: RpcUnaryMethod<
       typeof ORCHESTRATION_WS_METHODS.codexStartReview
+    >;
+    readonly codexSetThreadGoal: RpcUnaryMethod<
+      typeof ORCHESTRATION_WS_METHODS.codexSetThreadGoal
+    >;
+    readonly codexClearThreadGoal: RpcUnaryMethod<
+      typeof ORCHESTRATION_WS_METHODS.codexClearThreadGoal
     >;
   };
   readonly sideThread: {
@@ -322,6 +329,10 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
             Effect.withTracerEnabled(false),
           ),
         ),
+      getHostHealth: () =>
+        transport.request((client) =>
+          client[WS_METHODS.serverGetHostHealth]({}).pipe(Effect.withTracerEnabled(false)),
+        ),
       signalProcess: (input) =>
         transport.request((client) =>
           client[WS_METHODS.serverSignalProcess](input).pipe(Effect.withTracerEnabled(false)),
@@ -380,6 +391,14 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
       codexStartReview: (input) =>
         transport.request((client) =>
           client[ORCHESTRATION_WS_METHODS.codexStartReview](input),
+        ),
+      codexSetThreadGoal: (input) =>
+        transport.request((client) =>
+          client[ORCHESTRATION_WS_METHODS.codexSetThreadGoal](input),
+        ),
+      codexClearThreadGoal: (input) =>
+        transport.request((client) =>
+          client[ORCHESTRATION_WS_METHODS.codexClearThreadGoal](input),
         ),
     },
     sideThread: {

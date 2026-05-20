@@ -28,6 +28,7 @@ import type {
 import type { ProviderInstanceId } from "./providerInstance.ts";
 import type {
   ServerConfig,
+  ServerHostHealthResult,
   ServerProcessDiagnosticsResult,
   ServerProcessResourceHistoryInput,
   ServerProcessResourceHistoryResult,
@@ -56,6 +57,8 @@ import type {
   OrchestrationCodexCommandResult,
   OrchestrationCodexCompactThreadInput,
   OrchestrationCodexStartReviewInput,
+  OrchestrationCodexSetThreadGoalInput,
+  OrchestrationCodexClearThreadGoalInput,
   OrchestrationGenerateConversationSummaryInput,
   OrchestrationGenerateConversationSummaryResult,
   OrchestrationGenerateThreadHandoffInput,
@@ -503,6 +506,7 @@ export interface LocalApi {
     getProcessResourceHistory: (
       input: ServerProcessResourceHistoryInput,
     ) => Promise<ServerProcessResourceHistoryResult>;
+    getHostHealth: () => Promise<ServerHostHealthResult>;
     signalProcess: (input: ServerSignalProcessInput) => Promise<ServerSignalProcessResult>;
   };
 }
@@ -598,6 +602,12 @@ export interface EnvironmentApi {
     ) => Promise<OrchestrationCodexCommandResult>;
     codexStartReview: (
       input: OrchestrationCodexStartReviewInput,
+    ) => Promise<OrchestrationCodexCommandResult>;
+    codexSetThreadGoal: (
+      input: OrchestrationCodexSetThreadGoalInput,
+    ) => Promise<OrchestrationCodexCommandResult>;
+    codexClearThreadGoal: (
+      input: OrchestrationCodexClearThreadGoalInput,
     ) => Promise<OrchestrationCodexCommandResult>;
   };
   sideThread: {

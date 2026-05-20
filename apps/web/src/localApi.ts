@@ -159,6 +159,10 @@ function createBrowserLocalApi(rpcClient?: WsRpcClient): LocalApi {
         rpcClient
           ? rpcClient.server.getProcessResourceHistory(input)
           : Promise.reject(unavailableLocalBackendError()),
+      getHostHealth: () =>
+        rpcClient
+          ? rpcClient.server.getHostHealth()
+          : Promise.reject(unavailableLocalBackendError()),
       signalProcess: (input) =>
         rpcClient
           ? rpcClient.server.signalProcess(input)

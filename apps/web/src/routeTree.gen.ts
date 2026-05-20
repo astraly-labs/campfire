@@ -17,6 +17,7 @@ import { Route as SettingsSourceControlRouteImport } from './routes/settings.sou
 import { Route as SettingsProvidersRouteImport } from './routes/settings.providers'
 import { Route as SettingsKeybindingsRouteImport } from './routes/settings.keybindings'
 import { Route as SettingsIdentityRouteImport } from './routes/settings.identity'
+import { Route as SettingsHealthRouteImport } from './routes/settings.health'
 import { Route as SettingsGeneralRouteImport } from './routes/settings.general'
 import { Route as SettingsDiagnosticsRouteImport } from './routes/settings.diagnostics'
 import { Route as SettingsConnectionsRouteImport } from './routes/settings.connections'
@@ -62,6 +63,11 @@ const SettingsKeybindingsRoute = SettingsKeybindingsRouteImport.update({
 const SettingsIdentityRoute = SettingsIdentityRouteImport.update({
   id: '/identity',
   path: '/identity',
+  getParentRoute: () => SettingsRoute,
+} as any)
+const SettingsHealthRoute = SettingsHealthRouteImport.update({
+  id: '/health',
+  path: '/health',
   getParentRoute: () => SettingsRoute,
 } as any)
 const SettingsGeneralRoute = SettingsGeneralRouteImport.update({
@@ -110,6 +116,7 @@ export interface FileRoutesByFullPath {
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
   '/settings/general': typeof SettingsGeneralRoute
+  '/settings/health': typeof SettingsHealthRoute
   '/settings/identity': typeof SettingsIdentityRoute
   '/settings/keybindings': typeof SettingsKeybindingsRoute
   '/settings/providers': typeof SettingsProvidersRoute
@@ -125,6 +132,7 @@ export interface FileRoutesByTo {
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
   '/settings/general': typeof SettingsGeneralRoute
+  '/settings/health': typeof SettingsHealthRoute
   '/settings/identity': typeof SettingsIdentityRoute
   '/settings/keybindings': typeof SettingsKeybindingsRoute
   '/settings/providers': typeof SettingsProvidersRoute
@@ -143,6 +151,7 @@ export interface FileRoutesById {
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
   '/settings/general': typeof SettingsGeneralRoute
+  '/settings/health': typeof SettingsHealthRoute
   '/settings/identity': typeof SettingsIdentityRoute
   '/settings/keybindings': typeof SettingsKeybindingsRoute
   '/settings/providers': typeof SettingsProvidersRoute
@@ -162,6 +171,7 @@ export interface FileRouteTypes {
     | '/settings/connections'
     | '/settings/diagnostics'
     | '/settings/general'
+    | '/settings/health'
     | '/settings/identity'
     | '/settings/keybindings'
     | '/settings/providers'
@@ -177,6 +187,7 @@ export interface FileRouteTypes {
     | '/settings/connections'
     | '/settings/diagnostics'
     | '/settings/general'
+    | '/settings/health'
     | '/settings/identity'
     | '/settings/keybindings'
     | '/settings/providers'
@@ -194,6 +205,7 @@ export interface FileRouteTypes {
     | '/settings/connections'
     | '/settings/diagnostics'
     | '/settings/general'
+    | '/settings/health'
     | '/settings/identity'
     | '/settings/keybindings'
     | '/settings/providers'
@@ -265,6 +277,13 @@ declare module '@tanstack/react-router' {
       path: '/identity'
       fullPath: '/settings/identity'
       preLoaderRoute: typeof SettingsIdentityRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/health': {
+      id: '/settings/health'
+      path: '/health'
+      fullPath: '/settings/health'
+      preLoaderRoute: typeof SettingsHealthRouteImport
       parentRoute: typeof SettingsRoute
     }
     '/settings/general': {
@@ -340,6 +359,7 @@ interface SettingsRouteChildren {
   SettingsConnectionsRoute: typeof SettingsConnectionsRoute
   SettingsDiagnosticsRoute: typeof SettingsDiagnosticsRoute
   SettingsGeneralRoute: typeof SettingsGeneralRoute
+  SettingsHealthRoute: typeof SettingsHealthRoute
   SettingsIdentityRoute: typeof SettingsIdentityRoute
   SettingsKeybindingsRoute: typeof SettingsKeybindingsRoute
   SettingsProvidersRoute: typeof SettingsProvidersRoute
@@ -351,6 +371,7 @@ const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsConnectionsRoute: SettingsConnectionsRoute,
   SettingsDiagnosticsRoute: SettingsDiagnosticsRoute,
   SettingsGeneralRoute: SettingsGeneralRoute,
+  SettingsHealthRoute: SettingsHealthRoute,
   SettingsIdentityRoute: SettingsIdentityRoute,
   SettingsKeybindingsRoute: SettingsKeybindingsRoute,
   SettingsProvidersRoute: SettingsProvidersRoute,

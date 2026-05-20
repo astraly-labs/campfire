@@ -1083,6 +1083,17 @@ describe("GeneralSettingsPanel observability", () => {
         getProcessResourceHistory: vi
           .fn()
           .mockResolvedValue(createEmptyProcessResourceHistoryResult()),
+        getHostHealth: vi.fn().mockResolvedValue({
+          readAt: makeUtc("2036-04-07T00:00:00.000Z"),
+          sampledAt: Option.none(),
+          hostname: "test-host",
+          platform: "darwin",
+          uptimeSec: 0,
+          cpu: { percent: 0, count: 0, loadAverage1m: 0, loadAverage5m: 0, loadAverage15m: 0 },
+          memory: { usedBytes: 0, totalBytes: 0 },
+          disk: Option.none(),
+          error: Option.none(),
+        }),
         getTraceDiagnostics: vi.fn().mockResolvedValue({
           traceFilePath: "/repo/project/.t3/traces.jsonl",
           scannedFilePaths: ["/repo/project/.t3/traces.jsonl"],
