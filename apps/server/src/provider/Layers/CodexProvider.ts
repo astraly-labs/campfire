@@ -15,6 +15,7 @@ import * as CodexErrors from "effect-codex-app-server/errors";
 import type {
   CodexSettings,
   ServerProvider,
+  ServerProviderSlashCommand,
   ServerProviderState,
   ModelCapabilities,
   ServerProviderModel,
@@ -36,6 +37,27 @@ const CODEX_PRESENTATION = {
   displayName: "Codex",
   showInteractionModeToggle: true,
 } as const;
+
+// Codex CLI built-in slash commands. The Codex app-server protocol does not
+// expose a `commands/list` endpoint (only `skills/list`), so we hardcode the
+// subset that Campfire's composer routes to dedicated app-server RPCs via the
+// `provider-slash-command` handler in `ChatComposer.tsx`. Keep in sync with
+// the dispatcher there — adding entries here without wiring routes leaves the
+// commands as plain text sent through `turn/start`.
+const CODEX_BUILTIN_SLASH_COMMANDS: ReadonlyArray<ServerProviderSlashCommand> = [
+  {
+    name: "compact",
+    description: "Compact this thread to free up context",
+  },
+  {
+    name: "review",
+    description: "Run a code review on the working tree",
+  },
+  {
+    name: "approvals",
+    description: "Switch the Codex approval / permission profile",
+  },
+];
 
 export interface CodexAppServerProviderSnapshot {
   readonly account: CodexSchema.V2GetAccountResponse;
@@ -343,6 +365,7 @@ const makePendingCodexProvider = (
         enabled: false,
         checkedAt,
         models,
+        slashCommands: CODEX_BUILTIN_SLASH_COMMANDS,
         skills: [],
         probe: {
           installed: false,
@@ -359,6 +382,7 @@ const makePendingCodexProvider = (
       enabled: true,
       checkedAt,
       models,
+      slashCommands: CODEX_BUILTIN_SLASH_COMMANDS,
       skills: [],
       probe: {
         installed: false,
@@ -427,6 +451,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
       enabled: false,
       checkedAt,
       models: emptyModels,
+      slashCommands: CODEX_BUILTIN_SLASH_COMMANDS,
       skills: [],
       probe: {
         installed: false,
@@ -458,6 +483,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
       enabled: codexSettings.enabled,
       checkedAt,
       models: emptyModels,
+      slashCommands: CODEX_BUILTIN_SLASH_COMMANDS,
       skills: [],
       probe: {
         installed,
@@ -477,6 +503,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
       enabled: codexSettings.enabled,
       checkedAt,
       models: emptyModels,
+      slashCommands: CODEX_BUILTIN_SLASH_COMMANDS,
       skills: [],
       probe: {
         installed: true,
@@ -496,6 +523,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     enabled: codexSettings.enabled,
     checkedAt,
     models: snapshot.models,
+    slashCommands: CODEX_BUILTIN_SLASH_COMMANDS,
     skills: snapshot.skills,
     probe: {
       installed: true,
