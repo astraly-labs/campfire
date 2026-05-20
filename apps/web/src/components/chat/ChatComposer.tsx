@@ -113,6 +113,7 @@ import { deriveLatestContextWindowSnapshot } from "../../lib/contextWindow";
 import { formatProviderSkillDisplayName } from "../../providerSkillPresentation";
 import { searchProviderSkills } from "../../providerSkillSearch";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
+import { clearTyping, notifyTyping } from "../../presence/usePresenceHeartbeat";
 
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
 
@@ -1371,6 +1372,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       cursorAdjacentToMention: boolean,
       terminalContextIds: string[],
     ) => {
+      // Broadcast a "typing in parent" presence flag to other viewers. The
+      // heartbeat coalesces this to a single ping every ~4s; the server
+      // expires it after 3.5s of silence so we don't need an explicit
+      // "stopped typing" timer beyond the empty-draft branch below.
+      if (nextPrompt.length > 0) {
+        notifyTyping("parent");
+      } else {
+        clearTyping("parent");
+      }
       if (activePendingProgress?.activeQuestion && pendingUserInputs.length > 0) {
         setComposerCursor(nextCursor);
         setComposerTrigger(
@@ -1685,6 +1695,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   const submitComposer = useCallback(
     (event?: { preventDefault: () => void }) => {
+      clearTyping("parent");
       onSend(event);
       if (shouldBlurMobileComposerOnSubmit()) {
         blurMobileComposerAfterSend();

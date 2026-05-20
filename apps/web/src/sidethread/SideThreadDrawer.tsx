@@ -3,11 +3,9 @@ import {
   type EnvironmentId,
   type MessageId,
   type SideThread,
-  type SideThreadId,
   type SideThreadMessageId,
   type SideThreadStreamItem,
   type ThreadId,
-  type UserId,
   type UserRef,
 } from "@t3tools/contracts";
 import { CornerUpLeftIcon, XIcon } from "lucide-react";
@@ -36,6 +34,7 @@ import {
 } from "../inbox/userDirectoryStore";
 import { colorIndexForUserId, NAME_TEXT_PALETTE } from "../presence/AvatarStack";
 import { useViewersOfSideThread } from "../presence/presenceStore";
+import { TypingIndicator } from "../presence/TypingIndicator";
 import { useUiStateStore } from "../uiStateStore";
 import { clearTyping, notifyTyping } from "../presence/usePresenceHeartbeat";
 import { deriveSideThreadId, useSideThreadStore } from "./sideThreadStore";
@@ -452,7 +451,7 @@ function DrawerBody({
         ) : null}
       </ul>
 
-      <TypingIndicator sideThreadId={sideThreadId} currentUserId={currentUser?.id} />
+      <SideThreadTypingRow sideThreadId={sideThreadId} currentUserId={currentUser?.id} />
 
       {(identityError ?? error) ? (
         <div className="border-t border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
@@ -534,49 +533,23 @@ function DrawerBody({
   );
 }
 
-// Reserve a fixed-height row above the composer so the indicator can fade
-// in/out without nudging the message list or composer. `aria-live="polite"`
-// lets screen readers announce who started typing without interrupting.
-function TypingIndicator({
+// `useViewersOfSideThread` already narrows `isTyping` to `typingIn === "side"`,
+// so we only have to strip the current user before handing the list off to
+// the shared indicator.
+function SideThreadTypingRow({
   sideThreadId,
   currentUserId,
 }: {
-  sideThreadId: SideThreadId;
-  currentUserId: UserId | undefined;
+  sideThreadId: ReturnType<typeof deriveSideThreadId>;
+  currentUserId: UserRef["id"] | undefined;
 }) {
   const viewers = useViewersOfSideThread(sideThreadId);
-  const typingOthers = useMemo(
-    () => viewers.filter((v) => v.isTyping && v.user.id !== currentUserId),
+  const typingUsers = useMemo(
+    () =>
+      viewers
+        .filter((v) => v.isTyping && v.user.id !== currentUserId)
+        .map((v) => v.user),
     [viewers, currentUserId],
   );
-
-  const label = (() => {
-    if (typingOthers.length === 0) return null;
-    if (typingOthers.length === 1) {
-      return `${typingOthers[0]!.user.displayName} is typing…`;
-    }
-    if (typingOthers.length === 2) {
-      return `${typingOthers[0]!.user.displayName} and ${typingOthers[1]!.user.displayName} are typing…`;
-    }
-    const rest = typingOthers.length - 2;
-    return `${typingOthers[0]!.user.displayName}, ${typingOthers[1]!.user.displayName} and ${rest} other${rest === 1 ? "" : "s"} are typing…`;
-  })();
-
-  return (
-    <div
-      aria-live="polite"
-      className="flex h-4 shrink-0 items-center gap-1.5 px-3 text-[11px] text-muted-foreground/70"
-    >
-      {label ? (
-        <>
-          <span className="inline-flex items-center gap-[3px]" aria-hidden>
-            <span className="h-1 w-1 rounded-full bg-muted-foreground/40 animate-pulse" />
-            <span className="h-1 w-1 rounded-full bg-muted-foreground/40 animate-pulse [animation-delay:200ms]" />
-            <span className="h-1 w-1 rounded-full bg-muted-foreground/40 animate-pulse [animation-delay:400ms]" />
-          </span>
-          <span className="truncate">{label}</span>
-        </>
-      ) : null}
-    </div>
-  );
+  return <TypingIndicator users={typingUsers} />;
 }

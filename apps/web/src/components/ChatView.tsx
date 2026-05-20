@@ -14,6 +14,7 @@ import {
   type ScopedThreadRef,
   type ThreadId,
   type TurnId,
+  type UserId,
   type KeybindingCommand,
   OrchestrationThreadActivity,
   ProviderInteractionMode,
@@ -95,6 +96,8 @@ import {
   type TurnDiffSummary,
 } from "../types";
 import { useCurrentUser } from "../identity/identityStore";
+import { useViewersOfParentThread } from "../presence/presenceStore";
+import { TypingIndicator } from "../presence/TypingIndicator";
 import { useTheme } from "../hooks/useTheme";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { useCommandPaletteStore } from "../commandPaletteStore";
@@ -3653,6 +3656,10 @@ export default function ChatView(props: ChatViewProps) {
                   latestTurnId={activeThread?.latestTurn?.turnId ?? null}
                 />
               ) : null}
+              <ParentThreadTypingRow
+                threadId={activeThreadId}
+                currentUserId={currentUser?.id}
+              />
               <div className="relative z-10">
                 <ChatComposer
                   composerRef={composerRef}
@@ -3834,4 +3841,26 @@ export default function ChatView(props: ChatViewProps) {
       )}
     </div>
   );
+}
+
+// `useViewersOfParentThread` reports `isTyping` as "typing anywhere on this
+// parent" — including a user focused on the side-thread composer. The main
+// chatbox indicator must narrow that to `typingIn === "parent"` so opening
+// the side drawer doesn't bleed a "typing…" into the primary surface.
+function ParentThreadTypingRow({
+  threadId,
+  currentUserId,
+}: {
+  threadId: ThreadId | null;
+  currentUserId: UserId | undefined;
+}) {
+  const viewers = useViewersOfParentThread(threadId);
+  const typingUsers = useMemo(
+    () =>
+      viewers
+        .filter((v) => v.typingIn === "parent" && v.user.id !== currentUserId)
+        .map((v) => v.user),
+    [viewers, currentUserId],
+  );
+  return <TypingIndicator users={typingUsers} />;
 }
