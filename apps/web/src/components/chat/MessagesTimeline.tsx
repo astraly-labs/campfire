@@ -42,7 +42,6 @@ import { ProposedPlanCard } from "./ProposedPlanCard";
 import { ChangedFilesTree } from "./ChangedFilesTree";
 import { DiffStatLabel, hasNonZeroStat } from "./DiffStatLabel";
 import { MessageCopyButton } from "./MessageCopyButton";
-import { SideThreadAnchorButton } from "../../sidethread/SideThreadAnchorButton";
 import { TakeALookButton } from "../../sidethread/TakeALookButton";
 import { QuoteOnSelection } from "../../sidethread/QuoteOnSelection";
 import {
@@ -487,7 +486,6 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
             )}
           </p>
           <AssistantCopyButton row={row} />
-          <SideThreadAnchorButton threadId={ctx.activeThreadId} messageId={row.message.id} />
           <TakeALookButton
             threadId={ctx.activeThreadId}
             messageId={row.message.id}

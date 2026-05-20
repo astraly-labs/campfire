@@ -20,7 +20,7 @@ const mkUser = (id: string, displayName: string): UserRef => ({
 const mkItem = (overrides: Partial<InboxItem> = {}): InboxItem => ({
   sideThreadId: "st-1" as SideThreadId,
   parentThreadId: "thread-1" as ThreadId,
-  anchorMessageId: "anchor-1" as SideThreadMessageId,
+  quotedMessageId: null,
   lastMentionMessageId: "msg-1" as SideThreadMessageId,
   lastMentionAt: "2026-05-18T10:00:00.000Z",
   lastMentionAuthor: mkUser("u-1", "Alice"),

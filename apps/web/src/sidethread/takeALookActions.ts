@@ -2,7 +2,6 @@ import {
   CommandId,
   type EnvironmentApi,
   type MessageId,
-  type SideThreadId,
   type SideThreadMessageId,
   type ThreadId,
   type UserRef,
@@ -16,12 +15,17 @@ export interface TakeALookParams {
   readonly currentUser: UserRef;
   readonly targets: ReadonlyArray<UserRef>;
   readonly parentThreadId: ThreadId;
-  readonly anchorMessageId: MessageId;
+  /**
+   * Optional parent-thread agent message the ping is referencing. When
+   * provided, the resulting side-thread message carries it as
+   * `quotedMessageId` so teammates can deep-scroll back to the right spot.
+   */
+  readonly quotedMessageId?: MessageId;
 }
 
 /**
  * "Take a look" ping — posts a short `@user please take a look!` message in
- * the side-thread anchored to the given assistant message, mentioning the
+ * the (single) side-thread of the given parent agent thread, mentioning the
  * selected teammates. Idempotently creates the side-thread first; mention
  * recipients get the badge via the existing inbox subscription.
  *
@@ -35,10 +39,7 @@ export async function takeALook(params: TakeALookParams): Promise<void> {
     throw new Error("takeALook: at least one target is required");
   }
 
-  const sideThreadId = deriveSideThreadId({
-    parentThreadId: params.parentThreadId,
-    anchorMessageId: params.anchorMessageId,
-  }) as SideThreadId;
+  const sideThreadId = deriveSideThreadId(params.parentThreadId);
 
   await params.api.sideThread
     .dispatchCommand({
@@ -46,7 +47,6 @@ export async function takeALook(params: TakeALookParams): Promise<void> {
       commandId: CommandId.make(`st-create:${sideThreadId}:${Date.now()}`),
       sideThreadId,
       parentThreadId: params.parentThreadId,
-      anchor: { kind: "message", messageId: params.anchorMessageId },
       createdBy: params.currentUser,
     })
     .catch(() => {
@@ -66,6 +66,7 @@ export async function takeALook(params: TakeALookParams): Promise<void> {
     author: params.currentUser,
     text,
     mentions: targets,
+    quotedMessageId: params.quotedMessageId ?? null,
   });
 
   // Pre-warm the conversation summary so the teammate gets an instant recap

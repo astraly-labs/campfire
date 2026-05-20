@@ -558,16 +558,6 @@ export const WsSideThreadSubscribeRpc = Rpc.make(SIDETHREAD_WS_METHODS.subscribe
   stream: true,
 });
 
-export const WsSideThreadSubscribeParentRpc = Rpc.make(
-  SIDETHREAD_WS_METHODS.subscribeParentSideThreads,
-  {
-    payload: SideThreadRpcSchemas.subscribeParentSideThreads.input,
-    success: SideThreadRpcSchemas.subscribeParentSideThreads.output,
-    error: SideThreadGetSnapshotError,
-    stream: true,
-  },
-);
-
 export const WsInboxListRpc = Rpc.make(INBOX_WS_METHODS.list, {
   payload: InboxRpcSchemas.list.input,
   success: InboxRpcSchemas.list.output,
@@ -683,7 +673,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationCodexClearThreadGoalRpc,
   WsSideThreadDispatchCommandRpc,
   WsSideThreadSubscribeRpc,
-  WsSideThreadSubscribeParentRpc,
   WsIdentityGetCurrentUserRpc,
   WsIdentitySetDisplayNameRpc,
   WsIdentityClearDisplayNameRpc,

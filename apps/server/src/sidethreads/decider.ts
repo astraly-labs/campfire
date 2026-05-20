@@ -86,7 +86,6 @@ const decideCreate = ({
       payload: {
         sideThreadId: command.sideThreadId,
         parentThreadId: command.parentThreadId,
-        anchor: command.anchor,
         createdBy: command.createdBy,
       },
     };
@@ -130,6 +129,7 @@ const decidePost = ({
         author: command.author,
         text: command.text,
         mentions: command.mentions,
+        quotedMessageId: command.quotedMessageId,
       },
     };
   });

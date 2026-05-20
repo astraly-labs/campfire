@@ -23,10 +23,15 @@ export const projectSideThreadEvent = (
 
   switch (event.type) {
     case "sidethread.created": {
+      if (nextBase.sideThreads.has(event.payload.sideThreadId)) {
+        // Duplicate `sidethread.created` from legacy data — the normalizer
+        // would have filtered it out already in bootstrap, but stay
+        // defensive in case the engine ever re-projects an event.
+        return nextBase;
+      }
       const created: SideThread = {
         id: event.payload.sideThreadId,
         parentThreadId: event.payload.parentThreadId,
-        anchor: event.payload.anchor,
         createdBy: event.payload.createdBy,
         createdAt: event.occurredAt,
         updatedAt: event.occurredAt,
@@ -55,6 +60,7 @@ export const projectSideThreadEvent = (
             createdAt: event.occurredAt,
             updatedAt: event.occurredAt,
             mentions: event.payload.mentions ?? [],
+            quotedMessageId: event.payload.quotedMessageId ?? null,
           },
         ],
       };

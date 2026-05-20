@@ -9,6 +9,7 @@
  */
 import {
   InboxItem,
+  type MessageId,
   type SideThreadId,
   type SideThreadMessageId,
   type ThreadId,
@@ -26,7 +27,7 @@ import { InboxReadModelService, type InboxReadModelShape } from "../Services/Inb
 interface InboxRow {
   readonly side_thread_id: string;
   readonly parent_thread_id: string;
-  readonly anchor_message_id: string | null;
+  readonly quoted_message_id: string | null;
   readonly last_mention_message_id: string;
   readonly last_mention_at: string;
   readonly last_author_user_id: string;
@@ -45,10 +46,7 @@ const rowToInboxItem = (row: InboxRow): Effect.Effect<InboxItem, never> => {
   const item = {
     sideThreadId: row.side_thread_id as SideThreadId,
     parentThreadId: row.parent_thread_id as ThreadId,
-    // Fall back to the originating message id when the anchor wasn't
-    // captured (older rows from before mentions landed) so the UI can still
-    // navigate to a useful target.
-    anchorMessageId: (row.anchor_message_id ?? row.last_mention_message_id) as SideThreadMessageId,
+    quotedMessageId: (row.quoted_message_id ?? null) as MessageId | null,
     lastMentionAt: row.last_mention_at,
     lastMentionMessageId: row.last_mention_message_id as SideThreadMessageId,
     lastMentionAuthor: author,
@@ -75,7 +73,7 @@ const makeInboxReadModel = Effect.gen(function* () {
           SELECT
             m.side_thread_id,
             m.parent_thread_id,
-            m.anchor_message_id,
+            m.quoted_message_id,
             m.message_id,
             m.occurred_at,
             m.author_user_id,
@@ -91,7 +89,7 @@ const makeInboxReadModel = Effect.gen(function* () {
           SELECT
             side_thread_id,
             parent_thread_id,
-            anchor_message_id,
+            quoted_message_id,
             message_id,
             occurred_at,
             author_user_id,
@@ -107,7 +105,7 @@ const makeInboxReadModel = Effect.gen(function* () {
         SELECT
           side_thread_id,
           parent_thread_id,
-          anchor_message_id,
+          quoted_message_id,
           message_id AS last_mention_message_id,
           occurred_at AS last_mention_at,
           author_user_id AS last_author_user_id,

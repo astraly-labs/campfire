@@ -675,13 +675,6 @@ const buildAppUnderTest = (options?: {
           dispatch: () => Effect.succeed({ sequence: 0 }),
           streamDomainEvents: Stream.empty,
           getSnapshot: () => Effect.succeed(Option.none()),
-          getParentSnapshot: (parentThreadId) =>
-            Effect.succeed({
-              snapshotSequence: 0,
-              parentThreadId,
-              entries: [],
-            }),
-          summarizeForEvent: () => Option.none(),
         }),
       ),
       Layer.provide(

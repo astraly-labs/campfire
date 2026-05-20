@@ -129,7 +129,7 @@ export function QuoteOnSelection({ threadId, messageId, children, className }: P
   const handleCite = useCallback(() => {
     if (!popover) return;
     const blockquote = formatAsBlockquote(popover.text);
-    open({ parentThreadId: threadId, anchorMessageId: messageId }, { draftPrefill: blockquote });
+    open(threadId, { draftPrefill: blockquote, quotedMessageId: messageId });
     setPopover(null);
     // Clear the visible selection so the popover doesn't immediately
     // re-appear on the next `mouseup` over the same range.

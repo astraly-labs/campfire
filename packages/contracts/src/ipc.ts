@@ -75,8 +75,6 @@ import type {
 import type {
   SideThreadCommand,
   SideThreadDispatchResult,
-  SideThreadParentIndexStreamItem,
-  SideThreadParentSubscribeInput,
   SideThreadStreamItem,
   SideThreadSubscribeInput,
 } from "./sidethread.ts";
@@ -615,13 +613,6 @@ export interface EnvironmentApi {
     subscribe: (
       input: SideThreadSubscribeInput,
       callback: (event: SideThreadStreamItem) => void,
-      options?: {
-        onResubscribe?: () => void;
-      },
-    ) => () => void;
-    subscribeParent: (
-      input: SideThreadParentSubscribeInput,
-      callback: (event: SideThreadParentIndexStreamItem) => void,
       options?: {
         onResubscribe?: () => void;
       },

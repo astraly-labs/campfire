@@ -73,12 +73,7 @@ function InboxRouteView() {
     const params = buildThreadRouteParams(threadRef);
 
     const proceed = () => {
-      openSideThread({
-        parentThreadId: unscopedParentThreadId,
-        anchorMessageId: item.anchorMessageId as unknown as Parameters<
-          typeof openSideThread
-        >[0]["anchorMessageId"],
-      });
+      openSideThread(unscopedParentThreadId);
       void navigate({
         to: "/$environmentId/$threadId",
         params,

@@ -105,7 +105,6 @@ const rpcClientMock = {
   sideThread: {
     dispatchCommand: vi.fn(),
     subscribe: vi.fn(() => () => undefined),
-    subscribeParent: vi.fn(() => () => undefined),
   },
   identity: {
     getCurrentUser: vi.fn(),

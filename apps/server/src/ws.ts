@@ -1269,33 +1269,6 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId, initialIdentity: Resolv
             }),
             { "rpc.aggregate": "sidethread" },
           ),
-        [SIDETHREAD_WS_METHODS.subscribeParentSideThreads]: (input) =>
-          observeRpcStreamEffect(
-            SIDETHREAD_WS_METHODS.subscribeParentSideThreads,
-            Effect.gen(function* () {
-              const snapshot = yield* sideThreadEngine.getParentSnapshot(input.parentThreadId);
-
-              const liveStream = sideThreadEngine.streamDomainEvents.pipe(
-                Stream.flatMap((event) => {
-                  const summaryOpt = sideThreadEngine.summarizeForEvent(event);
-                  if (Option.isNone(summaryOpt)) return Stream.empty;
-                  if (summaryOpt.value.parentThreadId !== input.parentThreadId) {
-                    return Stream.empty;
-                  }
-                  return Stream.make({
-                    kind: "upsert" as const,
-                    summary: summaryOpt.value,
-                  });
-                }),
-              );
-
-              return Stream.concat(
-                Stream.make({ kind: "snapshot" as const, snapshot }),
-                liveStream,
-              );
-            }),
-            { "rpc.aggregate": "sidethread" },
-          ),
         [IDENTITY_WS_METHODS.getCurrentUser]: (_input) =>
           observeRpcEffect(IDENTITY_WS_METHODS.getCurrentUser, Ref.get(currentIdentityRef), {
             "rpc.aggregate": "identity",

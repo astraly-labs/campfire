@@ -14,7 +14,6 @@
  * @module SideThreadEngineLive
  */
 import type {
-  SideThread,
   SideThreadArchivedPayload,
   SideThreadCommand,
   SideThreadCreatedPayload,
@@ -22,8 +21,6 @@ import type {
   SideThreadEvent,
   SideThreadInboxDismissedPayload,
   SideThreadMessagePostedPayload,
-  SideThreadParentIndexSnapshot,
-  SideThreadSummary,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
@@ -41,6 +38,7 @@ import { toPersistenceSqlError } from "../../persistence/Errors.ts";
 import { SideThreadEventStore } from "../../persistence/Services/SideThreadEventStore.ts";
 import { decideSideThreadCommand, type PlannedSideThreadEvent } from "../decider.ts";
 import { SideThreadCommandInvariantError, type SideThreadDispatchError } from "../Errors.ts";
+import { SideThreadEventNormalizer } from "../normalize.ts";
 import { projectSideThreadEvent } from "../projector.ts";
 import { createEmptySideThreadReadModel, type SideThreadReadModel } from "../readModel.ts";
 import {
@@ -78,10 +76,17 @@ const makeSideThreadEngine = Effect.gen(function* () {
 
   let commandReadModel: SideThreadReadModel = createEmptySideThreadReadModel(yield* nowIso);
 
+  // Legacy events keyed side threads by `st-{parent}-{message}`; collapse
+  // them onto the canonical `st-{parent}` aggregate as we rebuild the
+  // in-memory command read model. Events produced post-migration use the
+  // canonical id natively, so the normalizer is a no-op for them.
+  const replayNormalizer = new SideThreadEventNormalizer();
   yield* eventStore.readAll().pipe(
     Stream.runForEach((event: SideThreadEvent) =>
       Effect.sync(() => {
-        commandReadModel = projectSideThreadEvent(commandReadModel, event);
+        const normalized = replayNormalizer.normalize(event);
+        if (!normalized) return;
+        commandReadModel = projectSideThreadEvent(commandReadModel, normalized);
       }),
     ),
   );
@@ -157,42 +162,10 @@ const makeSideThreadEngine = Effect.gen(function* () {
       });
     });
 
-  const toSummary = (sideThread: SideThread): SideThreadSummary => ({
-    sideThreadId: sideThread.id,
-    parentThreadId: sideThread.parentThreadId,
-    anchor: sideThread.anchor,
-    messageCount: sideThread.messages.length,
-    lastActivityAt: sideThread.updatedAt,
-    archivedAt: sideThread.archivedAt,
-  });
-
-  const getParentSnapshot: SideThreadEngineShape["getParentSnapshot"] = (parentThreadId) =>
-    Effect.sync<SideThreadParentIndexSnapshot>(() => {
-      const entries: SideThreadSummary[] = [];
-      for (const sideThread of commandReadModel.sideThreads.values()) {
-        if (sideThread.parentThreadId === parentThreadId) {
-          entries.push(toSummary(sideThread));
-        }
-      }
-      return {
-        snapshotSequence: commandReadModel.snapshotSequence,
-        parentThreadId,
-        entries,
-      };
-    });
-
-  const summarizeForEvent: SideThreadEngineShape["summarizeForEvent"] = (event) => {
-    const sideThread = commandReadModel.sideThreads.get(event.aggregateId);
-    if (!sideThread) return Option.none<SideThreadSummary>();
-    return Option.some(toSummary(sideThread));
-  };
-
   return {
     readEvents: (fromSequenceExclusive) => eventStore.readFromSequence(fromSequenceExclusive),
     dispatch,
     getSnapshot,
-    getParentSnapshot,
-    summarizeForEvent,
     get streamDomainEvents() {
       return Stream.fromPubSub(eventPubSub);
     },

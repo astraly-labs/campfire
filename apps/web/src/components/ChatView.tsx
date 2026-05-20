@@ -153,7 +153,6 @@ import { MessagesTimeline } from "./chat/MessagesTimeline";
 import { SideThreadDrawer } from "../sidethread/SideThreadDrawer";
 import { FilePreviewDrawer } from "./preview/FilePreviewDrawer";
 import { WorkspaceFileTreeDrawer } from "./preview/WorkspaceFileTreeDrawer";
-import { ParentSideThreadSubscription } from "../sidethread/useParentSideThreadSubscription";
 import { ChatHeader } from "./chat/ChatHeader";
 import { type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { NoActiveThreadState } from "./NoActiveThreadState";
@@ -3786,10 +3785,7 @@ export default function ChatView(props: ChatViewProps) {
           />
         </InlineSlideDrawer>
 
-        {/* Side thread (Slack-style anchored conversation) */}
-        {routeKind === "server" ? (
-          <ParentSideThreadSubscription environmentId={environmentId} parentThreadId={threadId} />
-        ) : null}
+        {/* Side thread (Slack-style discussion alongside the agent) */}
         <SideThreadDrawer environmentId={environmentId} />
 
         {/* Workspace file tree drawer — opens via header folder button */}

@@ -30,6 +30,7 @@ import {
   initialsFor,
 } from "../../presence/AvatarStack";
 import { useViewersOfParentThread } from "../../presence/presenceStore";
+import { ChatHeaderSideThreadToggle } from "../../sidethread/ChatHeaderSideThreadToggle";
 import { cn } from "~/lib/utils";
 
 interface ChatHeaderProps {
@@ -146,6 +147,7 @@ export const ChatHeader = memo(function ChatHeader({
         )}
       </div>
       <div className="flex shrink-0 items-center justify-end gap-2 @3xl/header-actions:gap-3">
+        <ChatHeaderSideThreadToggle threadId={activeThreadId} />
         {activeProjectScripts && (
           <ProjectScriptsControl
             scripts={activeProjectScripts}

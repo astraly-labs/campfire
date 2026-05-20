@@ -99,8 +99,10 @@ export interface PresenceHeartbeatHookInput {
  */
 export function usePresenceHeartbeat(input: PresenceHeartbeatHookInput): void {
   const { api, parentThreadId } = input;
-  const anchor = useSideThreadStore((state) => state.anchor);
-  const sideThreadId = anchor ? (deriveSideThreadId(anchor) as SideThreadId) : null;
+  const openParentThreadId = useSideThreadStore((state) => state.openParentThreadId);
+  const sideThreadId = openParentThreadId
+    ? (deriveSideThreadId(openParentThreadId) as SideThreadId)
+    : null;
 
   // The interval below reads the latest focus from this ref so we don't need
   // to tear down and rebuild the timer every time the route changes.

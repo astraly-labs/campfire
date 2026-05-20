@@ -8,19 +8,27 @@
  */
 import * as Schema from "effect/Schema";
 
-import { IsoDateTime, NonNegativeInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  IsoDateTime,
+  MessageId,
+  NonNegativeInt,
+  ThreadId,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
 import { SideThreadId, SideThreadMessageId } from "./sidethread.ts";
 import { UserRef } from "./user.ts";
 
 /**
  * One side-thread the current user has been mentioned in, with enough
  * metadata to render a row (preview, timestamps, mention count) and deep
- * link back via the parent thread + anchor message.
+ * link back into the parent conversation. `quotedMessageId` is the
+ * optional parent-thread message the mentioning side-thread message was
+ * quoting — used to scroll to the right spot when the user opens the row.
  */
 export const InboxItem = Schema.Struct({
   sideThreadId: SideThreadId,
   parentThreadId: ThreadId,
-  anchorMessageId: SideThreadMessageId,
+  quotedMessageId: Schema.NullOr(MessageId),
   lastMentionAt: IsoDateTime,
   lastMentionMessageId: SideThreadMessageId,
   lastMentionAuthor: UserRef,

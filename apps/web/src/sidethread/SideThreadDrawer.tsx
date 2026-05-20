@@ -1,10 +1,11 @@
 import {
   CommandId,
   type EnvironmentId,
+  type MessageId,
   type SideThread,
-  type SideThreadId,
   type SideThreadMessageId,
   type SideThreadStreamItem,
+  type ThreadId,
   type UserRef,
 } from "@t3tools/contracts";
 import { CornerUpLeftIcon, XIcon } from "lucide-react";
@@ -33,7 +34,7 @@ import {
 } from "../inbox/userDirectoryStore";
 import { useUiStateStore } from "../uiStateStore";
 import { clearTyping, notifyTyping } from "../presence/usePresenceHeartbeat";
-import { deriveSideThreadId, useSideThreadStore, type SideThreadAnchor } from "./sideThreadStore";
+import { deriveSideThreadId, useSideThreadStore } from "./sideThreadStore";
 
 interface Props {
   readonly environmentId: EnvironmentId;
@@ -42,12 +43,11 @@ interface Props {
 
 const SIDEBAR_WIDTH = 380;
 
-// Scroll the main timeline to the anchor message and briefly flash a ring
-// around it. We rely on `data-message-id` set by MessagesTimeline rows. The
-// timeline is virtualized (LegendList), so if the anchor isn't in the DOM
-// the lookup silently no-ops — acceptable for now since the anchor is
-// typically near the open side thread.
-function scrollToCheckpoint(messageId: string) {
+// Scroll the main timeline to a specific agent message and briefly flash a
+// ring around it. We rely on `data-message-id` set by MessagesTimeline
+// rows. The timeline is virtualized (LegendList), so if the message isn't
+// in the DOM the lookup silently no-ops.
+function scrollToMessage(messageId: string) {
   const el = document.querySelector<HTMLElement>(`[data-message-id="${messageId}"]`);
   if (!el) return;
   el.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -62,18 +62,30 @@ function scrollToCheckpoint(messageId: string) {
  * pushes — not overlays — the main content. Mirrors `PlanSidebar` styling.
  */
 export function SideThreadDrawer({ environmentId, mode = "sidebar" }: Props) {
-  const anchor = useSideThreadStore((state) => state.anchor);
+  const openParentThreadId = useSideThreadStore((state) => state.openParentThreadId);
   const close = useSideThreadStore((state) => state.close);
 
   if (mode === "sheet") {
-    if (!anchor) return null;
-    return <DrawerBody environmentId={environmentId} anchor={anchor} onClose={close} mode={mode} />;
+    if (!openParentThreadId) return null;
+    return (
+      <DrawerBody
+        environmentId={environmentId}
+        parentThreadId={openParentThreadId}
+        onClose={close}
+        mode={mode}
+      />
+    );
   }
 
   return (
-    <InlineSlideDrawer open={anchor !== null} width={SIDEBAR_WIDTH}>
-      {anchor ? (
-        <DrawerBody environmentId={environmentId} anchor={anchor} onClose={close} mode={mode} />
+    <InlineSlideDrawer open={openParentThreadId !== null} width={SIDEBAR_WIDTH}>
+      {openParentThreadId ? (
+        <DrawerBody
+          environmentId={environmentId}
+          parentThreadId={openParentThreadId}
+          onClose={close}
+          mode={mode}
+        />
       ) : null}
     </InlineSlideDrawer>
   );
@@ -81,20 +93,21 @@ export function SideThreadDrawer({ environmentId, mode = "sidebar" }: Props) {
 
 function DrawerBody({
   environmentId,
-  anchor,
+  parentThreadId,
   onClose,
   mode,
 }: {
   environmentId: EnvironmentId;
-  anchor: SideThreadAnchor;
+  parentThreadId: ThreadId;
   onClose: () => void;
   mode: "sidebar" | "sheet";
 }) {
-  const sideThreadId = deriveSideThreadId(anchor) as SideThreadId;
+  const sideThreadId = deriveSideThreadId(parentThreadId);
   const [sideThread, setSideThread] = useState<SideThread | null>(null);
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pendingMentions, setPendingMentions] = useState<ReadonlyArray<UserRef>>([]);
+  const [pendingQuotedMessageId, setPendingQuotedMessageId] = useState<MessageId | null>(null);
   const [activeMention, setActiveMention] = useState<ActiveMentionToken | null>(null);
   const [mentionHighlight, setMentionHighlight] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -122,7 +135,7 @@ function DrawerBody({
   }, [activeMention?.query, mentionCandidates.length]);
 
   // Mark the side-thread "visited" the moment the drawer opens so the
-  // anchor-button unread dot disappears. We also re-mark on every new
+  // header-button unread dot disappears. We also re-mark on every new
   // message-posted event below — without that the badge would flicker back
   // on every fresh mention while the drawer is open.
   const markVisited = useUiStateStore((state) => state.markThreadVisited);
@@ -148,8 +161,7 @@ function DrawerBody({
           type: "sidethread.create",
           commandId: CommandId.make(`st-create:${sideThreadId}:${Date.now()}`),
           sideThreadId,
-          parentThreadId: anchor.parentThreadId,
-          anchor: { kind: "message", messageId: anchor.anchorMessageId },
+          parentThreadId,
           createdBy: currentUser,
         });
       } catch {
@@ -170,7 +182,6 @@ function DrawerBody({
             setSideThread({
               id: created.sideThreadId,
               parentThreadId: created.parentThreadId,
-              anchor: created.anchor,
               createdBy: created.createdBy,
               createdAt: event.occurredAt,
               updatedAt: event.occurredAt,
@@ -193,12 +204,13 @@ function DrawerBody({
                         createdAt: event.occurredAt,
                         updatedAt: event.occurredAt,
                         mentions: posted.mentions ?? [],
+                        quotedMessageId: posted.quotedMessageId ?? null,
                       },
                     ],
                   }
                 : current,
             );
-            // Re-mark visited so the anchor badge doesn't pop back on every new
+            // Re-mark visited so the header badge doesn't pop back on every new
             // mention while the drawer is open.
             markVisited(sideThreadId, event.occurredAt);
           }
@@ -210,23 +222,30 @@ function DrawerBody({
       cancelled = true;
       unsubscribe?.();
     };
-  }, [api, currentUser, sideThreadId, anchor.parentThreadId, anchor.anchorMessageId, markVisited]);
+  }, [api, currentUser, sideThreadId, parentThreadId, markVisited]);
 
   useEffect(() => {
     const list = listRef.current;
     if (list) list.scrollTop = list.scrollHeight;
   }, [sideThread?.messages.length]);
 
-  // One-shot draft prefill — set by the "Cite excerpt" affordance via
-  // `open(anchor, { draftPrefill })`. Replace the draft when empty, otherwise
-  // prepend so we never silently destroy an in-progress message.
+  // One-shot draft prefill — set by the "Cite excerpt" / "Take a look"
+  // affordances via `open(parent, { draftPrefill, quotedMessageId })`.
+  // Replace the draft when empty, otherwise prepend so we never silently
+  // destroy an in-progress message.
   const pendingDraftPrefill = useSideThreadStore((state) => state.pendingDraftPrefill);
+  const pendingQuotedFromStore = useSideThreadStore((state) => state.pendingQuotedMessageId);
   const consumeDraftPrefill = useSideThreadStore((state) => state.consumeDraftPrefill);
   useEffect(() => {
-    if (pendingDraftPrefill === null) return;
-    setDraft((current) =>
-      current.trim().length === 0 ? pendingDraftPrefill : `${pendingDraftPrefill}${current}`,
-    );
+    if (pendingDraftPrefill === null && pendingQuotedFromStore === null) return;
+    if (pendingDraftPrefill !== null) {
+      setDraft((current) =>
+        current.trim().length === 0 ? pendingDraftPrefill : `${pendingDraftPrefill}${current}`,
+      );
+    }
+    if (pendingQuotedFromStore !== null) {
+      setPendingQuotedMessageId(pendingQuotedFromStore);
+    }
     consumeDraftPrefill();
     requestAnimationFrame(() => {
       const el = textareaRef.current;
@@ -235,7 +254,7 @@ function DrawerBody({
       const end = el.value.length;
       el.setSelectionRange(end, end);
     });
-  }, [pendingDraftPrefill, consumeDraftPrefill]);
+  }, [pendingDraftPrefill, pendingQuotedFromStore, consumeDraftPrefill]);
 
   // Recompute the active mention token whenever the draft or caret moves.
   // Also prune `pendingMentions` whose handle no longer appears in the
@@ -290,9 +309,11 @@ function DrawerBody({
     const mentions = pendingMentions.filter((mention) =>
       text.includes(`@${mentionHandleForUser(mention)}`),
     );
+    const quotedMessageId = pendingQuotedMessageId;
 
     setDraft("");
     setPendingMentions([]);
+    setPendingQuotedMessageId(null);
     setActiveMention(null);
     clearTyping("side");
     try {
@@ -306,6 +327,7 @@ function DrawerBody({
         author: currentUser,
         text,
         mentions,
+        quotedMessageId,
       });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Failed to send");
@@ -363,16 +385,7 @@ function DrawerBody({
       aria-label="Side thread"
     >
       <div className="flex h-12 shrink-0 items-center justify-between border-b border-border/60 px-3">
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          onClick={() => scrollToCheckpoint(anchor.anchorMessageId)}
-          title="Go to thread checkpoint"
-          aria-label="Go to thread checkpoint"
-          className="text-muted-foreground/60 hover:text-foreground"
-        >
-          <CornerUpLeftIcon className="size-3.5" />
-        </Button>
+        <span className="text-[11px] font-medium text-muted-foreground/80">Side thread</span>
         <Button
           variant="ghost"
           size="icon-xs"
@@ -395,6 +408,17 @@ function DrawerBody({
                 {new Date(message.createdAt).toLocaleTimeString()}
               </span>
             </div>
+            {message.quotedMessageId ? (
+              <button
+                type="button"
+                onClick={() => scrollToMessage(message.quotedMessageId!)}
+                title="Go to quoted agent message"
+                className="inline-flex items-center gap-1 rounded border border-border/50 bg-background/40 px-1.5 py-0.5 text-[10px] text-muted-foreground/70 hover:text-foreground"
+              >
+                <CornerUpLeftIcon className="size-3" aria-hidden />
+                Quote
+              </button>
+            ) : null}
             <p className="whitespace-pre-wrap text-foreground/80">
               {renderTextWithMentions(message.text, message.mentions).map((segment, index) =>
                 segment.kind === "text" ? (
@@ -434,6 +458,19 @@ function DrawerBody({
           void send();
         }}
       >
+        {pendingQuotedMessageId ? (
+          <div className="flex items-center justify-between rounded border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[10px] text-amber-700 dark:text-amber-300">
+            <span>Quoting agent message</span>
+            <button
+              type="button"
+              onClick={() => setPendingQuotedMessageId(null)}
+              className="text-amber-700/80 hover:text-amber-700 dark:text-amber-300/80 dark:hover:text-amber-300"
+              aria-label="Remove quoted message"
+            >
+              <XIcon className="size-3" />
+            </button>
+          </div>
+        ) : null}
         {activeMention && mentionCandidates.length > 0 ? (
           <ul
             role="listbox"

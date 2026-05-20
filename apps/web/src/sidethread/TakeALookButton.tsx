@@ -57,7 +57,7 @@ export function TakeALookButton({ threadId, messageId, environmentId }: Props) {
         currentUser,
         targets,
         parentThreadId: threadId,
-        anchorMessageId: messageId,
+        quotedMessageId: messageId,
       });
       toastManager.add({
         type: "success",

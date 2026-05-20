@@ -21,7 +21,7 @@ const CARL = mkUser("user-carl", "Carl");
 const SELF = mkUser("user-self", "Self");
 
 const PARENT_THREAD_ID = "thread-123" as ThreadId;
-const ANCHOR_MESSAGE_ID = "msg-456" as MessageId;
+const QUOTED_MESSAGE_ID = "msg-456" as MessageId;
 
 const ACCEPTED: SideThreadDispatchResult = {
   acceptedAt: "2026-05-19T00:00:00.000Z" as SideThreadDispatchResult["acceptedAt"],
@@ -67,7 +67,7 @@ describe("takeALook", () => {
       currentUser: SELF,
       targets: [ALICE],
       parentThreadId: PARENT_THREAD_ID,
-      anchorMessageId: ANCHOR_MESSAGE_ID,
+      quotedMessageId: QUOTED_MESSAGE_ID,
     });
 
     expect(dispatched).toHaveLength(2);
@@ -89,7 +89,7 @@ describe("takeALook", () => {
       currentUser: SELF,
       targets: [ALICE, BOB, CARL],
       parentThreadId: PARENT_THREAD_ID,
-      anchorMessageId: ANCHOR_MESSAGE_ID,
+      quotedMessageId: QUOTED_MESSAGE_ID,
     });
 
     const posts = dispatched.filter((c) => c.type === "sidethread.message.post");
@@ -108,7 +108,7 @@ describe("takeALook", () => {
       currentUser: SELF,
       targets: [ALICE, ALICE, BOB],
       parentThreadId: PARENT_THREAD_ID,
-      anchorMessageId: ANCHOR_MESSAGE_ID,
+      quotedMessageId: QUOTED_MESSAGE_ID,
     });
 
     const post = dispatched.find((c) => c.type === "sidethread.message.post");
@@ -126,7 +126,7 @@ describe("takeALook", () => {
         currentUser: SELF,
         targets: [ALICE],
         parentThreadId: PARENT_THREAD_ID,
-        anchorMessageId: ANCHOR_MESSAGE_ID,
+        quotedMessageId: QUOTED_MESSAGE_ID,
       }),
     ).resolves.toBeUndefined();
 
@@ -142,7 +142,7 @@ describe("takeALook", () => {
         currentUser: SELF,
         targets: [],
         parentThreadId: PARENT_THREAD_ID,
-        anchorMessageId: ANCHOR_MESSAGE_ID,
+        quotedMessageId: QUOTED_MESSAGE_ID,
       }),
     ).rejects.toThrow(/at least one target/i);
   });

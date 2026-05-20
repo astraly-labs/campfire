@@ -6,6 +6,11 @@
  * event from `side_thread_events`. Volumes are tiny (handful of side threads
  * per parent thread), so the simplicity outweighs the cost of a cursor.
  *
+ * Replay funnels every event through {@link SideThreadEventNormalizer} so
+ * legacy events created under the old "one side-thread per anchored
+ * message" model collapse onto the canonical `st-{parentThreadId}`
+ * aggregate.
+ *
  * @module SideThreadProjectionPipelineLive
  */
 import { SideThread, type SideThreadEvent } from "@t3tools/contracts";
@@ -20,6 +25,7 @@ import {
   toPersistenceSqlError,
   type ProjectionRepositoryError,
 } from "../../persistence/Errors.ts";
+import { SideThreadEventNormalizer } from "../normalize.ts";
 
 const SideThreadJson = Schema.fromJsonString(SideThread);
 const encodeSnapshot = Schema.encodeUnknownEffect(SideThreadJson);
@@ -62,8 +68,6 @@ const makeSideThreadProjectionPipeline = Effect.gen(function* () {
         INSERT INTO projection_side_threads (
           side_thread_id,
           parent_thread_id,
-          anchor_kind,
-          anchor_message_id,
           created_by_user_id,
           created_at,
           updated_at,
@@ -73,8 +77,6 @@ const makeSideThreadProjectionPipeline = Effect.gen(function* () {
         ) VALUES (
           ${snapshot.id},
           ${snapshot.parentThreadId},
-          ${snapshot.anchor.kind},
-          ${snapshot.anchor.kind === "message" ? snapshot.anchor.messageId : null},
           ${snapshot.createdBy.id},
           ${snapshot.createdAt},
           ${snapshot.updatedAt},
@@ -82,6 +84,7 @@ const makeSideThreadProjectionPipeline = Effect.gen(function* () {
           ${streamVersion},
           ${snapshotJson}
         )
+        ON CONFLICT(side_thread_id) DO NOTHING
       `.pipe(Effect.mapError(toPersistenceSqlError("SideThreadProjection.insertSnapshot")));
     });
 
@@ -121,7 +124,6 @@ const makeSideThreadProjectionPipeline = Effect.gen(function* () {
           const snapshot: SideThread = {
             id: event.payload.sideThreadId,
             parentThreadId: event.payload.parentThreadId,
-            anchor: event.payload.anchor,
             createdBy: event.payload.createdBy,
             createdAt: event.occurredAt,
             updatedAt: event.occurredAt,
@@ -133,6 +135,7 @@ const makeSideThreadProjectionPipeline = Effect.gen(function* () {
         }
 
         case "sidethread.message-posted": {
+          const quotedMessageId = event.payload.quotedMessageId ?? null;
           yield* sql`
             INSERT INTO projection_side_thread_messages (
               message_id,
@@ -141,7 +144,8 @@ const makeSideThreadProjectionPipeline = Effect.gen(function* () {
               author_display_name,
               text,
               created_at,
-              updated_at
+              updated_at,
+              quoted_message_id
             ) VALUES (
               ${event.payload.messageId},
               ${event.payload.sideThreadId},
@@ -149,8 +153,10 @@ const makeSideThreadProjectionPipeline = Effect.gen(function* () {
               ${event.payload.author.displayName},
               ${event.payload.text},
               ${event.occurredAt},
-              ${event.occurredAt}
+              ${event.occurredAt},
+              ${quotedMessageId}
             )
+            ON CONFLICT(message_id) DO NOTHING
           `.pipe(Effect.mapError(toPersistenceSqlError("SideThreadProjection.insertMessage")));
 
           const current = yield* loadSnapshot(event.payload.sideThreadId);
@@ -168,6 +174,7 @@ const makeSideThreadProjectionPipeline = Effect.gen(function* () {
                   createdAt: event.occurredAt,
                   updatedAt: event.occurredAt,
                   mentions: mentionsForMessage,
+                  quotedMessageId,
                 },
               ],
             };
@@ -178,8 +185,6 @@ const makeSideThreadProjectionPipeline = Effect.gen(function* () {
           // (message_id, user_id) PK makes bootstrap replay idempotent and
           // de-duplicates if a buggy command ships the same user twice.
           if (mentionsForMessage.length > 0) {
-            const anchorMessageId =
-              current?.anchor.kind === "message" ? current.anchor.messageId : null;
             const parentThreadId = current?.parentThreadId;
             // We need parentThreadId to power the inbox. If the snapshot
             // hasn't materialised yet (out-of-order replay), skip — bootstrap
@@ -193,7 +198,7 @@ const makeSideThreadProjectionPipeline = Effect.gen(function* () {
                     user_id,
                     side_thread_id,
                     parent_thread_id,
-                    anchor_message_id,
+                    quoted_message_id,
                     author_user_id,
                     author_display_name,
                     text_preview,
@@ -203,7 +208,7 @@ const makeSideThreadProjectionPipeline = Effect.gen(function* () {
                     ${mention.id},
                     ${event.payload.sideThreadId},
                     ${parentThreadId},
-                    ${anchorMessageId},
+                    ${quotedMessageId},
                     ${event.payload.author.id},
                     ${event.payload.author.displayName},
                     ${textPreview},
@@ -212,7 +217,7 @@ const makeSideThreadProjectionPipeline = Effect.gen(function* () {
                   ON CONFLICT(message_id, user_id) DO UPDATE SET
                     side_thread_id = excluded.side_thread_id,
                     parent_thread_id = excluded.parent_thread_id,
-                    anchor_message_id = excluded.anchor_message_id,
+                    quoted_message_id = excluded.quoted_message_id,
                     author_user_id = excluded.author_user_id,
                     author_display_name = excluded.author_display_name,
                     text_preview = excluded.text_preview,
@@ -275,9 +280,14 @@ const makeSideThreadProjectionPipeline = Effect.gen(function* () {
     yield* sql`DELETE FROM projection_side_threads`.pipe(
       Effect.mapError(toPersistenceSqlError("SideThreadProjection.bootstrap:truncateSnapshots")),
     );
-    yield* eventStore
-      .readAll()
-      .pipe(Stream.runForEach((event: SideThreadEvent) => projectEvent(event)));
+    const normalizer = new SideThreadEventNormalizer();
+    yield* eventStore.readAll().pipe(
+      Stream.runForEach((event: SideThreadEvent) => {
+        const normalized = normalizer.normalize(event);
+        if (!normalized) return Effect.void;
+        return projectEvent(normalized);
+      }),
+    );
   });
 
   return { bootstrap, projectEvent } satisfies SideThreadProjectionPipelineShape;

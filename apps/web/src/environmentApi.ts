@@ -71,8 +71,6 @@ export function createEnvironmentApi(rpcClient: WsRpcClient): EnvironmentApi {
       dispatchCommand: rpcClient.sideThread.dispatchCommand,
       subscribe: (input, callback, options) =>
         rpcClient.sideThread.subscribe(input, callback, options),
-      subscribeParent: (input, callback, options) =>
-        rpcClient.sideThread.subscribeParent(input, callback, options),
     },
     identity: {
       getCurrentUser: rpcClient.identity.getCurrentUser,
