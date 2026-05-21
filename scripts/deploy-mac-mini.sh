@@ -66,7 +66,9 @@ REALTIME_DEBUG="${VITE_REALTIME_DEBUG:-}"
 if [[ -n "${REALTIME_DEBUG}" ]]; then
   step "Realtime debug logging enabled (VITE_REALTIME_DEBUG=${REALTIME_DEBUG})"
 fi
-ssh "${HOST}" "cd ${REPO_PATH} && rm -f /tmp/campfire-mac.log && nohup env \
+ssh "${HOST}" "cd ${REPO_PATH} && rm -f /tmp/campfire-mac.log && \
+  if [ -f \$HOME/.campfire.env ]; then set -a; . \$HOME/.campfire.env; set +a; fi && \
+  nohup env \
   VITE_HTTP_URL='${BACKEND_HTTPS}' \
   VITE_WS_URL='${BACKEND_WSS}' \
   VITE_REALTIME_DEBUG='${REALTIME_DEBUG}' \

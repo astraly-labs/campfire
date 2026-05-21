@@ -16,6 +16,7 @@ import type {
   SideThreadEvent,
   SideThreadInboxDismissCommand,
   SideThreadMessagePostCommand,
+  SideThreadMessageReactCommand,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
@@ -57,6 +58,8 @@ export const decideSideThreadCommand = Effect.fn("decideSideThreadCommand")(func
       return yield* decideCreate({ command, readModel, now });
     case "sidethread.message.post":
       return yield* decidePost({ command, readModel, now });
+    case "sidethread.message.react":
+      return yield* decideReact({ command, readModel, now });
     case "sidethread.archive":
       return yield* decideArchive({ command, readModel, now });
     case "sidethread.inbox.dismiss":
@@ -120,6 +123,15 @@ const decidePost = ({
         detail: `Message id already used: ${command.messageId}`,
       });
     }
+    // A side-thread message must carry *something*. With GIF attachments
+    // we relaxed `text` to allow empty strings — re-enforce the "at least
+    // one" rule here so a buggy client can't persist a fully blank row.
+    if (command.text.length === 0 && command.attachments.length === 0) {
+      return yield* new SideThreadCommandInvariantError({
+        commandType: command.type,
+        detail: "Message must have text or at least one attachment",
+      });
+    }
     return {
       ...baseEnvelope(command, command.sideThreadId, now),
       type: "sidethread.message-posted" as const,
@@ -130,6 +142,55 @@ const decidePost = ({
         text: command.text,
         mentions: command.mentions,
         quotedMessageId: command.quotedMessageId,
+        attachments: command.attachments,
+      },
+    };
+  });
+
+const decideReact = ({
+  command,
+  readModel,
+  now,
+}: {
+  command: SideThreadMessageReactCommand;
+  readModel: SideThreadReadModel;
+  now: IsoDateTime;
+}): Effect.Effect<PlannedSideThreadEvent, SideThreadCommandInvariantError> =>
+  Effect.gen(function* () {
+    const sideThread = readModel.sideThreads.get(command.sideThreadId);
+    if (!sideThread) {
+      return yield* new SideThreadCommandInvariantError({
+        commandType: command.type,
+        detail: `Unknown SideThread: ${command.sideThreadId}`,
+      });
+    }
+    if (sideThread.archivedAt !== null) {
+      return yield* new SideThreadCommandInvariantError({
+        commandType: command.type,
+        detail: `SideThread is archived: ${command.sideThreadId}`,
+      });
+    }
+    const message = sideThread.messages.find((m) => m.id === command.messageId);
+    if (!message) {
+      return yield* new SideThreadCommandInvariantError({
+        commandType: command.type,
+        detail: `Unknown message: ${command.messageId}`,
+      });
+    }
+    // Resolve the toggle here so the projector only has to apply a delta.
+    // Adding a brand-new emoji bucket also counts as "added" — the projector
+    // creates the bucket on demand.
+    const bucket = message.reactions.find((r) => r.emoji === command.emoji);
+    const alreadyReacted = bucket?.users.some((u) => u.id === command.user.id) ?? false;
+    return {
+      ...baseEnvelope(command, command.sideThreadId, now),
+      type: "sidethread.message-reacted" as const,
+      payload: {
+        sideThreadId: command.sideThreadId,
+        messageId: command.messageId,
+        user: command.user,
+        emoji: command.emoji,
+        action: alreadyReacted ? ("removed" as const) : ("added" as const),
       },
     };
   });

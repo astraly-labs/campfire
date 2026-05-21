@@ -109,6 +109,11 @@ snapshot/event applied by the inbox, presence, and chat-shell stores. Tagged
 `[🚨 Realtime <channel>]` in the browser console. Useful for diagnosing flaky
 remote/Tailscale connections.
 
+Optional GIF picker — set `VITE_GIPHY_API_KEY=<key>` to enable the Giphy GIF
+picker in the side-thread composer. Get a free read-only Web SDK key at
+[developers.giphy.com](https://developers.giphy.com). Without it the GIF
+button shows an inline hint instead of crashing.
+
 ```bash
 ssh macmini "sleep 20 && grep pairingUrl /tmp/campfire-mac.log"
 ```

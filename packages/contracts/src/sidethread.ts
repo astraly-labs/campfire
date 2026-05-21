@@ -7,8 +7,10 @@ import {
   IsoDateTime,
   MessageId,
   NonNegativeInt,
+  PositiveInt,
   ThreadId,
   TrimmedNonEmptyString,
+  TrimmedString,
 } from "./baseSchemas.ts";
 import { UserId, UserRef } from "./user.ts";
 
@@ -26,6 +28,59 @@ const MentionsField = Schema.Array(UserRef).pipe(Schema.withDecodingDefaultKey(E
  */
 const QuotedMessageIdField = Schema.NullOr(MessageId).pipe(
   Schema.withDecodingDefaultKey(Effect.succeed(null)),
+);
+
+/**
+ * Inline media stapled onto a side-thread message. V1 ships GIFs only —
+ * the discriminated union keeps the door open for future `image`/`file`
+ * variants without re-shaping the message payload.
+ */
+export const SideThreadGifAttachment = Schema.Struct({
+  kind: Schema.Literal("gif"),
+  /**
+   * Playback URL — Tenor's MP4/WebM variant. Rendered as an autoplay/loop/
+   * muted `<video>` to mirror Telegram's silent-GIF UX while still streaming
+   * efficiently.
+   */
+  url: TrimmedNonEmptyString,
+  /** Static preview thumbnail used while the video loads. */
+  previewUrl: TrimmedNonEmptyString,
+  width: PositiveInt,
+  height: PositiveInt,
+  /**
+   * Provider-side id (e.g. Tenor `id`). Stored so clients can call
+   * `/registershare` post-send per Tenor TOS and so we can dedup or
+   * surface analytics later.
+   */
+  providerId: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type SideThreadGifAttachment = typeof SideThreadGifAttachment.Type;
+
+export const SideThreadAttachment = Schema.Union([SideThreadGifAttachment]);
+export type SideThreadAttachment = typeof SideThreadAttachment.Type;
+
+/**
+ * Default-empty list of attachments. Same back-compat trick as
+ * {@link MentionsField}: messages persisted before this feature decode
+ * cleanly with `attachments = []`.
+ */
+const AttachmentsField = Schema.Array(SideThreadAttachment).pipe(
+  Schema.withDecodingDefaultKey(Effect.succeed([])),
+);
+
+/**
+ * Reaction bucket — one entry per distinct emoji, with the denormalized
+ * {@link UserRef} list of reactors so the UI can render names without an
+ * extra round-trip. Pinning the `UserRef` mirrors how we pin mentions.
+ */
+export const SideThreadMessageReaction = Schema.Struct({
+  emoji: TrimmedNonEmptyString,
+  users: Schema.Array(UserRef),
+});
+export type SideThreadMessageReaction = typeof SideThreadMessageReaction.Type;
+
+const ReactionsField = Schema.Array(SideThreadMessageReaction).pipe(
+  Schema.withDecodingDefaultKey(Effect.succeed([])),
 );
 
 /**
@@ -51,12 +106,20 @@ export type SideThreadAggregateKind = typeof SideThreadAggregateKind.Type;
  */
 export const SideThreadMessage = Schema.Struct({
   id: SideThreadMessageId,
+  /**
+   * `text` is optional at write time when the message carries a non-empty
+   * `attachments` list (e.g. a standalone GIF). The decoder accepts the
+   * legacy required-string shape via the default-key fallback so historical
+   * messages decode unchanged.
+   */
+  text: TrimmedString,
   author: UserRef,
-  text: TrimmedNonEmptyString,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   mentions: MentionsField,
   quotedMessageId: QuotedMessageIdField,
+  attachments: AttachmentsField,
+  reactions: ReactionsField,
 });
 export type SideThreadMessage = typeof SideThreadMessage.Type;
 
@@ -99,7 +162,12 @@ export const SideThreadMessagePostCommand = Schema.Struct({
   sideThreadId: SideThreadId,
   messageId: SideThreadMessageId,
   author: UserRef,
-  text: TrimmedNonEmptyString,
+  /**
+   * Allowed to be empty when {@link attachments} is non-empty (e.g. a
+   * standalone GIF). The decider enforces "at least one of text or
+   * attachments" so empty/empty posts can't be persisted.
+   */
+  text: TrimmedString,
   /**
    * Users explicitly tagged by the author. The composer resolves the
    * autocomplete selection into a {@link UserRef} list and ships it alongside
@@ -114,8 +182,28 @@ export const SideThreadMessagePostCommand = Schema.Struct({
    * message in the parent thread.
    */
   quotedMessageId: QuotedMessageIdField,
+  /** Inline media (GIFs in V1). Defaults to empty for older clients. */
+  attachments: AttachmentsField,
 });
 export type SideThreadMessagePostCommand = typeof SideThreadMessagePostCommand.Type;
+
+/**
+ * Toggle a single emoji reaction by `user` on `messageId`. The decider
+ * inspects the current read model: if `user` has already reacted with
+ * `emoji` it emits `action: "removed"`, otherwise `"added"`. Keeping this a
+ * single toggle command (rather than separate add/remove) means the UI
+ * doesn't need to track which buckets the user is in — it just dispatches
+ * the emoji and lets the server resolve.
+ */
+export const SideThreadMessageReactCommand = Schema.Struct({
+  type: Schema.Literal("sidethread.message.react"),
+  commandId: CommandId,
+  sideThreadId: SideThreadId,
+  messageId: SideThreadMessageId,
+  user: UserRef,
+  emoji: TrimmedNonEmptyString,
+});
+export type SideThreadMessageReactCommand = typeof SideThreadMessageReactCommand.Type;
 
 export const SideThreadArchiveCommand = Schema.Struct({
   type: Schema.Literal("sidethread.archive"),
@@ -145,6 +233,7 @@ export type SideThreadInboxDismissCommand = typeof SideThreadInboxDismissCommand
 export const SideThreadCommand = Schema.Union([
   SideThreadCreateCommand,
   SideThreadMessagePostCommand,
+  SideThreadMessageReactCommand,
   SideThreadArchiveCommand,
   SideThreadInboxDismissCommand,
 ]);
@@ -153,6 +242,7 @@ export type SideThreadCommand = typeof SideThreadCommand.Type;
 export const SideThreadCommandType = Schema.Literals([
   "sidethread.create",
   "sidethread.message.post",
+  "sidethread.message.react",
   "sidethread.archive",
   "sidethread.inbox.dismiss",
 ]);
@@ -188,11 +278,26 @@ export const SideThreadMessagePostedPayload = Schema.Struct({
   sideThreadId: SideThreadId,
   messageId: SideThreadMessageId,
   author: UserRef,
-  text: TrimmedNonEmptyString,
+  text: TrimmedString,
   mentions: MentionsField,
   quotedMessageId: QuotedMessageIdField,
+  attachments: AttachmentsField,
 });
 export type SideThreadMessagePostedPayload = typeof SideThreadMessagePostedPayload.Type;
+
+/**
+ * The toggle resolved into a concrete add/remove. We persist `action` so
+ * a stream subscriber can apply the delta without re-running the toggle
+ * logic — important for the projector which only sees one event at a time.
+ */
+export const SideThreadMessageReactedPayload = Schema.Struct({
+  sideThreadId: SideThreadId,
+  messageId: SideThreadMessageId,
+  user: UserRef,
+  emoji: TrimmedNonEmptyString,
+  action: Schema.Literals(["added", "removed"]),
+});
+export type SideThreadMessageReactedPayload = typeof SideThreadMessageReactedPayload.Type;
 
 export const SideThreadArchivedPayload = Schema.Struct({
   sideThreadId: SideThreadId,
@@ -220,6 +325,13 @@ export const SideThreadMessagePostedEvent = Schema.Struct({
 });
 export type SideThreadMessagePostedEvent = typeof SideThreadMessagePostedEvent.Type;
 
+export const SideThreadMessageReactedEvent = Schema.Struct({
+  ...SideThreadEventBaseFields,
+  type: Schema.Literal("sidethread.message-reacted"),
+  payload: SideThreadMessageReactedPayload,
+});
+export type SideThreadMessageReactedEvent = typeof SideThreadMessageReactedEvent.Type;
+
 export const SideThreadArchivedEvent = Schema.Struct({
   ...SideThreadEventBaseFields,
   type: Schema.Literal("sidethread.archived"),
@@ -237,6 +349,7 @@ export type SideThreadInboxDismissedEvent = typeof SideThreadInboxDismissedEvent
 export const SideThreadEvent = Schema.Union([
   SideThreadCreatedEvent,
   SideThreadMessagePostedEvent,
+  SideThreadMessageReactedEvent,
   SideThreadArchivedEvent,
   SideThreadInboxDismissedEvent,
 ]);
@@ -245,6 +358,7 @@ export type SideThreadEvent = typeof SideThreadEvent.Type;
 export const SideThreadEventType = Schema.Literals([
   "sidethread.created",
   "sidethread.message-posted",
+  "sidethread.message-reacted",
   "sidethread.archived",
   "sidethread.inbox-dismissed",
 ]);

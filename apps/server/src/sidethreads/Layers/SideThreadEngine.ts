@@ -21,6 +21,7 @@ import type {
   SideThreadEvent,
   SideThreadInboxDismissedPayload,
   SideThreadMessagePostedPayload,
+  SideThreadMessageReactedPayload,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
@@ -60,6 +61,8 @@ const actorOf = (planned: PlannedSideThreadEvent): string => {
       return (planned.payload as SideThreadCreatedPayload).createdBy.id;
     case "sidethread.message-posted":
       return (planned.payload as SideThreadMessagePostedPayload).author.id;
+    case "sidethread.message-reacted":
+      return (planned.payload as SideThreadMessageReactedPayload).user.id;
     case "sidethread.archived":
       return (planned.payload as SideThreadArchivedPayload).archivedBy;
     case "sidethread.inbox-dismissed":

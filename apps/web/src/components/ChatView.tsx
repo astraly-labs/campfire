@@ -154,6 +154,7 @@ import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
 import { SideThreadDrawer } from "../sidethread/SideThreadDrawer";
+import { useSideThreadStore } from "../sidethread/sideThreadStore";
 import { FilePreviewDrawer } from "./preview/FilePreviewDrawer";
 import { WorkspaceFileTreeDrawer } from "./preview/WorkspaceFileTreeDrawer";
 import { ChatHeader } from "./chat/ChatHeader";
@@ -721,7 +722,16 @@ export default function ChatView(props: ChatViewProps) {
   const [pendingUserInputQuestionIndexByRequestId, setPendingUserInputQuestionIndexByRequestId] =
     useState<Record<string, number>>({});
   const [planSidebarOpen, setPlanSidebarOpen] = useState(false);
-  const shouldUsePlanSidebarSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
+  // Single threshold drives every right-side panel (plan, side-thread, diff
+  // via the route): below ~980px the chat column gets crushed if we push
+  // another 340–380px sibling, so we bubble them up to right-side sheets.
+  const shouldUseRightPanelSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
+  const shouldUsePlanSidebarSheet = shouldUseRightPanelSheet;
+  const shouldUseSideThreadSheet = shouldUseRightPanelSheet;
+  const sideThreadOpenParentThreadId = useSideThreadStore(
+    (state) => state.openParentThreadId,
+  );
+  const closeSideThread = useSideThreadStore((state) => state.close);
   // Tracks whether the user explicitly dismissed the sidebar for the active turn.
   const planSidebarDismissedForTurnRef = useRef<string | null>(null);
   // When set, the thread-change reset effect will open the sidebar instead of closing it.
@@ -3656,10 +3666,16 @@ export default function ChatView(props: ChatViewProps) {
                   latestTurnId={activeThread?.latestTurn?.turnId ?? null}
                 />
               ) : null}
-              <ParentThreadTypingRow
-                threadId={activeThreadId}
-                currentUserId={currentUser?.id}
-              />
+              {/* Match the composer's own `mx-auto max-w-208` so the typing
+                  row aligns with the chatbox edges instead of stretching
+                  to the full surface width. Kept in sync manually with
+                  ChatComposer.tsx — if that max-width changes, update here. */}
+              <div className="mx-auto w-full min-w-0 max-w-208">
+                <ParentThreadTypingRow
+                  threadId={activeThreadId}
+                  currentUserId={currentUser?.id}
+                />
+              </div>
               <div className="relative z-10">
                 <ChatComposer
                   composerRef={composerRef}
@@ -3792,8 +3808,12 @@ export default function ChatView(props: ChatViewProps) {
           />
         </InlineSlideDrawer>
 
-        {/* Side thread (Slack-style discussion alongside the agent) */}
-        <SideThreadDrawer environmentId={environmentId} />
+        {/* Side thread (Slack-style discussion alongside the agent).
+            Rendered inline on wide viewports; bubbles up to a right-side
+            sheet below 980px so the chat column isn't crushed. */}
+        {shouldUseSideThreadSheet ? null : (
+          <SideThreadDrawer environmentId={environmentId} mode="sidebar" />
+        )}
 
         {/* Workspace file tree drawer — opens via header folder button */}
         <WorkspaceFileTreeDrawer />
@@ -3833,6 +3853,15 @@ export default function ChatView(props: ChatViewProps) {
             mode="sheet"
             onClose={closePlanSidebar}
           />
+        </RightPanelSheet>
+      ) : null}
+
+      {shouldUseSideThreadSheet ? (
+        <RightPanelSheet
+          open={sideThreadOpenParentThreadId !== null}
+          onClose={closeSideThread}
+        >
+          <SideThreadDrawer environmentId={environmentId} mode="sheet" />
         </RightPanelSheet>
       ) : null}
 

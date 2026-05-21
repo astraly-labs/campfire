@@ -67,6 +67,7 @@ export async function takeALook(params: TakeALookParams): Promise<void> {
     text,
     mentions: targets,
     quotedMessageId: params.quotedMessageId ?? null,
+    attachments: [],
   });
 
   // Pre-warm the conversation summary so the teammate gets an instant recap

@@ -3,12 +3,14 @@ import {
   type EnvironmentId,
   type MessageId,
   type SideThread,
+  type SideThreadMessage,
   type SideThreadMessageId,
+  type SideThreadMessageReaction,
   type SideThreadStreamItem,
   type ThreadId,
   type UserRef,
 } from "@t3tools/contracts";
-import { CornerUpLeftIcon, XIcon } from "lucide-react";
+import { CornerUpLeftIcon, ImageIcon, XIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ensureEnvironmentApi } from "../environmentApi";
@@ -37,7 +39,53 @@ import { useViewersOfSideThread } from "../presence/presenceStore";
 import { TypingIndicator } from "../presence/TypingIndicator";
 import { useUiStateStore } from "../uiStateStore";
 import { clearTyping, notifyTyping } from "../presence/usePresenceHeartbeat";
+import { GifAttachmentInline } from "./GifAttachmentInline";
+import { GifPicker } from "./GifPicker";
+import { MessageReactions } from "./MessageReactions";
 import { deriveSideThreadId, useSideThreadStore } from "./sideThreadStore";
+import { toAttachment, type GiphyGif } from "./giphyClient";
+
+/**
+ * Toggle a single user against a reaction bucket on a specific message,
+ * mirroring the server-side delta the projector applies. Kept here (and
+ * not in a shared util) because the only client-side consumer is the
+ * optimistic update path inside the drawer.
+ */
+function applyReactionToggleLocally(
+  messages: ReadonlyArray<SideThreadMessage>,
+  messageId: SideThreadMessageId,
+  user: UserRef,
+  emoji: string,
+  action: "added" | "removed",
+  occurredAt: string,
+): ReadonlyArray<SideThreadMessage> {
+  return messages.map((m) => {
+    if (m.id !== messageId) return m;
+    const bucketIndex = m.reactions.findIndex((r) => r.emoji === emoji);
+    const bucket = bucketIndex >= 0 ? m.reactions[bucketIndex]! : undefined;
+    if (action === "added") {
+      if (bucket?.users.some((u) => u.id === user.id)) return m;
+      const nextBucket: SideThreadMessageReaction = bucket
+        ? { ...bucket, users: [...bucket.users, user] }
+        : { emoji, users: [user] };
+      const nextReactions =
+        bucketIndex >= 0
+          ? m.reactions.map((r, idx) => (idx === bucketIndex ? nextBucket : r))
+          : [...m.reactions, nextBucket];
+      return { ...m, updatedAt: occurredAt, reactions: nextReactions };
+    }
+    if (!bucket) return m;
+    const nextUsers = bucket.users.filter((u) => u.id !== user.id);
+    if (nextUsers.length === bucket.users.length) return m;
+    const nextReactions =
+      nextUsers.length === 0
+        ? m.reactions.filter((_, idx) => idx !== bucketIndex)
+        : m.reactions.map((r, idx) =>
+            idx === bucketIndex ? { ...r, users: nextUsers } : r,
+          );
+    return { ...m, updatedAt: occurredAt, reactions: nextReactions };
+  });
+}
 
 interface Props {
   readonly environmentId: EnvironmentId;
@@ -113,6 +161,7 @@ function DrawerBody({
   const [pendingQuotedMessageId, setPendingQuotedMessageId] = useState<MessageId | null>(null);
   const [activeMention, setActiveMention] = useState<ActiveMentionToken | null>(null);
   const [mentionHighlight, setMentionHighlight] = useState(0);
+  const [gifPickerOpen, setGifPickerOpen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const api = ensureEnvironmentApi(environmentId);
   useEnsureIdentityLoaded(api);
@@ -208,6 +257,8 @@ function DrawerBody({
                         updatedAt: event.occurredAt,
                         mentions: posted.mentions ?? [],
                         quotedMessageId: posted.quotedMessageId ?? null,
+                        attachments: posted.attachments ?? [],
+                        reactions: [],
                       },
                     ],
                   }
@@ -216,6 +267,24 @@ function DrawerBody({
             // Re-mark visited so the header badge doesn't pop back on every new
             // mention while the drawer is open.
             markVisited(sideThreadId, event.occurredAt);
+          } else if (event.type === "sidethread.message-reacted") {
+            const reacted = event.payload;
+            setSideThread((current) =>
+              current
+                ? {
+                    ...current,
+                    updatedAt: event.occurredAt,
+                    messages: applyReactionToggleLocally(
+                      current.messages,
+                      reacted.messageId,
+                      reacted.user,
+                      reacted.emoji,
+                      reacted.action,
+                      event.occurredAt,
+                    ),
+                  }
+                : current,
+            );
           }
         }
       });
@@ -331,11 +400,85 @@ function DrawerBody({
         text,
         mentions,
         quotedMessageId,
+        attachments: [],
       });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Failed to send");
     }
   };
+
+  // Telegram-style send: clicking a GIF in the picker ships it as a
+  // standalone message immediately — no "preview then send" step. The
+  // current draft (if any) is preserved so users don't lose in-progress
+  // text while reaching for an emoji-class reply.
+  const sendGif = useCallback(
+    async (gif: GiphyGif) => {
+      if (!currentUser) return;
+      const attachment = toAttachment(gif);
+      if (!attachment) return;
+      setGifPickerOpen(false);
+      try {
+        await api.sideThread.dispatchCommand({
+          type: "sidethread.message.post",
+          commandId: CommandId.make(`st-post:${sideThreadId}:${Date.now()}`),
+          sideThreadId,
+          messageId: `${sideThreadId}-${Date.now()}-${Math.random()
+            .toString(36)
+            .slice(2, 8)}` as SideThreadMessageId,
+          author: currentUser,
+          text: "",
+          mentions: [],
+          quotedMessageId: null,
+          attachments: [attachment],
+        });
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : "Failed to send GIF");
+      }
+    },
+    [api, currentUser, sideThreadId],
+  );
+
+  const toggleReaction = useCallback(
+    (messageId: SideThreadMessageId, emoji: string) => {
+      if (!currentUser) return;
+      // Optimistic update: we don't know yet whether the server will
+      // emit `added` or `removed`, so we infer from the current state.
+      // The reconciliation event from the stream will overwrite this if
+      // it disagrees (e.g. a concurrent peer beat us to it).
+      setSideThread((current) => {
+        if (!current) return current;
+        const message = current.messages.find((m) => m.id === messageId);
+        if (!message) return current;
+        const bucket = message.reactions.find((r) => r.emoji === emoji);
+        const optimisticAction: "added" | "removed" =
+          bucket?.users.some((u) => u.id === currentUser.id) ? "removed" : "added";
+        return {
+          ...current,
+          messages: applyReactionToggleLocally(
+            current.messages,
+            messageId,
+            currentUser,
+            emoji,
+            optimisticAction,
+            new Date().toISOString(),
+          ),
+        };
+      });
+      void api.sideThread
+        .dispatchCommand({
+          type: "sidethread.message.react",
+          commandId: CommandId.make(`st-react:${sideThreadId}:${messageId}:${Date.now()}`),
+          sideThreadId,
+          messageId,
+          user: currentUser,
+          emoji,
+        })
+        .catch((cause) => {
+          setError(cause instanceof Error ? cause.message : "Failed to react");
+        });
+    },
+    [api, currentUser, sideThreadId],
+  );
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // While the autocomplete popover is open, arrow keys navigate it and
@@ -400,19 +543,37 @@ function DrawerBody({
         </Button>
       </div>
 
-      <ul ref={listRef} className="flex-1 space-y-3 overflow-y-auto px-3 py-3 text-sm">
-        {(sideThread?.messages ?? []).map((message) => {
+      <ul ref={listRef} className="flex-1 overflow-y-auto px-3 py-3 text-sm">
+        {(sideThread?.messages ?? []).map((message, index, allMessages) => {
           const authorColor = NAME_TEXT_PALETTE[colorIndexForUserId(message.author.id)]!;
+          const previous = index > 0 ? allMessages[index - 1] : undefined;
+          // Group consecutive messages from the same author when they're
+          // within a short window — keeps the column quieter and matches
+          // Slack/iMessage conventions. 5 min is the usual cutoff.
+          const sameAuthorAsPrevious =
+            previous !== undefined &&
+            previous.author.id === message.author.id &&
+            new Date(message.createdAt).getTime() -
+              new Date(previous.createdAt).getTime() <
+              5 * 60 * 1000;
           return (
-          <li key={message.id} className="space-y-0.5">
-            <div className="flex items-baseline justify-between gap-2">
-              <span className={cn("text-[11px] font-medium", authorColor)}>
-                {message.author.displayName}
-              </span>
-              <span className="text-[10px] text-muted-foreground/50">
-                {new Date(message.createdAt).toLocaleTimeString()}
-              </span>
-            </div>
+          <li
+            key={message.id}
+            className={cn(
+              "group/msg space-y-0.5",
+              sameAuthorAsPrevious ? "mt-0.5" : "mt-3 first:mt-0",
+            )}
+          >
+            {sameAuthorAsPrevious ? null : (
+              <div className="flex items-baseline justify-between gap-2">
+                <span className={cn("text-[11px] font-medium", authorColor)}>
+                  {message.author.displayName}
+                </span>
+                <span className="text-[10px] text-muted-foreground/50">
+                  {new Date(message.createdAt).toLocaleTimeString()}
+                </span>
+              </div>
+            )}
             {message.quotedMessageId ? (
               <button
                 type="button"
@@ -424,25 +585,37 @@ function DrawerBody({
                 Quote
               </button>
             ) : null}
-            <p className="whitespace-pre-wrap text-foreground/80">
-              {renderTextWithMentions(message.text, message.mentions).map((segment, index) =>
-                segment.kind === "text" ? (
-                  <span key={index}>{segment.text}</span>
-                ) : (
-                  <span
-                    key={index}
-                    className={cn(
-                      "rounded px-1 font-medium",
-                      segment.user.id === currentUser?.id
-                        ? "bg-amber-500/30 text-amber-700 dark:text-amber-300"
-                        : "bg-amber-500/15 text-amber-600 dark:text-amber-400",
-                    )}
-                  >
-                    @{segment.handle}
-                  </span>
-                ),
-              )}
-            </p>
+            {message.attachments.map((attachment, attachmentIndex) =>
+              attachment.kind === "gif" ? (
+                <GifAttachmentInline key={attachmentIndex} attachment={attachment} />
+              ) : null,
+            )}
+            {message.text.length > 0 ? (
+              <p className="whitespace-pre-wrap text-foreground/80">
+                {renderTextWithMentions(message.text, message.mentions).map((segment, index) =>
+                  segment.kind === "text" ? (
+                    <span key={index}>{segment.text}</span>
+                  ) : (
+                    <span
+                      key={index}
+                      className={cn(
+                        "rounded px-1 font-medium",
+                        segment.user.id === currentUser?.id
+                          ? "bg-amber-500/30 text-amber-700 dark:text-amber-300"
+                          : "bg-amber-500/15 text-amber-600 dark:text-amber-400",
+                      )}
+                    >
+                      @{segment.handle}
+                    </span>
+                  ),
+                )}
+              </p>
+            ) : null}
+            <MessageReactions
+              reactions={message.reactions}
+              currentUserId={currentUser?.id}
+              onToggle={(emoji) => toggleReaction(message.id, emoji)}
+            />
           </li>
           );
         })}
@@ -472,7 +645,7 @@ function DrawerBody({
             <button
               type="button"
               onClick={() => setPendingQuotedMessageId(null)}
-              className="text-amber-700/80 hover:text-amber-700 dark:text-amber-300/80 dark:hover:text-amber-300"
+              className="relative text-amber-700/80 hover:text-amber-700 dark:text-amber-300/80 dark:hover:text-amber-300 pointer-coarse:after:absolute pointer-coarse:after:inset-0 pointer-coarse:after:size-full pointer-coarse:after:min-h-11 pointer-coarse:after:min-w-11"
               aria-label="Remove quoted message"
             >
               <XIcon className="size-3" />
@@ -523,11 +696,31 @@ function DrawerBody({
           className="resize-none rounded border border-border/60 bg-background px-2 py-1.5 text-sm placeholder:text-muted-foreground/40 focus:border-border focus:outline-none"
           onKeyDown={onKeyDown}
         />
-        <div className="flex justify-end">
+        <div className="flex items-center justify-between">
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            onClick={() => setGifPickerOpen((open) => !open)}
+            aria-label="Insert GIF"
+            aria-pressed={gifPickerOpen}
+            className={cn(
+              "gap-1 px-2 text-muted-foreground/70 hover:text-foreground",
+              gifPickerOpen && "text-amber-600 dark:text-amber-400",
+            )}
+          >
+            <ImageIcon className="size-3.5" />
+            <span className="text-[11px] font-medium">GIF</span>
+          </Button>
           <Button type="submit" size="xs" disabled={!draft.trim() || !currentUser}>
             Send (⌘↩)
           </Button>
         </div>
+        <GifPicker
+          open={gifPickerOpen}
+          onClose={() => setGifPickerOpen(false)}
+          onPick={(gif) => void sendGif(gif)}
+        />
       </form>
     </div>
   );

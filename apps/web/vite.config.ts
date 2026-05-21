@@ -10,6 +10,7 @@ const host = process.env.HOST?.trim() || "localhost";
 const configuredWsUrl = process.env.VITE_WS_URL?.trim();
 const configuredHostedAppChannel = process.env.VITE_HOSTED_APP_CHANNEL?.trim() || "";
 const configuredAppVersion = process.env.APP_VERSION?.trim() || pkg.version;
+const configuredGiphyApiKey = process.env.VITE_GIPHY_API_KEY?.trim() || "";
 const configuredHostedAppUrl = (() => {
   const explicitHostedAppUrl = process.env.VITE_HOSTED_APP_URL?.trim();
   if (explicitHostedAppUrl) {
@@ -84,6 +85,7 @@ export default defineConfig({
     "import.meta.env.VITE_HOSTED_APP_URL": JSON.stringify(configuredHostedAppUrl ?? ""),
     "import.meta.env.VITE_HOSTED_APP_CHANNEL": JSON.stringify(configuredHostedAppChannel),
     "import.meta.env.APP_VERSION": JSON.stringify(configuredAppVersion),
+    "import.meta.env.VITE_GIPHY_API_KEY": JSON.stringify(configuredGiphyApiKey),
   },
   resolve: {
     tsconfigPaths: true,

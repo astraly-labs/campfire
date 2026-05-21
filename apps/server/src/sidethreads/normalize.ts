@@ -73,6 +73,21 @@ export class SideThreadEventNormalizer {
           },
         };
       }
+      case "sidethread.message-reacted": {
+        // Reactions are post-canonicalisation only (introduced after the
+        // one-per-parent migration), but pass through the same id-map
+        // rewrite for symmetry. No historical events to drop.
+        const canonical = this.idMap.get(event.payload.sideThreadId);
+        if (!canonical || canonical === event.payload.sideThreadId) return event;
+        return {
+          ...event,
+          aggregateId: canonical,
+          payload: {
+            ...event.payload,
+            sideThreadId: canonical,
+          },
+        };
+      }
       case "sidethread.archived": {
         const canonical = this.idMap.get(event.payload.sideThreadId);
         if (!canonical || canonical === event.payload.sideThreadId) return event;

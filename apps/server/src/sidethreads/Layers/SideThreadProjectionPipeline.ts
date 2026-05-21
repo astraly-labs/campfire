@@ -13,7 +13,13 @@
  *
  * @module SideThreadProjectionPipelineLive
  */
-import { SideThread, type SideThreadEvent } from "@t3tools/contracts";
+import {
+  SideThread,
+  type SideThreadEvent,
+  type SideThreadMessage,
+  type SideThreadMessageReaction,
+  type UserRef,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -30,6 +36,44 @@ import { SideThreadEventNormalizer } from "../normalize.ts";
 const SideThreadJson = Schema.fromJsonString(SideThread);
 const encodeSnapshot = Schema.encodeUnknownEffect(SideThreadJson);
 const decodeSnapshot = Schema.decodeUnknownEffect(SideThreadJson);
+
+/**
+ * Mirror of the in-memory projector's reaction delta, but typed against the
+ * snapshot read-model (which is identical in shape to the engine read-model
+ * for our purposes). Kept here to avoid a cross-module import — the
+ * function is 30 lines and trivially auditable.
+ */
+const applyReactionDeltaSnapshot = (
+  message: SideThreadMessage,
+  user: UserRef,
+  emoji: string,
+  action: "added" | "removed",
+  occurredAt: SideThreadEvent["occurredAt"],
+): SideThreadMessage => {
+  const bucketIndex = message.reactions.findIndex((r) => r.emoji === emoji);
+  const bucket = bucketIndex >= 0 ? message.reactions[bucketIndex]! : undefined;
+  if (action === "added") {
+    if (bucket?.users.some((u) => u.id === user.id)) return message;
+    const nextBucket: SideThreadMessageReaction = bucket
+      ? { ...bucket, users: [...bucket.users, user] }
+      : { emoji, users: [user] };
+    const nextReactions =
+      bucketIndex >= 0
+        ? message.reactions.map((r, idx) => (idx === bucketIndex ? nextBucket : r))
+        : [...message.reactions, nextBucket];
+    return { ...message, updatedAt: occurredAt, reactions: nextReactions };
+  }
+  if (!bucket) return message;
+  const nextUsers = bucket.users.filter((u) => u.id !== user.id);
+  if (nextUsers.length === bucket.users.length) return message;
+  const nextReactions =
+    nextUsers.length === 0
+      ? message.reactions.filter((_, idx) => idx !== bucketIndex)
+      : message.reactions.map((r, idx) =>
+          idx === bucketIndex ? { ...r, users: nextUsers } : r,
+        );
+  return { ...message, updatedAt: occurredAt, reactions: nextReactions };
+};
 
 const PREVIEW_MAX_CHARS = 240;
 /**
@@ -161,6 +205,7 @@ const makeSideThreadProjectionPipeline = Effect.gen(function* () {
 
           const current = yield* loadSnapshot(event.payload.sideThreadId);
           const mentionsForMessage = event.payload.mentions ?? [];
+          const attachmentsForMessage = event.payload.attachments ?? [];
           if (current) {
             const updated: SideThread = {
               ...current,
@@ -175,6 +220,8 @@ const makeSideThreadProjectionPipeline = Effect.gen(function* () {
                   updatedAt: event.occurredAt,
                   mentions: mentionsForMessage,
                   quotedMessageId,
+                  attachments: attachmentsForMessage,
+                  reactions: [],
                 },
               ],
             };
@@ -228,6 +275,38 @@ const makeSideThreadProjectionPipeline = Effect.gen(function* () {
               }
             }
           }
+          break;
+        }
+
+        case "sidethread.message-reacted": {
+          // Reactions live entirely inside the snapshot JSON — no dedicated
+          // SQL table. We re-load the current snapshot, apply the toggle
+          // delta in-place, and write it back. Volumes are tiny and the
+          // read-modify-write happens inside the projection pipeline's
+          // serial loop, so no concurrency window to worry about.
+          const current = yield* loadSnapshot(event.payload.sideThreadId);
+          if (!current) break;
+          const messageIndex = current.messages.findIndex(
+            (m) => m.id === event.payload.messageId,
+          );
+          if (messageIndex < 0) break;
+          const message = current.messages[messageIndex]!;
+          const updatedMessage = applyReactionDeltaSnapshot(
+            message,
+            event.payload.user,
+            event.payload.emoji,
+            event.payload.action,
+            event.occurredAt,
+          );
+          if (updatedMessage === message) break;
+          const updated: SideThread = {
+            ...current,
+            updatedAt: event.occurredAt,
+            messages: current.messages.map((m, idx) =>
+              idx === messageIndex ? updatedMessage : m,
+            ),
+          };
+          yield* updateSnapshot(event.payload.sideThreadId, updated);
           break;
         }
 

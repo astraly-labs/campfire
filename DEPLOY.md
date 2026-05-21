@@ -67,6 +67,26 @@ Example deploying a feature branch for a smoke test:
 CAMPFIRE_BRANCH=campfire/my-feature bun run deploy:mac-mini
 ```
 
+## Runtime secrets — `~/.campfire.env`
+
+Secrets that the dev server needs at runtime (e.g. `VITE_GIPHY_API_KEY` for the GIF picker) live in `~/.campfire.env` **on the mac mini** — never in the repo. The deploy script sources this file (if present) before starting the dev server, so anything `KEY=value` declared there is exported into the env that vite/bun inherits.
+
+Set or update a key:
+
+```bash
+ssh macmini 'umask 077 && cat >> ~/.campfire.env <<EOF
+VITE_GIPHY_API_KEY=<your-key>
+EOF'
+```
+
+The file is chmod 600 by convention. The deploy script does not fail if it's missing — features whose keys aren't set will degrade gracefully (e.g. the GIF picker shows an empty state).
+
+To inspect what's currently set:
+
+```bash
+ssh macmini 'cat ~/.campfire.env'
+```
+
 ## Bootstrap (first-time setup)
 
 If `agent-host/repos/campfire` doesn't yet exist on the mac mini, the deploy script will refuse to run and print the bootstrap command. The gist:
