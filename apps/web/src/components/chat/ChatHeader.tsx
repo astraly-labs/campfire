@@ -12,8 +12,10 @@ import { scopeThreadRef } from "@t3tools/client-runtime";
 import { memo } from "react";
 import GitActionsControl from "../GitActionsControl";
 import { type DraftId } from "~/composerDraftStore";
-import { DiffIcon, TerminalSquareIcon } from "lucide-react";
+import { DiffIcon, MoreHorizontalIcon, TerminalSquareIcon } from "lucide-react";
 import { Badge } from "../ui/badge";
+import { Button } from "../ui/button";
+import { Menu, MenuCheckboxItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import ProjectScriptsControl, { type NewProjectScriptInput } from "../ProjectScriptsControl";
 import { Toggle } from "../ui/toggle";
@@ -148,49 +150,70 @@ export const ChatHeader = memo(function ChatHeader({
       </div>
       <div className="flex shrink-0 items-center justify-end gap-2 @3xl/header-actions:gap-3">
         <ChatHeaderSideThreadToggle threadId={activeThreadId} />
+        {/* Below md the action row gets crammed into 9+ buttons we can't fit
+            in ~340px. Secondary actions hide; Terminal/Diff move into the
+            kebab so they stay reachable. The components that are themselves
+            dropdowns (scripts, open-in, git actions, files, fork) hide too —
+            reusing them as MenuItems would mean reworking each one, so for
+            now they stay desktop-only. */}
         {activeProjectScripts && (
-          <ProjectScriptsControl
-            scripts={activeProjectScripts}
-            keybindings={keybindings}
-            preferredScriptId={preferredScriptId}
-            onRunScript={onRunProjectScript}
-            onAddScript={onAddProjectScript}
-            onUpdateScript={onUpdateProjectScript}
-            onDeleteScript={onDeleteProjectScript}
-          />
+          <div className="contents max-md:hidden">
+            <ProjectScriptsControl
+              scripts={activeProjectScripts}
+              keybindings={keybindings}
+              preferredScriptId={preferredScriptId}
+              onRunScript={onRunProjectScript}
+              onAddScript={onAddProjectScript}
+              onUpdateScript={onUpdateProjectScript}
+              onDeleteScript={onDeleteProjectScript}
+            />
+          </div>
         )}
         {showOpenInPicker && (
-          <OpenInPicker
-            keybindings={keybindings}
-            availableEditors={availableEditors}
-            openInCwd={openInCwd}
-          />
+          <div className="contents max-md:hidden">
+            <OpenInPicker
+              keybindings={keybindings}
+              availableEditors={availableEditors}
+              openInCwd={openInCwd}
+            />
+          </div>
         )}
         {activeProjectName && (
-          <GitActionsControl
-            gitCwd={gitCwd}
-            activeThreadRef={scopeThreadRef(activeThreadEnvironmentId, activeThreadId)}
-            {...(draftId ? { draftId } : {})}
-          />
+          <div className="contents max-md:hidden">
+            <GitActionsControl
+              gitCwd={gitCwd}
+              activeThreadRef={scopeThreadRef(activeThreadEnvironmentId, activeThreadId)}
+              {...(draftId ? { draftId } : {})}
+            />
+          </div>
         )}
-        <WorkspaceFileTreeButton
-          environmentId={activeThreadEnvironmentId}
-          threadId={activeThreadId}
-        />
-        <WorkspaceFilesButton environmentId={activeThreadEnvironmentId} threadId={activeThreadId} />
-        {forkSource && (
-          <ForkThreadButton
-            sourceEnvironmentId={activeThreadEnvironmentId}
-            sourceThreadId={activeThreadId}
-            sourceProjectId={forkSource.projectId}
-            sourceModelSelection={forkSource.modelSelection}
+        <div className="contents max-md:hidden">
+          <WorkspaceFileTreeButton
+            environmentId={activeThreadEnvironmentId}
+            threadId={activeThreadId}
           />
+        </div>
+        <div className="contents max-md:hidden">
+          <WorkspaceFilesButton
+            environmentId={activeThreadEnvironmentId}
+            threadId={activeThreadId}
+          />
+        </div>
+        {forkSource && (
+          <div className="contents max-md:hidden">
+            <ForkThreadButton
+              sourceEnvironmentId={activeThreadEnvironmentId}
+              sourceThreadId={activeThreadId}
+              sourceProjectId={forkSource.projectId}
+              sourceModelSelection={forkSource.modelSelection}
+            />
+          </div>
         )}
         <Tooltip>
           <TooltipTrigger
             render={
               <Toggle
-                className="shrink-0"
+                className="shrink-0 max-md:hidden"
                 pressed={terminalOpen}
                 onPressedChange={onToggleTerminal}
                 aria-label="Toggle terminal drawer"
@@ -214,7 +237,7 @@ export const ChatHeader = memo(function ChatHeader({
           <TooltipTrigger
             render={
               <Toggle
-                className="shrink-0"
+                className="shrink-0 max-md:hidden"
                 pressed={diffOpen}
                 onPressedChange={onToggleDiff}
                 aria-label="Toggle diff panel"
@@ -234,10 +257,76 @@ export const ChatHeader = memo(function ChatHeader({
                 : "Toggle diff panel"}
           </TooltipPopup>
         </Tooltip>
+        <ChatHeaderMobileActions
+          terminalOpen={terminalOpen}
+          terminalAvailable={terminalAvailable}
+          onToggleTerminal={onToggleTerminal}
+          diffOpen={diffOpen}
+          isGitRepo={isGitRepo}
+          onToggleDiff={onToggleDiff}
+        />
       </div>
     </div>
   );
 });
+
+interface ChatHeaderMobileActionsProps {
+  readonly terminalOpen: boolean;
+  readonly terminalAvailable: boolean;
+  readonly onToggleTerminal: () => void;
+  readonly diffOpen: boolean;
+  readonly isGitRepo: boolean;
+  readonly onToggleDiff: () => void;
+}
+
+// Kebab that surfaces the two simple toggles (Terminal, Diff) on mobile,
+// where the full action row doesn't fit. Components that own their own
+// dropdown (ProjectScripts, OpenInPicker, GitActions, Workspace*, Fork)
+// stay desktop-only until we teach each one to render as a MenuItem.
+function ChatHeaderMobileActions({
+  terminalOpen,
+  terminalAvailable,
+  onToggleTerminal,
+  diffOpen,
+  isGitRepo,
+  onToggleDiff,
+}: ChatHeaderMobileActionsProps) {
+  const diffDisabled = !isGitRepo && !diffOpen;
+  return (
+    <Menu>
+      <MenuTrigger
+        render={
+          <Button
+            size="icon-xs"
+            variant="outline"
+            aria-label="More actions"
+            className="shrink-0 md:hidden"
+          >
+            <MoreHorizontalIcon className="size-3.5" />
+          </Button>
+        }
+      />
+      <MenuPopup align="end">
+        <MenuCheckboxItem
+          checked={terminalOpen}
+          onCheckedChange={() => onToggleTerminal()}
+          disabled={!terminalAvailable}
+        >
+          <TerminalSquareIcon />
+          Terminal
+        </MenuCheckboxItem>
+        <MenuCheckboxItem
+          checked={diffOpen}
+          onCheckedChange={() => onToggleDiff()}
+          disabled={diffDisabled}
+        >
+          <DiffIcon />
+          Diff
+        </MenuCheckboxItem>
+      </MenuPopup>
+    </Menu>
+  );
+}
 
 function AssigneeAvatar({ assignee }: { readonly assignee: UserRef }) {
   const palette = SOFT_PALETTE[colorIndexForUserId(assignee.id)]!;
