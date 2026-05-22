@@ -1410,9 +1410,25 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             onStderrLine: (line: string) =>
               options.progress?.onOutputLine?.({ stream: "stderr", text: line }) ?? Effect.void,
           };
+    const commitEnv: NodeJS.ProcessEnv | undefined = options?.identity
+      ? {
+          ...process.env,
+          GIT_AUTHOR_NAME: options.identity.name,
+          GIT_AUTHOR_EMAIL: options.identity.email,
+          GIT_COMMITTER_NAME: options.identity.name,
+          GIT_COMMITTER_EMAIL: options.identity.email,
+        }
+      : undefined;
+    if (options?.identity) {
+      yield* Effect.logDebug("[🪪 GitIdentity] commit author resolved", {
+        name: options.identity.name,
+        email: options.identity.email,
+      });
+    }
     yield* executeGit("GitVcsDriver.commit.commit", cwd, args, {
       ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
       ...(progress ? { progress } : {}),
+      ...(commitEnv ? { env: commitEnv } : {}),
     }).pipe(Effect.asVoid);
     const commitSha = yield* runGitStdout("GitVcsDriver.commit.revParseHead", cwd, [
       "rev-parse",
@@ -2132,6 +2148,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     resolvePrimaryRemoteName,
     fetchRemoteBranch,
     fetchRemoteTrackingBranch,
+    remoteBranchExists,
     setBranchUpstream,
     removeWorktree,
     renameBranch,

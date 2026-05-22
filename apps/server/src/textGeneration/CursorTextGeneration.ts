@@ -278,6 +278,7 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
       targetProjectName: input.targetProjectName,
       transcript: input.transcript,
       note: input.note,
+      isSameProject: input.isSameProject,
     });
 
     const generated = yield* runCursorJson({

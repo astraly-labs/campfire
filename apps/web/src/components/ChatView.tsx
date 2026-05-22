@@ -749,6 +749,11 @@ export default function ChatView(props: ChatViewProps) {
   const [pendingServerThreadEnvMode, setPendingServerThreadEnvMode] =
     useState<DraftThreadEnvMode | null>(null);
   const [pendingServerThreadBranch, setPendingServerThreadBranch] = useState<string | null>();
+  // Controls whether the next worktree creation fetches `origin/<branch>` before
+  // `git worktree add`, so the worktree starts from a fresh remote state instead
+  // of a (possibly stale) local ref. Transient pre-first-send preference — not
+  // persisted because it only matters once per worktree.
+  const [worktreeFetchFromRemote, setWorktreeFetchFromRemote] = useState<boolean>(true);
   const [lastInvokedScriptByProjectId, setLastInvokedScriptByProjectId] = useLocalStorage(
     LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
     {},
@@ -2876,6 +2881,7 @@ export default function ChatView(props: ChatViewProps) {
                       projectCwd: activeProject.cwd,
                       baseBranch: baseBranchForWorktree,
                       branch: buildTemporaryWorktreeBranchName(),
+                      fetchFromRemote: worktreeFetchFromRemote,
                     },
                     runSetupScript: true,
                   }
@@ -3765,6 +3771,8 @@ export default function ChatView(props: ChatViewProps) {
                   : {})}
                 envLocked={envLocked}
                 onComposerFocusRequest={scheduleComposerFocus}
+                worktreeFetchFromRemote={worktreeFetchFromRemote}
+                onWorktreeFetchFromRemoteChange={setWorktreeFetchFromRemote}
                 {...(canCheckoutPullRequestIntoThread
                   ? { onCheckoutPullRequestRequest: openPullRequestDialog }
                   : {})}

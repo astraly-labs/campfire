@@ -46,6 +46,7 @@ import {
   useSavedEnvironmentRegistryStore,
   useSavedEnvironmentRuntimeStore,
 } from "../environments/runtime";
+import { useBranchThreadToProject } from "../hooks/useBranchThreadToProject";
 import { useForkThreadToProject } from "../hooks/useForkThreadToProject";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useSettings } from "../hooks/useSettings";
@@ -407,6 +408,7 @@ function OpenCommandPaletteDialog() {
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread } =
     useHandleNewThread();
   const { forkThread } = useForkThreadToProject();
+  const { branchThread } = useBranchThreadToProject();
   const projects = useStore(useShallow(selectProjectsAcrossEnvironments));
   const threads = useStore(useShallow(selectSidebarThreadsAcrossEnvironments));
   const keybindings = useServerKeybindings();
@@ -695,16 +697,15 @@ function OpenCommandPaletteDialog() {
   );
 
   // Same project list as `projectThreadItems`, but restricted to the source
-  // thread's environment (cross-environment fork is unsupported). Picking a
-  // project here closes the palette, generates a handoff summary via the
-  // server, and opens a pre-filled draft in the target project.
+  // thread's environment (cross-environment fork is unsupported). The source
+  // project itself is included on purpose: forking back into the same project
+  // produces a fresh thread seeded with a handoff summary, useful for
+  // restarting from a clean context. Picking a project here closes the
+  // palette, generates a handoff summary via the server, and opens a
+  // pre-filled draft in the chosen project.
   const forkTargetProjects = useMemo(() => {
     if (!activeThread) return [];
-    return projects.filter(
-      (project) =>
-        project.environmentId === activeThread.environmentId &&
-        project.id !== activeThread.projectId,
-    );
+    return projects.filter((project) => project.environmentId === activeThread.environmentId);
   }, [activeThread, projects]);
 
   const forkTargetItems = useMemo(
@@ -732,6 +733,36 @@ function OpenCommandPaletteDialog() {
         },
       }),
     [activeThread, forkTargetProjects, forkThread],
+  );
+
+  // Same project list as the fork submenu. The branch action pastes the
+  // source transcript verbatim instead of asking the LLM for a summary, so
+  // the two share their target list but are surfaced as separate submenus
+  // (different action, different mental model).
+  const branchTargetItems = useMemo(
+    () =>
+      buildProjectActionItems({
+        projects: forkTargetProjects,
+        valuePrefix: "branch-thread-to",
+        icon: (project) => (
+          <ProjectFavicon
+            environmentId={project.environmentId}
+            cwd={project.cwd}
+            className={ITEM_ICON_CLASS}
+          />
+        ),
+        runProject: async (project) => {
+          if (!activeThread) return;
+          await branchThread({
+            sourceEnvironmentId: activeThread.environmentId,
+            sourceThreadId: activeThread.id,
+            targetEnvironmentId: project.environmentId,
+            targetProjectId: project.id,
+            targetProjectName: project.name,
+          });
+        },
+      }),
+    [activeThread, forkTargetProjects, branchThread],
   );
 
   const allThreadItems = useMemo(
@@ -1063,6 +1094,26 @@ function OpenCommandPaletteDialog() {
       groups: [{ value: "projects", label: "Projects", items: projectThreadItems }],
     });
 
+    if (branchTargetItems.length > 0) {
+      actionItems.push({
+        kind: "submenu",
+        value: "action:branch-thread-to",
+        searchTerms: [
+          "branch",
+          "copy",
+          "transcript",
+          "verbatim",
+          "duplicate",
+          "thread",
+          "restart",
+        ],
+        title: "Branch this thread to...",
+        icon: <GitForkIcon className={ITEM_ICON_CLASS} />,
+        addonIcon: <GitForkIcon className={ADDON_ICON_CLASS} />,
+        groups: [{ value: "projects", label: "Projects", items: branchTargetItems }],
+      });
+    }
+
     if (forkTargetItems.length > 0) {
       actionItems.push({
         kind: "submenu",
@@ -1075,6 +1126,7 @@ function OpenCommandPaletteDialog() {
           "another project",
           "thread",
           "transfer",
+          "summary",
         ],
         title: "Fork this thread to...",
         icon: <GitForkIcon className={ITEM_ICON_CLASS} />,

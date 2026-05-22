@@ -90,6 +90,14 @@ export const make = Effect.fn("makeGitLabSourceControlProvider")(function* () {
 
   return SourceControlProvider.SourceControlProvider.of({
     kind: "gitlab",
+    listOpenPullRequestsInRepo: () =>
+      Effect.fail(
+        new SourceControlProviderError({
+          provider: "gitlab",
+          operation: "listOpenPullRequestsInRepo",
+          detail: "Listing open merge requests across the repo is not supported on GitLab yet.",
+        }),
+      ),
     listChangeRequests: (input) => {
       const source = SourceControlProvider.sourceControlRefFromInput(input);
       return gitlab

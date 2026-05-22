@@ -95,9 +95,21 @@ export interface GitCommitProgress {
   }) => Effect.Effect<void, never>;
 }
 
+export interface GitCommitAuthorIdentity {
+  readonly name: string;
+  readonly email: string;
+}
+
 export interface GitCommitOptions {
   readonly timeoutMs?: number;
   readonly progress?: GitCommitProgress;
+  /**
+   * Author + committer identity to inject as `GIT_AUTHOR_*` / `GIT_COMMITTER_*`
+   * env vars. When omitted, git falls back to the ambient `user.name` /
+   * `user.email` config of the process. The WS layer derives this from the
+   * connected Tailscale user via {@link resolvedIdentityToGitAuthor}.
+   */
+  readonly identity?: GitCommitAuthorIdentity;
 }
 
 export interface GitPushResult {
@@ -199,6 +211,11 @@ export interface GitVcsDriverShape {
   readonly fetchRemoteTrackingBranch: (
     input: GitFetchRemoteTrackingBranchInput,
   ) => Effect.Effect<void, GitCommandError>;
+  readonly remoteBranchExists: (
+    cwd: string,
+    remoteName: string,
+    refName: string,
+  ) => Effect.Effect<boolean, GitCommandError>;
   readonly setBranchUpstream: (
     input: GitSetBranchUpstreamInput,
   ) => Effect.Effect<void, GitCommandError>;

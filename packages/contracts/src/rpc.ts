@@ -21,6 +21,8 @@ import {
   VcsInitInput,
   VcsListRefsInput,
   VcsListRefsResult,
+  GitListOpenPullRequestsInput,
+  GitListOpenPullRequestsResult,
   GitManagerServiceError,
   GitPreparePullRequestThreadInput,
   GitPreparePullRequestThreadResult,
@@ -147,6 +149,7 @@ export const WS_METHODS = {
   gitRunStackedAction: "git.runStackedAction",
   gitResolvePullRequest: "git.resolvePullRequest",
   gitPreparePullRequestThread: "git.preparePullRequestThread",
+  gitListOpenPullRequests: "git.listOpenPullRequests",
 
   // Terminal methods
   terminalOpen: "terminal.open",
@@ -348,6 +351,12 @@ export const WsGitResolvePullRequestRpc = Rpc.make(WS_METHODS.gitResolvePullRequ
 export const WsGitPreparePullRequestThreadRpc = Rpc.make(WS_METHODS.gitPreparePullRequestThread, {
   payload: GitPreparePullRequestThreadInput,
   success: GitPreparePullRequestThreadResult,
+  error: GitManagerServiceError,
+});
+
+export const WsGitListOpenPullRequestsRpc = Rpc.make(WS_METHODS.gitListOpenPullRequests, {
+  payload: GitListOpenPullRequestsInput,
+  success: GitListOpenPullRequestsResult,
   error: GitManagerServiceError,
 });
 
@@ -642,6 +651,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsGitRunStackedActionRpc,
   WsGitResolvePullRequestRpc,
   WsGitPreparePullRequestThreadRpc,
+  WsGitListOpenPullRequestsRpc,
   WsVcsListRefsRpc,
   WsVcsCreateWorktreeRpc,
   WsVcsRemoveWorktreeRpc,

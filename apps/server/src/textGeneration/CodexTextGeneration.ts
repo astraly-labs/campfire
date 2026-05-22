@@ -410,6 +410,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       targetProjectName: input.targetProjectName,
       transcript: input.transcript,
       note: input.note,
+      isSameProject: input.isSameProject,
     });
 
     const generated = yield* runCodexJson({

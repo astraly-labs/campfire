@@ -31,6 +31,16 @@ const QuotedMessageIdField = Schema.NullOr(MessageId).pipe(
 );
 
 /**
+ * `parentThreadId` is nullable to support workspace-wide global chats that
+ * are not anchored to any agent thread. Default-decoded to `null` so events
+ * that omit the key (e.g. global-chat creation) parse cleanly; historical
+ * events that always carried a parent decode unchanged.
+ */
+const ParentThreadIdField = Schema.NullOr(ThreadId).pipe(
+  Schema.withDecodingDefaultKey(Effect.succeed(null)),
+);
+
+/**
  * Inline media stapled onto a side-thread message. V1 ships GIFs only —
  * the discriminated union keeps the door open for future `image`/`file`
  * variants without re-shaping the message payload.
@@ -92,6 +102,18 @@ const ReactionsField = Schema.Array(SideThreadMessageReaction).pipe(
 export const SideThreadId = TrimmedNonEmptyString.pipe(Schema.brand("SideThreadId"));
 export type SideThreadId = typeof SideThreadId.Type;
 
+/**
+ * Well-known SideThreadId for the workspace-wide "Global chat" — a single
+ * Slack-style channel shared by everyone in the workspace, not anchored to
+ * any agent thread. The id is hard-coded so client and server can both refer
+ * to it without a discovery round-trip. The aggregate is created lazily on
+ * the first subscribe (server-side) by `ensureGlobalChat`.
+ */
+export const GLOBAL_CHAT_SIDETHREAD_ID = "st-global" as unknown as SideThreadId;
+
+export const isGlobalChat = (id: SideThreadId): boolean =>
+  (id as unknown as string) === (GLOBAL_CHAT_SIDETHREAD_ID as unknown as string);
+
 export const SideThreadMessageId = TrimmedNonEmptyString.pipe(Schema.brand("SideThreadMessageId"));
 export type SideThreadMessageId = typeof SideThreadMessageId.Type;
 
@@ -128,7 +150,8 @@ export type SideThreadMessage = typeof SideThreadMessage.Type;
  */
 export const SideThread = Schema.Struct({
   id: SideThreadId,
-  parentThreadId: ThreadId,
+  /** `null` for the workspace-wide global chat. See {@link GLOBAL_CHAT_SIDETHREAD_ID}. */
+  parentThreadId: ParentThreadIdField,
   createdBy: UserRef,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -151,7 +174,8 @@ export const SideThreadCreateCommand = Schema.Struct({
   type: Schema.Literal("sidethread.create"),
   commandId: CommandId,
   sideThreadId: SideThreadId,
-  parentThreadId: ThreadId,
+  /** `null` creates a workspace-wide global chat (not anchored to any agent thread). */
+  parentThreadId: ParentThreadIdField,
   createdBy: UserRef,
 });
 export type SideThreadCreateCommand = typeof SideThreadCreateCommand.Type;
@@ -269,7 +293,7 @@ const SideThreadEventBaseFields = {
 
 export const SideThreadCreatedPayload = Schema.Struct({
   sideThreadId: SideThreadId,
-  parentThreadId: ThreadId,
+  parentThreadId: ParentThreadIdField,
   createdBy: UserRef,
 });
 export type SideThreadCreatedPayload = typeof SideThreadCreatedPayload.Type;

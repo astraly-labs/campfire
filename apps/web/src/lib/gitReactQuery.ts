@@ -13,6 +13,7 @@ import {
 } from "@tanstack/react-query";
 import { ensureEnvironmentApi } from "../environmentApi";
 import { requireEnvironmentConnection } from "../environments/runtime";
+import { stackedThreadToast, toastManager } from "../components/ui/toast";
 
 const GIT_BRANCHES_STALE_TIME_MS = 15_000;
 const GIT_BRANCHES_REFETCH_INTERVAL_MS = 60_000;
@@ -97,6 +98,39 @@ export function gitBranchSearchInfiniteQueryOptions(input: {
     refetchOnWindowFocus: true,
     refetchOnReconnect: true,
     refetchInterval: GIT_BRANCHES_REFETCH_INTERVAL_MS,
+  });
+}
+
+const GIT_OPEN_PRS_STALE_TIME_MS = 30_000;
+const GIT_OPEN_PRS_DEFAULT_LIMIT = 30;
+
+export function gitListOpenPullRequestsQueryOptions(input: {
+  environmentId: EnvironmentId | null;
+  cwd: string | null;
+  enabled?: boolean;
+}) {
+  return queryOptions({
+    queryKey: [
+      "git",
+      "list-open-pull-requests",
+      input.environmentId ?? null,
+      input.cwd,
+    ] as const,
+    queryFn: async () => {
+      if (!input.cwd || !input.environmentId) {
+        throw new Error("Open pull requests are unavailable.");
+      }
+      const api = ensureEnvironmentApi(input.environmentId);
+      return api.git.listOpenPullRequests({
+        cwd: input.cwd,
+        limit: GIT_OPEN_PRS_DEFAULT_LIMIT,
+      });
+    },
+    enabled:
+      input.environmentId !== null && input.cwd !== null && (input.enabled ?? true),
+    staleTime: GIT_OPEN_PRS_STALE_TIME_MS,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
 }
 
@@ -268,7 +302,16 @@ export function gitCreateWorktreeMutationOptions(input: {
       }
       return ensureEnvironmentApi(input.environmentId).vcs.createWorktree(args);
     },
-    onSuccess: async () => {
+    onSuccess: async (data) => {
+      if (data.fetchWarning) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: "Worktree created from local state",
+            description: data.fetchWarning,
+          }),
+        );
+      }
       await invalidateGitQueries(input.queryClient, { environmentId: input.environmentId });
     },
   });

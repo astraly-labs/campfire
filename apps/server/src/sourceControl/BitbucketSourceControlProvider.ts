@@ -49,6 +49,14 @@ export const make = Effect.fn("makeBitbucketSourceControlProvider")(function* ()
 
   return SourceControlProvider.SourceControlProvider.of({
     kind: "bitbucket",
+    listOpenPullRequestsInRepo: () =>
+      Effect.fail(
+        new SourceControlProviderError({
+          provider: "bitbucket",
+          operation: "listOpenPullRequestsInRepo",
+          detail: "Listing open pull requests across the repo is not supported on Bitbucket yet.",
+        }),
+      ),
     listChangeRequests: (input) => {
       const source = SourceControlProvider.sourceControlRefFromInput(input);
       return bitbucket

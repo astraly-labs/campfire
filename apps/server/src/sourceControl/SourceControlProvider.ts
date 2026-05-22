@@ -59,6 +59,14 @@ export interface SourceControlProviderShape {
     readonly state: ChangeRequestState | "all";
     readonly limit?: number;
   }) => Effect.Effect<ReadonlyArray<ChangeRequest>, SourceControlProviderError>;
+  // Lists every open PR in the repo (no `headSelector` filter). Powers the
+  // "From PR" tab in the worktree-base picker; providers that don't yet
+  // implement it should fail with `unsupported` so the UI can hide the tab.
+  readonly listOpenPullRequestsInRepo: (input: {
+    readonly cwd: string;
+    readonly context?: SourceControlProviderContext;
+    readonly limit?: number;
+  }) => Effect.Effect<ReadonlyArray<ChangeRequest>, SourceControlProviderError>;
   readonly getChangeRequest: (input: {
     readonly cwd: string;
     readonly context?: SourceControlProviderContext;

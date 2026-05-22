@@ -3,6 +3,7 @@ import {
   type EnvironmentId,
   type MessageId,
   type SideThread,
+  type SideThreadId,
   type SideThreadMessage,
   type SideThreadMessageId,
   type SideThreadMessageReaction,
@@ -122,6 +123,7 @@ export function SideThreadDrawer({ environmentId, mode = "sidebar" }: Props) {
       <DrawerBody
         environmentId={environmentId}
         parentThreadId={openParentThreadId}
+        sideThreadId={deriveSideThreadId(openParentThreadId)}
         onClose={close}
         mode={mode}
       />
@@ -134,6 +136,7 @@ export function SideThreadDrawer({ environmentId, mode = "sidebar" }: Props) {
         <DrawerBody
           environmentId={environmentId}
           parentThreadId={openParentThreadId}
+          sideThreadId={deriveSideThreadId(openParentThreadId)}
           onClose={close}
           mode={mode}
         />
@@ -142,18 +145,26 @@ export function SideThreadDrawer({ environmentId, mode = "sidebar" }: Props) {
   );
 }
 
-function DrawerBody({
+/**
+ * Side-thread chat body — used both by the per-thread drawer above and the
+ * standalone Global chat route. When `parentThreadId` is `null` we render in
+ * "global" mode: no quote-to-agent affordances, the header switches label,
+ * and the lazy `sidethread.create` dispatch ships `parentThreadId: null` so
+ * the server materialises the workspace-wide aggregate.
+ */
+export function DrawerBody({
   environmentId,
   parentThreadId,
+  sideThreadId,
   onClose,
   mode,
 }: {
   environmentId: EnvironmentId;
-  parentThreadId: ThreadId;
+  parentThreadId: ThreadId | null;
+  sideThreadId: SideThreadId;
   onClose: () => void;
   mode: "sidebar" | "sheet";
 }) {
-  const sideThreadId = deriveSideThreadId(parentThreadId);
   const [sideThread, setSideThread] = useState<SideThread | null>(null);
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -531,7 +542,9 @@ function DrawerBody({
       aria-label="Side thread"
     >
       <div className="flex h-12 shrink-0 items-center justify-between border-b border-border/60 px-3">
-        <span className="text-[11px] font-medium text-muted-foreground/80">Side thread</span>
+        <span className="text-[11px] font-medium text-muted-foreground/80">
+          {parentThreadId === null ? "Global chat" : "Side thread"}
+        </span>
         <Button
           variant="ghost"
           size="icon-xs"

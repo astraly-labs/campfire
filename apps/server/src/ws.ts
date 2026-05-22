@@ -41,6 +41,7 @@ import {
   ProjectWriteFileError,
   OrchestrationReplayEventsError,
   FilesystemBrowseError,
+  GLOBAL_CHAT_SIDETHREAD_ID,
   SIDETHREAD_WS_METHODS,
   SideThreadDispatchCommandError,
   SideThreadGetSnapshotError,
@@ -85,6 +86,7 @@ import { WorkspacePathOutsideRootError } from "./workspace/Services/WorkspacePat
 import { VcsStatusBroadcaster } from "./vcs/VcsStatusBroadcaster.ts";
 import { VcsProvisioningService } from "./vcs/VcsProvisioningService.ts";
 import { GitWorkflowService } from "./git/GitWorkflowService.ts";
+import { resolvedIdentityToGitAuthor } from "./git/commitIdentity.ts";
 import { ProjectSetupScriptRunner } from "./project/Services/ProjectSetupScriptRunner.ts";
 import { RepositoryIdentityResolver } from "./project/Services/RepositoryIdentityResolver.ts";
 import { ServerEnvironment } from "./environment/Services/ServerEnvironment.ts";
@@ -277,6 +279,28 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId, initialIdentity: Resolv
             id: EventId.make(crypto.randomUUID()),
             tone: "info",
             kind: "workspace.no-worktree-warning",
+            summary: input.summary,
+            payload: input.payload,
+            turnId: null,
+            createdAt: input.createdAt,
+          },
+          createdAt: input.createdAt,
+        });
+
+      const appendWorktreeFetchWarningActivity = (input: {
+        readonly threadId: ThreadId;
+        readonly summary: string;
+        readonly createdAt: string;
+        readonly payload: Record<string, unknown>;
+      }) =>
+        orchestrationEngine.dispatch({
+          type: "thread.activity.append",
+          commandId: serverCommandId("worktree-fetch-warning"),
+          threadId: input.threadId,
+          activity: {
+            id: EventId.make(crypto.randomUUID()),
+            tone: "info",
+            kind: "workspace.worktree-fetch-warning",
             summary: input.summary,
             payload: input.payload,
             turnId: null,
@@ -641,6 +665,9 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId, initialIdentity: Resolv
                 refName: bootstrap.prepareWorktree.baseBranch,
                 newRefName: bootstrap.prepareWorktree.branch,
                 path: null,
+                ...(bootstrap.prepareWorktree.fetchFromRemote !== undefined
+                  ? { fetchFromRemote: bootstrap.prepareWorktree.fetchFromRemote }
+                  : {}),
               });
               targetWorktreePath = worktree.worktree.path;
               yield* orchestrationEngine.dispatch({
@@ -650,6 +677,17 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId, initialIdentity: Resolv
                 branch: worktree.worktree.refName,
                 worktreePath: targetWorktreePath,
               });
+              if (worktree.fetchWarning) {
+                yield* appendWorktreeFetchWarningActivity({
+                  threadId: command.threadId,
+                  summary: worktree.fetchWarning,
+                  createdAt: yield* nowIso,
+                  payload: {
+                    baseBranch: bootstrap.prepareWorktree.baseBranch,
+                    worktreePath: targetWorktreePath,
+                  },
+                });
+              }
               yield* refreshGitStatus(targetWorktreePath);
             }
 
@@ -1117,6 +1155,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId, initialIdentity: Resolv
                   targetProjectName: targetProject.title,
                   transcript,
                   ...(input.note !== undefined ? { note: input.note } : {}),
+                  isSameProject: sourceThread.projectId === input.targetProjectId,
                   modelSelection: input.modelSelection,
                 })
                 .pipe(
@@ -1256,7 +1295,30 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId, initialIdentity: Resolv
           observeRpcStreamEffect(
             SIDETHREAD_WS_METHODS.subscribeSideThread,
             Effect.gen(function* () {
-              const snapshotOpt = yield* sideThreadEngine.getSnapshot(input.sideThreadId);
+              // Workspace-wide global chat is created lazily on first
+              // subscribe. The id is a stable well-known constant shared by
+              // every workspace, so the first user to open it materialises
+              // the aggregate; subsequent subscribes hit the existing snapshot.
+              // We swallow "already exists" so a race between two simultaneous
+              // first-subscribes resolves harmlessly — both end up subscribing
+              // to the same aggregate.
+              const isGlobal =
+                (input.sideThreadId as unknown as string) ===
+                (GLOBAL_CHAT_SIDETHREAD_ID as unknown as string);
+              let snapshotOpt = yield* sideThreadEngine.getSnapshot(input.sideThreadId);
+              if (Option.isNone(snapshotOpt) && isGlobal) {
+                const creator = (yield* Ref.get(currentIdentityRef)).user;
+                yield* sideThreadEngine
+                  .dispatch({
+                    type: "sidethread.create",
+                    commandId: serverCommandId("global-chat-bootstrap"),
+                    sideThreadId: GLOBAL_CHAT_SIDETHREAD_ID,
+                    parentThreadId: null,
+                    createdBy: creator,
+                  })
+                  .pipe(Effect.ignore);
+                snapshotOpt = yield* sideThreadEngine.getSnapshot(input.sideThreadId);
+              }
               if (Option.isNone(snapshotOpt)) {
                 return yield* new SideThreadGetSnapshotError({
                   message: `SideThread ${input.sideThreadId} was not found`,
@@ -1675,22 +1737,24 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId, initialIdentity: Resolv
           observeRpcStream(
             WS_METHODS.gitRunStackedAction,
             Stream.callback<GitActionProgressEvent, GitManagerServiceError>((queue) =>
-              gitWorkflow
-                .runStackedAction(input, {
-                  actionId: input.actionId,
-                  progressReporter: {
-                    publish: (event) => Queue.offer(queue, event).pipe(Effect.asVoid),
-                  },
-                })
-                .pipe(
-                  Effect.matchCauseEffect({
-                    onFailure: (cause) => Queue.failCause(queue, cause),
-                    onSuccess: () =>
-                      refreshGitStatus(input.cwd).pipe(
-                        Effect.andThen(Queue.end(queue).pipe(Effect.asVoid)),
-                      ),
+              Ref.get(currentIdentityRef).pipe(
+                Effect.flatMap((identity) =>
+                  gitWorkflow.runStackedAction(input, {
+                    actionId: input.actionId,
+                    progressReporter: {
+                      publish: (event) => Queue.offer(queue, event).pipe(Effect.asVoid),
+                    },
+                    committerIdentity: resolvedIdentityToGitAuthor(identity),
                   }),
                 ),
+                Effect.matchCauseEffect({
+                  onFailure: (cause) => Queue.failCause(queue, cause),
+                  onSuccess: () =>
+                    refreshGitStatus(input.cwd).pipe(
+                      Effect.andThen(Queue.end(queue).pipe(Effect.asVoid)),
+                    ),
+                }),
+              ),
             ),
             { "rpc.aggregate": "vcs" },
           ),
@@ -1708,6 +1772,12 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId, initialIdentity: Resolv
             gitWorkflow
               .preparePullRequestThread(input)
               .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "git" },
+          ),
+        [WS_METHODS.gitListOpenPullRequests]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.gitListOpenPullRequests,
+            gitWorkflow.listOpenPullRequests(input),
             { "rpc.aggregate": "git" },
           ),
         [WS_METHODS.vcsListRefs]: (input) =>

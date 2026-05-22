@@ -97,6 +97,16 @@ const GitResolvedPullRequest = Schema.Struct({
 });
 export type GitResolvedPullRequest = typeof GitResolvedPullRequest.Type;
 
+const GitOpenPullRequest = Schema.Struct({
+  number: PositiveInt,
+  title: TrimmedNonEmptyStringSchema,
+  url: Schema.String,
+  baseBranch: TrimmedNonEmptyStringSchema,
+  headBranch: TrimmedNonEmptyStringSchema,
+  isCrossRepository: Schema.optional(Schema.Boolean),
+});
+export type GitOpenPullRequest = typeof GitOpenPullRequest.Type;
+
 // RPC Inputs
 
 export const VcsStatusInput = Schema.Struct({
@@ -136,6 +146,7 @@ export const VcsCreateWorktreeInput = Schema.Struct({
   refName: TrimmedNonEmptyStringSchema,
   newRefName: Schema.optional(TrimmedNonEmptyStringSchema),
   path: Schema.NullOr(TrimmedNonEmptyStringSchema),
+  fetchFromRemote: Schema.optional(Schema.Boolean),
 });
 export type VcsCreateWorktreeInput = typeof VcsCreateWorktreeInput.Type;
 
@@ -152,6 +163,16 @@ export const GitPreparePullRequestThreadInput = Schema.Struct({
   threadId: Schema.optional(ThreadId),
 });
 export type GitPreparePullRequestThreadInput = typeof GitPreparePullRequestThreadInput.Type;
+
+export const GIT_LIST_OPEN_PULL_REQUESTS_MAX_LIMIT = 50;
+
+export const GitListOpenPullRequestsInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+  limit: Schema.optional(
+    PositiveInt.check(Schema.isLessThanOrEqualTo(GIT_LIST_OPEN_PULL_REQUESTS_MAX_LIMIT)),
+  ),
+});
+export type GitListOpenPullRequestsInput = typeof GitListOpenPullRequestsInput.Type;
 
 export const VcsRemoveWorktreeInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
@@ -260,6 +281,7 @@ export type VcsListRefsResult = typeof VcsListRefsResult.Type;
 
 export const VcsCreateWorktreeResult = Schema.Struct({
   worktree: VcsWorktree,
+  fetchWarning: Schema.optional(TrimmedNonEmptyStringSchema),
 });
 export type VcsCreateWorktreeResult = typeof VcsCreateWorktreeResult.Type;
 
@@ -274,6 +296,14 @@ export const GitPreparePullRequestThreadResult = Schema.Struct({
   worktreePath: TrimmedNonEmptyStringSchema.pipe(Schema.NullOr),
 });
 export type GitPreparePullRequestThreadResult = typeof GitPreparePullRequestThreadResult.Type;
+
+export const GitListOpenPullRequestsResult = Schema.Struct({
+  pullRequests: Schema.Array(GitOpenPullRequest),
+  // `supported: false` lets the UI hide the "From PR" tab gracefully on
+  // providers that haven't implemented repo-wide PR listing yet.
+  supported: Schema.Boolean,
+});
+export type GitListOpenPullRequestsResult = typeof GitListOpenPullRequestsResult.Type;
 
 export const VcsSwitchRefResult = Schema.Struct({
   refName: Schema.NullOr(TrimmedNonEmptyStringSchema),

@@ -226,6 +226,29 @@ describe("buildThreadHandoffPrompt", () => {
     // The full payload should not survive verbatim.
     expect(result.prompt.includes(huge)).toBe(false);
   });
+
+  it("frames the prompt for a same-project handoff", () => {
+    const result = buildThreadHandoffPrompt({
+      ...baseInput,
+      isSameProject: true,
+      transcript: [{ role: "user", text: "Pick up where we left off." }],
+    });
+
+    // Same-project framing: the next agent shares the repo.
+    expect(result.prompt).toContain("fresh agent");
+    expect(result.prompt).toContain("same project");
+    expect(result.prompt).toContain("shares the repository");
+
+    // Cross-project framing should not leak in.
+    expect(result.prompt).not.toContain("separate repository");
+    expect(result.prompt).not.toContain("no visibility into the source");
+
+    // Project metadata block collapses to a single project (no Target lines).
+    expect(result.prompt).toContain("Project: analytics");
+    expect(result.prompt).toContain("Cwd: /home/dev/repos/analytics");
+    expect(result.prompt).not.toContain("Target project:");
+    expect(result.prompt).not.toContain("Target cwd:");
+  });
 });
 
 describe("buildConversationSummaryPrompt", () => {

@@ -57,6 +57,13 @@ export interface GitHubCliShape {
     readonly limit?: number;
   }) => Effect.Effect<ReadonlyArray<GitHubPullRequestSummary>, GitHubCliError>;
 
+  // Lists open PRs across the whole repo (no `--head` filter). Used to power
+  // the "From PR" tab in the worktree-base picker.
+  readonly listAllOpenPullRequests: (input: {
+    readonly cwd: string;
+    readonly limit?: number;
+  }) => Effect.Effect<ReadonlyArray<GitHubPullRequestSummary>, GitHubCliError>;
+
   readonly getPullRequest: (input: {
     readonly cwd: string;
     readonly reference: string;
@@ -274,6 +281,42 @@ export const make = Effect.fn("makeGitHubCli")(function* () {
                     );
                   }
 
+                  return Effect.succeed(
+                    decoded.success.map(({ updatedAt: _updatedAt, ...summary }) => summary),
+                  );
+                }),
+              ),
+        ),
+      ),
+    listAllOpenPullRequests: (input) =>
+      execute({
+        cwd: input.cwd,
+        args: [
+          "pr",
+          "list",
+          "--state",
+          "open",
+          "--limit",
+          String(input.limit ?? 30),
+          "--json",
+          "number,title,url,baseRefName,headRefName,state,mergedAt,isCrossRepository,headRepository,headRepositoryOwner",
+        ],
+      }).pipe(
+        Effect.map((result) => result.stdout.trim()),
+        Effect.flatMap((raw) =>
+          raw.length === 0
+            ? Effect.succeed([])
+            : Effect.sync(() => GitHubPullRequests.decodeGitHubPullRequestListJson(raw)).pipe(
+                Effect.flatMap((decoded) => {
+                  if (!Result.isSuccess(decoded)) {
+                    return Effect.fail(
+                      new GitHubCliError({
+                        operation: "listOpenPullRequests",
+                        detail: `GitHub CLI returned invalid PR list JSON: ${GitHubPullRequests.formatGitHubJsonDecodeError(decoded.failure)}`,
+                        cause: decoded.failure,
+                      }),
+                    );
+                  }
                   return Effect.succeed(
                     decoded.success.map(({ updatedAt: _updatedAt, ...summary }) => summary),
                   );

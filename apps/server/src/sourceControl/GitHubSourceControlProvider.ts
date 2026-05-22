@@ -161,9 +161,22 @@ export const make = Effect.fn("makeGitHubSourceControlProvider")(function* () {
         );
     };
 
+  const listOpenPullRequestsInRepo: SourceControlProvider.SourceControlProviderShape["listOpenPullRequestsInRepo"] =
+    (input) =>
+      github
+        .listAllOpenPullRequests({
+          cwd: input.cwd,
+          ...(input.limit !== undefined ? { limit: input.limit } : {}),
+        })
+        .pipe(
+          Effect.map((items) => items.map(toChangeRequest)),
+          Effect.mapError((error) => providerError("listOpenPullRequestsInRepo", error)),
+        );
+
   return SourceControlProvider.SourceControlProvider.of({
     kind: "github",
     listChangeRequests,
+    listOpenPullRequestsInRepo,
     getChangeRequest: (input) =>
       github.getPullRequest(input).pipe(
         Effect.map(toChangeRequest),

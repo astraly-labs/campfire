@@ -13,6 +13,8 @@ import {
   type VcsCreateWorktreeResult,
   type VcsListRefsInput,
   type VcsListRefsResult,
+  type GitListOpenPullRequestsInput,
+  type GitListOpenPullRequestsResult,
   type GitManagerServiceError,
   type GitPreparePullRequestThreadInput,
   type GitPreparePullRequestThreadResult,
@@ -56,6 +58,9 @@ export interface GitWorkflowServiceShape {
   readonly preparePullRequestThread: (
     input: GitPreparePullRequestThreadInput,
   ) => Effect.Effect<GitPreparePullRequestThreadResult, GitManagerServiceError>;
+  readonly listOpenPullRequests: (
+    input: GitListOpenPullRequestsInput,
+  ) => Effect.Effect<GitListOpenPullRequestsResult, GitManagerServiceError>;
   readonly listRefs: (input: VcsListRefsInput) => Effect.Effect<VcsListRefsResult, GitCommandError>;
   readonly createWorktree: (
     input: VcsCreateWorktreeInput,
@@ -244,6 +249,75 @@ export const make = Effect.fn("makeGitWorkflowService")(function* () {
     (input: Input) =>
       ensureGit(operation, input.cwd).pipe(Effect.andThen(run(input)));
 
+  // When `fetchFromRemote` is requested, fetch the remote-tracking ref for the
+  // selected base branch and rebase the worktree on `<remote>/<branch>` so the
+  // worktree starts from the freshest remote state instead of a (possibly
+  // stale) local ref. Falls back to the local ref with a warning on fetch
+  // failure (offline, auth, removed remote branch).
+  const createWorktreeWithMaybeFetch = Effect.fn("GitWorkflowService.createWorktreeWithMaybeFetch")(
+    function* (input: VcsCreateWorktreeInput) {
+      yield* Effect.annotateCurrentSpan({
+        "vcs.worktree.fetch_from_remote_requested": input.fetchFromRemote === true,
+      });
+
+      if (!input.fetchFromRemote) {
+        return yield* git.createWorktree(input);
+      }
+
+      const remoteName = yield* git
+        .resolvePrimaryRemoteName(input.cwd)
+        .pipe(Effect.catch(() => Effect.succeed<string | null>(null)));
+      if (remoteName === null) {
+        return yield* git.createWorktree(input);
+      }
+
+      const prefix = `${remoteName}/`;
+      const bareBranch = input.refName.startsWith(prefix)
+        ? input.refName.slice(prefix.length)
+        : input.refName;
+
+      // Only attempt fetch when we already have a remote-tracking ref for this
+      // branch. Purely local branches → skip silently (no warning).
+      const hasRemoteRef = yield* git
+        .remoteBranchExists(input.cwd, remoteName, bareBranch)
+        .pipe(Effect.catch(() => Effect.succeed(false)));
+      if (!hasRemoteRef) {
+        return yield* git.createWorktree(input);
+      }
+
+      const fetched = yield* git
+        .fetchRemoteTrackingBranch({
+          cwd: input.cwd,
+          remoteName,
+          remoteBranch: bareBranch,
+        })
+        .pipe(
+          Effect.matchEffect({
+            onSuccess: () => Effect.succeed(true as const),
+            onFailure: (error) =>
+              Effect.logWarning(
+                `[🌐 Worktree] fetch ${remoteName}/${bareBranch} failed in ${input.cwd}: ${error.message}`,
+              ).pipe(Effect.as(false as const)),
+          }),
+        );
+
+      yield* Effect.annotateCurrentSpan({ "vcs.worktree.fetched_from_remote": fetched });
+
+      if (!fetched) {
+        const result = yield* git.createWorktree(input);
+        return {
+          ...result,
+          fetchWarning: "Could not fetch from origin, using local state",
+        } satisfies VcsCreateWorktreeResult;
+      }
+
+      return yield* git.createWorktree({
+        ...input,
+        refName: `${remoteName}/${bareBranch}`,
+      });
+    },
+  );
+
   return GitWorkflowService.of({
     status: (input) =>
       detectGitRepositoryForStatus("GitWorkflowService.status", input.cwd).pipe(
@@ -284,6 +358,10 @@ export const make = Effect.fn("makeGitWorkflowService")(function* () {
       "GitWorkflowService.preparePullRequestThread",
       gitManager.preparePullRequestThread,
     ),
+    listOpenPullRequests: routeGitManager(
+      "GitWorkflowService.listOpenPullRequests",
+      gitManager.listOpenPullRequests,
+    ),
     listRefs: (input) =>
       detectGitRepositoryForCommand("GitWorkflowService.listRefs", input.cwd).pipe(
         Effect.flatMap((isGitRepository) =>
@@ -292,7 +370,7 @@ export const make = Effect.fn("makeGitWorkflowService")(function* () {
       ),
     createWorktree: (input) =>
       ensureGitCommand("GitWorkflowService.createWorktree", input.cwd).pipe(
-        Effect.andThen(git.createWorktree(input)),
+        Effect.andThen(createWorktreeWithMaybeFetch(input)),
       ),
     removeWorktree: (input) =>
       ensureGitCommand("GitWorkflowService.removeWorktree", input.cwd).pipe(

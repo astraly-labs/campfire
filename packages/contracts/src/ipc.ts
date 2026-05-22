@@ -2,6 +2,8 @@ import type {
   VcsSwitchRefInput,
   VcsSwitchRefResult,
   VcsCreateRefInput,
+  GitListOpenPullRequestsInput,
+  GitListOpenPullRequestsResult,
   GitPreparePullRequestThreadInput,
   GitPreparePullRequestThreadResult,
   GitPullRequestRefInput,
@@ -568,6 +570,9 @@ export interface EnvironmentApi {
     preparePullRequestThread: (
       input: GitPreparePullRequestThreadInput,
     ) => Promise<GitPreparePullRequestThreadResult>;
+    listOpenPullRequests: (
+      input: GitListOpenPullRequestsInput,
+    ) => Promise<GitListOpenPullRequestsResult>;
   };
   orchestration: {
     dispatchCommand: (command: ClientOrchestrationCommand) => Promise<{ sequence: number }>;

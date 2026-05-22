@@ -4,6 +4,7 @@ import {
   ChevronRightIcon,
   CloudIcon,
   FolderPlusIcon,
+  HashIcon,
   InboxIcon,
   SearchIcon,
   SettingsIcon,
@@ -2618,6 +2619,12 @@ const SidebarChromeFooter = memo(function SidebarChromeFooter() {
     }
     void navigate({ to: "/inbox" });
   }, [isMobile, navigate, setOpenMobile]);
+  const handleGlobalChatClick = useCallback(() => {
+    if (isMobile) {
+      setOpenMobile(false);
+    }
+    void navigate({ to: "/global" });
+  }, [isMobile, navigate, setOpenMobile]);
   const handleHealthClick = useCallback(() => {
     if (isMobile) {
       setOpenMobile(false);
@@ -2630,6 +2637,16 @@ const SidebarChromeFooter = memo(function SidebarChromeFooter() {
       <SidebarProviderUpdatePill />
       <SidebarUpdatePill />
       <SidebarMenu>
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            size="sm"
+            className="gap-2 px-2 py-1.5 text-muted-foreground/70 hover:bg-accent hover:text-foreground"
+            onClick={handleGlobalChatClick}
+          >
+            <HashIcon className="size-3.5" />
+            <span className="text-xs">Global chat</span>
+          </SidebarMenuButton>
+        </SidebarMenuItem>
         <SidebarMenuItem>
           <SidebarMenuButton
             size="sm"

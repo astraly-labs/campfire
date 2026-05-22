@@ -295,7 +295,10 @@ export const resolveServerConfig = (
         Option.fromUndefinedOr(env.noBrowser),
         Option.fromUndefinedOr(bootstrap?.noBrowser),
       ),
-      () => mode === "desktop",
+      // Default: skip browser auto-open in desktop mode (Electron handles it)
+      // and during dev (devUrl points at the Vite dev server — let the developer
+      // open the tab they want instead of spawning one on every restart).
+      () => mode === "desktop" || devUrl !== undefined,
     );
     const desktopBootstrapToken = bootstrap?.desktopBootstrapToken;
     const autoBootstrapProjectFromCwd = Option.getOrElse(

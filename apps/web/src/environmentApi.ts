@@ -50,6 +50,7 @@ export function createEnvironmentApi(rpcClient: WsRpcClient): EnvironmentApi {
     git: {
       resolvePullRequest: rpcClient.git.resolvePullRequest,
       preparePullRequestThread: rpcClient.git.preparePullRequestThread,
+      listOpenPullRequests: rpcClient.git.listOpenPullRequests,
     },
     orchestration: {
       dispatchCommand: rpcClient.orchestration.dispatchCommand,

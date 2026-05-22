@@ -357,6 +357,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       targetProjectName: input.targetProjectName,
       transcript: input.transcript,
       note: input.note,
+      isSameProject: input.isSameProject,
     });
 
     const generated = yield* runClaudeJson({

@@ -236,6 +236,11 @@ const makeSideThreadProjectionPipeline = Effect.gen(function* () {
             // We need parentThreadId to power the inbox. If the snapshot
             // hasn't materialised yet (out-of-order replay), skip — bootstrap
             // will redo the insert after the SideThread snapshot lands.
+            // V1 limitation: mentions inside the workspace-wide global chat
+            // have `parentThreadId === null` and are intentionally NOT
+            // pushed to the inbox (the `projection_side_thread_message_mentions`
+            // schema requires a non-null parent). The mention still appears
+            // inline in the global chat itself.
             if (parentThreadId) {
               const textPreview = truncateForPreview(event.payload.text);
               for (const mention of mentionsForMessage) {

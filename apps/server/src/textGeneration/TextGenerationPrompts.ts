@@ -234,6 +234,13 @@ export interface ThreadHandoffPromptInput {
   targetProjectName: string;
   transcript: ReadonlyArray<ThreadHandoffTranscriptMessageInput>;
   note?: string | undefined;
+  /**
+   * `true` when the handoff is forking back into the source project (same
+   * cwd, same repo). The prompt then drops the "separate repository" framing
+   * so the next agent doesn't waste tokens explaining the codebase to
+   * itself.
+   */
+  isSameProject?: boolean | undefined;
 }
 
 // Cap individual transcript messages so a single runaway agent reply cannot
@@ -321,10 +328,48 @@ export function buildThreadHandoffPrompt(input: ThreadHandoffPromptInput) {
       ? ["", "User note for the next agent:", limitSection(input.note.trim(), 2_000)]
       : [];
 
+  // Two framings depending on whether the handoff crosses projects. The
+  // cross-project case tells the model the next agent cannot see source
+  // files; the same-project case tells it the next agent shares the repo
+  // but starts from a clean transcript. Mixing the two confuses the model
+  // (it either over-explains the codebase or under-qualifies cross-repo
+  // paths).
+  const intro = input.isSameProject
+    ? [
+        "You are summarising a coding conversation as a handoff for a fresh agent",
+        "session in the same project. The next agent shares the repository and",
+        "files but has no memory of this thread.",
+      ]
+    : [
+        "You are summarising a coding conversation as a handoff for a different agent",
+        "who will work in a separate repository and has no visibility into the source",
+        "thread, the source repository, or its files.",
+      ];
+
+  const contextRule = input.isSameProject
+    ? "- Under `## Context`, restate the goal and current state in one or two sentences. The next agent has the repo, so do not re-explain the codebase."
+    : "- Under `## Context`, name the source project and what the user was doing in one or two sentences. Do NOT assume the next agent can read the source repo.";
+
+  const filesRule = input.isSameProject
+    ? "- Under `## Files & references`, list files, symbols, URLs, or external IDs the next agent should look at. Repo-relative paths are fine — same project."
+    : "- Under `## Files & references`, list files, symbols, URLs, or external IDs that the next agent should look at. Qualify cross-repo paths with the source project name so the next agent does not look for them locally.";
+
+  const nextStepRule = input.isSameProject
+    ? "- Under `## Suggested next step`, propose the concrete task to continue in this project. Be specific and grounded in the findings."
+    : "- Under `## Suggested next step`, propose the concrete task to do in the target project. Be specific and grounded in the findings.";
+
+  const projectLines = input.isSameProject
+    ? [`Project: ${sourceProjectLabel}`, `Cwd: ${input.sourceCwd}`, branchLine]
+    : [
+        `Source project: ${sourceProjectLabel}`,
+        `Source cwd: ${input.sourceCwd}`,
+        branchLine,
+        `Target project: ${input.targetProjectName}`,
+        `Target cwd: ${input.targetCwd}`,
+      ];
+
   const prompt = [
-    "You are summarising a coding conversation as a handoff for a different agent",
-    "who will work in a separate repository and has no visibility into the source",
-    "thread, the source repository, or its files.",
+    ...intro,
     "",
     "Return a JSON object with key: prompt.",
     "Rules for the `prompt` field:",
@@ -332,23 +377,15 @@ export function buildThreadHandoffPrompt(input: ThreadHandoffPromptInput) {
     "- Use Markdown with these top-level sections (omit a section only if",
     "  genuinely empty): `## Context`, `## What was found`, `## Files & references`,",
     "  `## Suggested next step`.",
-    "- Under `## Context`, name the source project and what the user was doing in",
-    "  one or two sentences. Do NOT assume the next agent can read the source repo.",
+    contextRule,
     "- Under `## What was found`, list concrete findings, hypotheses, or decisions",
     "  with enough detail to be actionable in isolation.",
-    "- Under `## Files & references`, list files, symbols, URLs, or external IDs",
-    "  that the next agent should look at. Qualify cross-repo paths with the source",
-    "  project name so the next agent does not look for them locally.",
-    "- Under `## Suggested next step`, propose the concrete task to do in the",
-    "  target project. Be specific and grounded in the findings.",
+    filesRule,
+    nextStepRule,
     "- Never invent files, symbols, or facts that are not in the transcript.",
     "- Keep the whole prompt under ~400 words; favour density over prose.",
     "",
-    `Source project: ${sourceProjectLabel}`,
-    `Source cwd: ${input.sourceCwd}`,
-    branchLine,
-    `Target project: ${input.targetProjectName}`,
-    `Target cwd: ${input.targetCwd}`,
+    ...projectLines,
     ...userNoteSection,
     "",
     "Source transcript (oldest first):",

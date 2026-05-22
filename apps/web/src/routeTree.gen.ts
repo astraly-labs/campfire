@@ -24,6 +24,7 @@ import { Route as SettingsDiagnosticsRouteImport } from './routes/settings.diagn
 import { Route as SettingsConnectionsRouteImport } from './routes/settings.connections'
 import { Route as SettingsArchivedRouteImport } from './routes/settings.archived'
 import { Route as ChatInboxRouteImport } from './routes/_chat.inbox'
+import { Route as ChatGlobalRouteImport } from './routes/_chat.global'
 import { Route as ChatDraftDraftIdRouteImport } from './routes/_chat.draft.$draftId'
 import { Route as ChatEnvironmentIdThreadIdRouteImport } from './routes/_chat.$environmentId.$threadId'
 
@@ -101,6 +102,11 @@ const ChatInboxRoute = ChatInboxRouteImport.update({
   path: '/inbox',
   getParentRoute: () => ChatRoute,
 } as any)
+const ChatGlobalRoute = ChatGlobalRouteImport.update({
+  id: '/global',
+  path: '/global',
+  getParentRoute: () => ChatRoute,
+} as any)
 const ChatDraftDraftIdRoute = ChatDraftDraftIdRouteImport.update({
   id: '/draft/$draftId',
   path: '/draft/$draftId',
@@ -117,6 +123,7 @@ export interface FileRoutesByFullPath {
   '/': typeof ChatIndexRoute
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
+  '/global': typeof ChatGlobalRoute
   '/inbox': typeof ChatInboxRoute
   '/settings/archived': typeof SettingsArchivedRoute
   '/settings/connections': typeof SettingsConnectionsRoute
@@ -134,6 +141,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
+  '/global': typeof ChatGlobalRoute
   '/inbox': typeof ChatInboxRoute
   '/settings/archived': typeof SettingsArchivedRoute
   '/settings/connections': typeof SettingsConnectionsRoute
@@ -154,6 +162,7 @@ export interface FileRoutesById {
   '/_chat': typeof ChatRouteWithChildren
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
+  '/_chat/global': typeof ChatGlobalRoute
   '/_chat/inbox': typeof ChatInboxRoute
   '/settings/archived': typeof SettingsArchivedRoute
   '/settings/connections': typeof SettingsConnectionsRoute
@@ -175,6 +184,7 @@ export interface FileRouteTypes {
     | '/'
     | '/pair'
     | '/settings'
+    | '/global'
     | '/inbox'
     | '/settings/archived'
     | '/settings/connections'
@@ -192,6 +202,7 @@ export interface FileRouteTypes {
   to:
     | '/pair'
     | '/settings'
+    | '/global'
     | '/inbox'
     | '/settings/archived'
     | '/settings/connections'
@@ -211,6 +222,7 @@ export interface FileRouteTypes {
     | '/_chat'
     | '/pair'
     | '/settings'
+    | '/_chat/global'
     | '/_chat/inbox'
     | '/settings/archived'
     | '/settings/connections'
@@ -340,6 +352,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatInboxRouteImport
       parentRoute: typeof ChatRoute
     }
+    '/_chat/global': {
+      id: '/_chat/global'
+      path: '/global'
+      fullPath: '/global'
+      preLoaderRoute: typeof ChatGlobalRouteImport
+      parentRoute: typeof ChatRoute
+    }
     '/_chat/draft/$draftId': {
       id: '/_chat/draft/$draftId'
       path: '/draft/$draftId'
@@ -358,6 +377,7 @@ declare module '@tanstack/react-router' {
 }
 
 interface ChatRouteChildren {
+  ChatGlobalRoute: typeof ChatGlobalRoute
   ChatInboxRoute: typeof ChatInboxRoute
   ChatIndexRoute: typeof ChatIndexRoute
   ChatEnvironmentIdThreadIdRoute: typeof ChatEnvironmentIdThreadIdRoute
@@ -365,6 +385,7 @@ interface ChatRouteChildren {
 }
 
 const ChatRouteChildren: ChatRouteChildren = {
+  ChatGlobalRoute: ChatGlobalRoute,
   ChatInboxRoute: ChatInboxRoute,
   ChatIndexRoute: ChatIndexRoute,
   ChatEnvironmentIdThreadIdRoute: ChatEnvironmentIdThreadIdRoute,

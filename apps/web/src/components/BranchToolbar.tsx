@@ -51,6 +51,8 @@ interface BranchToolbarProps {
   onComposerFocusRequest?: () => void;
   availableEnvironments?: readonly EnvironmentOption[];
   onEnvironmentChange?: (environmentId: EnvironmentId) => void;
+  worktreeFetchFromRemote?: boolean;
+  onWorktreeFetchFromRemoteChange?: (value: boolean) => void;
 }
 
 interface MobileRunContextSelectorProps {
@@ -202,6 +204,8 @@ export const BranchToolbar = memo(function BranchToolbar({
   onComposerFocusRequest,
   availableEnvironments,
   onEnvironmentChange,
+  worktreeFetchFromRemote,
+  onWorktreeFetchFromRemoteChange,
 }: BranchToolbarProps) {
   const threadRef = useMemo(
     () => scopeThreadRef(environmentId, threadId),
@@ -287,6 +291,8 @@ export const BranchToolbar = memo(function BranchToolbar({
         {...(onActiveThreadBranchOverrideChange ? { onActiveThreadBranchOverrideChange } : {})}
         {...(onCheckoutPullRequestRequest ? { onCheckoutPullRequestRequest } : {})}
         {...(onComposerFocusRequest ? { onComposerFocusRequest } : {})}
+        {...(worktreeFetchFromRemote !== undefined ? { worktreeFetchFromRemote } : {})}
+        {...(onWorktreeFetchFromRemoteChange ? { onWorktreeFetchFromRemoteChange } : {})}
       />
     </div>
   );

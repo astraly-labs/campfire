@@ -17,6 +17,8 @@ import {
   GitActionProgressEvent,
   GitActionProgressPhase,
   GitCommandError,
+  GitListOpenPullRequestsInput,
+  GitListOpenPullRequestsResult,
   GitPreparePullRequestThreadInput,
   GitPreparePullRequestThreadResult,
   GitPullRequestRefInput,
@@ -48,7 +50,11 @@ import { ProjectSetupScriptRunner } from "../project/Services/ProjectSetupScript
 import { extractBranchNameFromRemoteRef } from "./remoteRefs.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import type { GitManagerServiceError } from "@t3tools/contracts";
-import { GitVcsDriver, type GitStatusDetails } from "../vcs/GitVcsDriver.ts";
+import {
+  GitVcsDriver,
+  type GitCommitAuthorIdentity,
+  type GitStatusDetails,
+} from "../vcs/GitVcsDriver.ts";
 import { SourceControlProviderRegistry } from "../sourceControl/SourceControlProviderRegistry.ts";
 import type { ChangeRequest } from "@t3tools/contracts";
 
@@ -59,6 +65,13 @@ export interface GitActionProgressReporter {
 export interface GitRunStackedActionOptions {
   readonly actionId?: string;
   readonly progressReporter?: GitActionProgressReporter;
+  /**
+   * Author + committer identity for the commit step. Resolved from the
+   * connected Tailscale user at the WS RPC boundary and threaded through
+   * here so the `git commit` subprocess uses the right `GIT_AUTHOR_*` env
+   * vars instead of the ambient `user.name` config.
+   */
+  readonly committerIdentity?: GitCommitAuthorIdentity;
 }
 
 export interface GitManagerShape {
@@ -80,6 +93,9 @@ export interface GitManagerShape {
   readonly preparePullRequestThread: (
     input: GitPreparePullRequestThreadInput,
   ) => Effect.Effect<GitPreparePullRequestThreadResult, GitManagerServiceError>;
+  readonly listOpenPullRequests: (
+    input: GitListOpenPullRequestsInput,
+  ) => Effect.Effect<GitListOpenPullRequestsResult, GitManagerServiceError>;
   readonly runStackedAction: (
     input: GitRunStackedActionInput,
     options?: GitRunStackedActionOptions,
@@ -1140,6 +1156,7 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
     filePaths?: readonly string[],
     progressReporter?: GitActionProgressReporter,
     actionId?: string,
+    committerIdentity?: GitCommitAuthorIdentity,
   ) {
     const emit = (event: GitActionProgressPayload) =>
       progressReporter && actionId
@@ -1226,6 +1243,7 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
     const { commitSha } = yield* gitCore.commit(cwd, suggestion.subject, suggestion.body, {
       timeoutMs: COMMIT_TIMEOUT_MS,
       ...(commitProgress ? { progress: commitProgress } : {}),
+      ...(committerIdentity ? { identity: committerIdentity } : {}),
     });
     if (currentHookName !== null) {
       yield* emit({
@@ -1387,6 +1405,45 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
       return { pullRequest };
     },
   );
+
+  const listOpenPullRequests: GitManagerShape["listOpenPullRequests"] = Effect.fn(
+    "listOpenPullRequests",
+  )(function* (input) {
+    return yield* (yield* sourceControlProvider(input.cwd))
+      .listOpenPullRequestsInRepo({
+        cwd: input.cwd,
+        ...(input.limit !== undefined ? { limit: input.limit } : {}),
+      })
+      .pipe(
+        Effect.map(
+          (items): GitListOpenPullRequestsResult => ({
+            pullRequests: items.map((pr) => ({
+              number: pr.number,
+              title: pr.title,
+              url: pr.url,
+              baseBranch: pr.baseRefName,
+              headBranch: pr.headRefName,
+              ...(pr.isCrossRepository !== undefined
+                ? { isCrossRepository: pr.isCrossRepository }
+                : {}),
+            })),
+            supported: true,
+          }),
+        ),
+        // Providers that don't yet implement `listOpenPullRequestsInRepo`
+        // fail with the dedicated `operation` tag — surface that as
+        // `supported: false` so the UI hides the tab gracefully. Other
+        // provider failures (auth, network) bubble up as GitManager errors.
+        Effect.catch((error) =>
+          error.operation === "listOpenPullRequestsInRepo"
+            ? Effect.succeed<GitListOpenPullRequestsResult>({
+                pullRequests: [],
+                supported: false,
+              })
+            : Effect.fail(error),
+        ),
+      );
+  });
 
   const preparePullRequestThread: GitManagerShape["preparePullRequestThread"] = Effect.fn(
     "preparePullRequestThread",
@@ -1697,6 +1754,7 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
                   input.filePaths,
                   options?.progressReporter,
                   progress.actionId,
+                  options?.committerIdentity,
                 ),
               ),
             )
@@ -1777,6 +1835,7 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
     invalidateStatus,
     resolvePullRequest,
     preparePullRequestThread,
+    listOpenPullRequests,
     runStackedAction,
   } satisfies GitManagerShape;
 });

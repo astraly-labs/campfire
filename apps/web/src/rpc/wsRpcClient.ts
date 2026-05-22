@@ -123,6 +123,7 @@ export interface WsRpcClient {
     readonly preparePullRequestThread: RpcUnaryMethod<
       typeof WS_METHODS.gitPreparePullRequestThread
     >;
+    readonly listOpenPullRequests: RpcUnaryMethod<typeof WS_METHODS.gitListOpenPullRequests>;
   };
   readonly server: {
     readonly getConfig: RpcUnaryNoArgMethod<typeof WS_METHODS.serverGetConfig>;
@@ -290,6 +291,8 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
         transport.request((client) => client[WS_METHODS.gitResolvePullRequest](input)),
       preparePullRequestThread: (input) =>
         transport.request((client) => client[WS_METHODS.gitPreparePullRequestThread](input)),
+      listOpenPullRequests: (input) =>
+        transport.request((client) => client[WS_METHODS.gitListOpenPullRequests](input)),
     },
     server: {
       getConfig: () => transport.request((client) => client[WS_METHODS.serverGetConfig]({})),

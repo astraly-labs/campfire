@@ -35,6 +35,7 @@ export type SettingsSectionPath =
   | "/settings/source-control"
   | "/settings/worktrees"
   | "/settings/connections"
+  | "/settings/worktrees"
   | "/settings/health"
   | "/settings/archived";
 

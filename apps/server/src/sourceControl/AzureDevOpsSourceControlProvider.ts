@@ -85,6 +85,15 @@ export const make = Effect.fn("makeAzureDevOpsSourceControlProvider")(function* 
 
   return SourceControlProvider.SourceControlProvider.of({
     kind: "azure-devops",
+    listOpenPullRequestsInRepo: () =>
+      Effect.fail(
+        new SourceControlProviderError({
+          provider: "azure-devops",
+          operation: "listOpenPullRequestsInRepo",
+          detail:
+            "Listing open pull requests across the repo is not supported on Azure DevOps yet.",
+        }),
+      ),
     listChangeRequests: (input) => {
       const source = SourceControlProvider.sourceControlRefFromInput(input);
       return azure

@@ -570,6 +570,27 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
               .filter((entry): entry is GitHubPullRequestSummary => entry !== null),
           ),
         ),
+      listAllOpenPullRequests: (input) =>
+        execute({
+          cwd: input.cwd,
+          args: [
+            "pr",
+            "list",
+            "--state",
+            "open",
+            "--limit",
+            String(input.limit ?? 30),
+            "--json",
+            "number,title,url,baseRefName,headRefName,state,mergedAt,isCrossRepository,headRepository,headRepositoryOwner",
+          ],
+        }).pipe(
+          Effect.map((result) => JSON.parse(result.stdout) as unknown[]),
+          Effect.map((raw) =>
+            raw
+              .map((entry) => normalizeFakePullRequestSummary(entry))
+              .filter((entry): entry is GitHubPullRequestSummary => entry !== null),
+          ),
+        ),
       createPullRequest: (input) =>
         execute({
           cwd: input.cwd,

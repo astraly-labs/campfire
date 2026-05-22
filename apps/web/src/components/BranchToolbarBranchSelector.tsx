@@ -1,6 +1,6 @@
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime";
 import type { EnvironmentId, VcsRef, ThreadId } from "@t3tools/contracts";
-import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { ChevronDownIcon } from "lucide-react";
 import {
@@ -16,7 +16,11 @@ import {
 
 import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
 import { readEnvironmentApi } from "../environmentApi";
-import { gitBranchSearchInfiniteQueryOptions, gitQueryKeys } from "../lib/gitReactQuery";
+import {
+  gitBranchSearchInfiniteQueryOptions,
+  gitListOpenPullRequestsQueryOptions,
+  gitQueryKeys,
+} from "../lib/gitReactQuery";
 import { useGitStatus } from "../lib/gitStatusState";
 import { newCommandId } from "../lib/utils";
 import { cn } from "../lib/utils";
@@ -33,6 +37,7 @@ import {
   shouldIncludeBranchPickerItem,
 } from "./BranchToolbar.logic";
 import { Button } from "./ui/button";
+import { Checkbox } from "./ui/checkbox";
 import {
   Combobox,
   ComboboxEmpty,
@@ -57,6 +62,8 @@ interface BranchToolbarBranchSelectorProps {
   onActiveThreadBranchOverrideChange?: (refName: string | null) => void;
   onCheckoutPullRequestRequest?: (reference: string) => void;
   onComposerFocusRequest?: () => void;
+  worktreeFetchFromRemote?: boolean;
+  onWorktreeFetchFromRemoteChange?: (value: boolean) => void;
 }
 
 function toBranchActionErrorMessage(error: unknown): string {
@@ -89,6 +96,8 @@ export function BranchToolbarBranchSelector({
   onActiveThreadBranchOverrideChange,
   onCheckoutPullRequestRequest,
   onComposerFocusRequest,
+  worktreeFetchFromRemote,
+  onWorktreeFetchFromRemoteChange,
 }: BranchToolbarBranchSelectorProps) {
   // ---------------------------------------------------------------------------
   // Thread / project state (pushed down from parent to colocate with mutation)
@@ -200,6 +209,9 @@ export function BranchToolbarBranchSelector({
   const [isBranchMenuOpen, setIsBranchMenuOpen] = useState(false);
   const [branchQuery, setBranchQuery] = useState("");
   const deferredBranchQuery = useDeferredValue(branchQuery);
+  // Tabs in the dropdown — Local / Remote / PRs. "prs" is hidden when the
+  // server signals `supported: false` for this provider.
+  const [activeTab, setActiveTab] = useState<"local" | "remote" | "prs">("local");
 
   const branchStatusQuery = useGitStatus({ environmentId, cwd: branchCwd });
   const trimmedBranchQuery = branchQuery.trim();
@@ -229,6 +241,27 @@ export function BranchToolbarBranchSelector({
     () => branchesSearchData?.pages.flatMap((page) => page.refs) ?? [],
     [branchesSearchData?.pages],
   );
+
+  // Fetch the list of open PRs only when the dropdown is open AND the user
+  // navigates to the PRs tab — avoids paying the `gh pr list` round-trip up
+  // front for users who never open that tab.
+  const openPullRequestsQuery = useQuery(
+    gitListOpenPullRequestsQueryOptions({
+      environmentId,
+      cwd: branchCwd,
+      enabled: isBranchMenuOpen && activeTab === "prs",
+    }),
+  );
+  const openPullRequests = openPullRequestsQuery.data?.pullRequests ?? [];
+  // Hide the PRs tab when:
+  // - the host component didn't pass a PR-checkout callback (clicks would no-op)
+  // - the provider doesn't implement repo-wide PR listing (`supported: false`)
+  // - the query errored (most common cause: `gh` not installed or not authed)
+  const showPullRequestsTab =
+    Boolean(onCheckoutPullRequestRequest) &&
+    (openPullRequestsQuery.data === undefined
+      ? !openPullRequestsQuery.isError
+      : openPullRequestsQuery.data.supported);
   const currentGitBranch =
     branchStatusQuery.data?.refName ?? refs.find((refName) => refName.current)?.name ?? null;
   const sourceControlPresentation = useMemo(
@@ -242,24 +275,58 @@ export function BranchToolbarBranchSelector({
     activeThreadBranch,
     currentGitBranch,
   });
-  const branchNames = useMemo(() => refs.map((refName) => refName.name), [refs]);
   const branchByName = useMemo(
     () => new Map(refs.map((refName) => [refName.name, refName] as const)),
     [refs],
+  );
+  // Per-tab ref subsets — "remote" excludes remote refs whose derived local
+  // name is already present in the local list (e.g. drop `origin/main` when
+  // `main` is already shown in the Local tab) to avoid duplicates.
+  const localRefs = useMemo(() => refs.filter((ref) => !ref.isRemote), [refs]);
+  const localBranchSet = useMemo(
+    () => new Set(localRefs.map((ref) => ref.name)),
+    [localRefs],
+  );
+  const remoteRefs = useMemo(
+    () =>
+      refs.filter(
+        (ref) =>
+          ref.isRemote === true &&
+          !localBranchSet.has(deriveLocalBranchNameFromRemoteRef(ref.name)),
+      ),
+    [refs, localBranchSet],
+  );
+  const prItemByValue = useMemo(
+    () => new Map<string, (typeof openPullRequests)[number]>(
+      openPullRequests.map((pr) => [`__pr__:${pr.number}`, pr]),
+    ),
+    [openPullRequests],
   );
   const normalizedDeferredBranchQuery = deferredTrimmedBranchQuery.toLowerCase();
   const prReference = parsePullRequestReference(trimmedBranchQuery);
   const isSelectingWorktreeBase =
     effectiveEnvMode === "worktree" && !envLocked && !activeWorktreePath;
+  // The search-driven "Checkout #N" affordance becomes redundant inside the
+  // PRs tab (which already lists open PRs); keep it on Local/Remote tabs only.
   const checkoutPullRequestItemValue =
-    prReference && onCheckoutPullRequestRequest ? `__checkout_pull_request__:${prReference}` : null;
-  const canCreateBranch = !isSelectingWorktreeBase && trimmedBranchQuery.length > 0;
+    prReference && onCheckoutPullRequestRequest && activeTab !== "prs"
+      ? `__checkout_pull_request__:${prReference}`
+      : null;
+  // "Create new ref" is only meaningful on the Local tab.
+  const canCreateBranch =
+    !isSelectingWorktreeBase && trimmedBranchQuery.length > 0 && activeTab === "local";
   const hasExactBranchMatch = branchByName.has(trimmedBranchQuery);
   const createBranchItemValue = canCreateBranch
     ? `__create_new_branch__:${trimmedBranchQuery}`
     : null;
   const branchPickerItems = useMemo(() => {
-    const items = [...branchNames];
+    if (activeTab === "prs") {
+      return Array.from(prItemByValue.keys());
+    }
+    const items =
+      activeTab === "remote"
+        ? remoteRefs.map((ref) => ref.name)
+        : localRefs.map((ref) => ref.name);
     if (createBranchItemValue && !hasExactBranchMatch) {
       items.push(createBranchItemValue);
     }
@@ -267,7 +334,15 @@ export function BranchToolbarBranchSelector({
       items.unshift(checkoutPullRequestItemValue);
     }
     return items;
-  }, [branchNames, checkoutPullRequestItemValue, createBranchItemValue, hasExactBranchMatch]);
+  }, [
+    activeTab,
+    checkoutPullRequestItemValue,
+    createBranchItemValue,
+    hasExactBranchMatch,
+    localRefs,
+    prItemByValue,
+    remoteRefs,
+  ]);
   const filteredBranchPickerItems = useMemo(
     () =>
       normalizedDeferredBranchQuery.length === 0
@@ -497,6 +572,36 @@ export function BranchToolbarBranchSelector({
   });
 
   function renderPickerItem(itemValue: string, index: number) {
+    const pullRequest = prItemByValue.get(itemValue);
+    if (pullRequest) {
+      return (
+        <ComboboxItem
+          hideIndicator
+          key={itemValue}
+          index={index}
+          value={itemValue}
+          onClick={() => {
+            if (!onCheckoutPullRequestRequest) {
+              return;
+            }
+            setIsBranchMenuOpen(false);
+            setBranchQuery("");
+            onComposerFocusRequest?.();
+            onCheckoutPullRequestRequest(`#${pullRequest.number}`);
+          }}
+        >
+          <div className="flex min-w-0 items-center gap-2 py-1">
+            <SourceControlIcon className="size-3.5 shrink-0 text-muted-foreground" />
+            <span className="flex min-w-0 flex-col items-start">
+              <span className="truncate font-medium">{pullRequest.title}</span>
+              <span className="truncate text-muted-foreground text-xs">
+                #{pullRequest.number} · {pullRequest.headBranch} → {pullRequest.baseBranch}
+              </span>
+            </span>
+          </div>
+        </ComboboxItem>
+      );
+    }
     if (checkoutPullRequestItemValue && itemValue === checkoutPullRequestItemValue) {
       return (
         <ComboboxItem
@@ -602,14 +707,42 @@ export function BranchToolbarBranchSelector({
           <ComboboxInput
             className="[&_input]:font-sans rounded-md"
             inputClassName="ring-0"
-            placeholder="Search refs..."
+            placeholder={activeTab === "prs" ? "Search PRs..." : "Search refs..."}
             showTrigger={false}
             size="sm"
             value={branchQuery}
             onChange={(event) => setBranchQuery(event.target.value)}
           />
         </div>
-        <ComboboxEmpty>No refs found.</ComboboxEmpty>
+        <div className="flex items-center gap-1 border-b px-1 py-1 text-xs">
+          {(["local", "remote", ...(showPullRequestsTab ? (["prs"] as const) : [])] as const).map(
+            (tab) => (
+              <button
+                key={tab}
+                type="button"
+                onClick={() => {
+                  setActiveTab(tab);
+                  setBranchQuery("");
+                }}
+                className={cn(
+                  "rounded-md px-2 py-1 transition-colors",
+                  activeTab === tab
+                    ? "bg-muted text-foreground"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {tab === "local" ? "Local" : tab === "remote" ? "Remote" : "PRs"}
+              </button>
+            ),
+          )}
+        </div>
+        <ComboboxEmpty>
+          {activeTab === "prs"
+            ? openPullRequestsQuery.isPending
+              ? "Loading pull requests..."
+              : "No open pull requests."
+            : "No refs found."}
+        </ComboboxEmpty>
 
         {shouldVirtualizeBranchList ? (
           <ComboboxListVirtualized>
@@ -636,6 +769,17 @@ export function BranchToolbarBranchSelector({
           </ComboboxList>
         )}
         {branchStatusText ? <ComboboxStatus>{branchStatusText}</ComboboxStatus> : null}
+        {isSelectingWorktreeBase &&
+        onWorktreeFetchFromRemoteChange &&
+        activeTab !== "prs" ? (
+          <label className="flex cursor-pointer items-center gap-2 border-t px-3 py-2 text-xs text-muted-foreground hover:text-foreground">
+            <Checkbox
+              checked={worktreeFetchFromRemote ?? true}
+              onCheckedChange={(checked) => onWorktreeFetchFromRemoteChange(checked === true)}
+            />
+            <span className="select-none">Use latest from remote</span>
+          </label>
+        ) : null}
       </ComboboxPopup>
     </Combobox>
   );

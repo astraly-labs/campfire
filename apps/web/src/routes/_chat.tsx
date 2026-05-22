@@ -1,4 +1,4 @@
-import { Outlet, createFileRoute, redirect } from "@tanstack/react-router";
+import { Outlet, createFileRoute, redirect, useParams } from "@tanstack/react-router";
 import { useEffect } from "react";
 
 import { useCommandPaletteStore } from "../commandPaletteStore";
@@ -14,8 +14,10 @@ import {
 } from "../lib/chatThreadActions";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { resolveShortcutCommand } from "../keybindings";
+import { useSideThreadStore } from "../sidethread/sideThreadStore";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
+import { resolveThreadRouteTarget } from "../threadRoutes";
 import { resolveSidebarNewThreadEnvMode } from "~/components/Sidebar.logic";
 import { useSettings } from "~/hooks/useSettings";
 import { useServerKeybindings } from "~/rpc/serverState";
@@ -133,10 +135,33 @@ function ChatPresenceLifecycle() {
   return null;
 }
 
+function ChatRouteSideThreadCleanup() {
+  // The side-thread drawer is pinned to a single parent agent thread. Once
+  // the active conversation changes (server thread → another thread, draft,
+  // inbox, index), the drawer's parent is no longer on screen, so we close
+  // it imperatively to avoid the drawer lingering over an unrelated chat.
+  const routeTarget = useParams({
+    strict: false,
+    select: (params) => resolveThreadRouteTarget(params),
+  });
+  const activeParentThreadId =
+    routeTarget?.kind === "server" ? routeTarget.threadRef.threadId : null;
+
+  useEffect(() => {
+    const { openParentThreadId, close } = useSideThreadStore.getState();
+    if (openParentThreadId !== null && openParentThreadId !== activeParentThreadId) {
+      close();
+    }
+  }, [activeParentThreadId]);
+
+  return null;
+}
+
 function ChatRouteLayout() {
   return (
     <>
       <ChatRouteGlobalShortcuts />
+      <ChatRouteSideThreadCleanup />
       <ChatInboxLifecycle />
       <ChatPresenceLifecycle />
       <Outlet />

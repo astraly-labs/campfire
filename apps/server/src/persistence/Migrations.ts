@@ -53,6 +53,7 @@ import Migration0037 from "./Migrations/037_ProjectionThreadCreatedBy.ts";
 import Migration0038 from "./Migrations/038_ProjectionProjectCreatedBy.ts";
 import Migration0039 from "./Migrations/039_ProjectionInboxDismissals.ts";
 import Migration0040 from "./Migrations/040_ConsolidateSideThreadsPerParent.ts";
+import Migration0041 from "./Migrations/041_GlobalSideThreads.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -105,6 +106,7 @@ export const migrationEntries = [
   [38, "ProjectionProjectCreatedBy", Migration0038],
   [39, "ProjectionInboxDismissals", Migration0039],
   [40, "ConsolidateSideThreadsPerParent", Migration0040],
+  [41, "GlobalSideThreads", Migration0041],
 ] as const;
 
 export const makeMigrationLoader = (throughId?: number) =>

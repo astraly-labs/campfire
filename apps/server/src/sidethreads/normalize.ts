@@ -47,7 +47,13 @@ export class SideThreadEventNormalizer {
   normalize(event: SideThreadEvent): SideThreadEvent | null {
     switch (event.type) {
       case "sidethread.created": {
-        const canonical = canonicalSideThreadIdFor(event.payload.parentThreadId);
+        // Global chat events have `parentThreadId === null`. They predate
+        // no legacy "one per anchored message" layout, so their canonical id
+        // is just the id they were created with — no remapping needed.
+        const canonical =
+          event.payload.parentThreadId === null
+            ? event.payload.sideThreadId
+            : canonicalSideThreadIdFor(event.payload.parentThreadId);
         this.idMap.set(event.payload.sideThreadId, canonical);
         if (this.materialised.has(canonical)) return null;
         this.materialised.add(canonical);

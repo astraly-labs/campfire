@@ -97,6 +97,11 @@ export interface ThreadHandoffGenerationInput {
   transcript: ReadonlyArray<ThreadHandoffTranscriptMessage>;
   /** Optional free-form user note appended to the agent instructions. */
   note?: string | undefined;
+  /**
+   * `true` when source and target projects are the same. Swaps the prompt
+   * framing so the next agent isn't told to treat the codebase as foreign.
+   */
+  isSameProject?: boolean | undefined;
   /** What model and provider to use for generation. */
   modelSelection: ModelSelection;
 }
