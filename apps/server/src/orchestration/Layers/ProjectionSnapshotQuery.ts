@@ -55,6 +55,7 @@ import {
   type ProjectionFullThreadDiffContext,
   type ProjectionSnapshotCounts,
   type ProjectionThreadCheckpointContext,
+  type ProjectionThreadWorktreeLookup,
   type ProjectionSnapshotQueryShape,
 } from "../Services/ProjectionSnapshotQuery.ts";
 
@@ -113,6 +114,9 @@ const ProjectionCountsRowSchema = Schema.Struct({
 });
 const WorkspaceRootLookupInput = Schema.Struct({
   workspaceRoot: Schema.String,
+});
+const WorktreePathLookupInput = Schema.Struct({
+  worktreePath: Schema.String,
 });
 const ProjectIdLookupInput = Schema.Struct({
   projectId: ProjectId,
@@ -753,6 +757,27 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           ON projects.project_id = threads.project_id
         WHERE threads.thread_id = ${threadId}
           AND threads.deleted_at IS NULL
+        LIMIT 1
+      `,
+  });
+
+  const getActiveThreadRowByWorktreePath = SqlSchema.findOneOption({
+    Request: WorktreePathLookupInput,
+    Result: ProjectionThreadCheckpointContextThreadRowSchema,
+    execute: ({ worktreePath }) =>
+      sql`
+        SELECT
+          threads.thread_id AS "threadId",
+          threads.project_id AS "projectId",
+          projects.workspace_root AS "workspaceRoot",
+          threads.worktree_path AS "worktreePath"
+        FROM projection_threads AS threads
+        INNER JOIN projection_projects AS projects
+          ON projects.project_id = threads.project_id
+        WHERE threads.worktree_path = ${worktreePath}
+          AND threads.deleted_at IS NULL
+          AND projects.deleted_at IS NULL
+        ORDER BY threads.created_at ASC, threads.thread_id ASC
         LIMIT 1
       `,
   });
@@ -1795,6 +1820,27 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         ),
       );
 
+  const getActiveThreadByWorktreePath: ProjectionSnapshotQueryShape["getActiveThreadByWorktreePath"] =
+    (worktreePath) =>
+      getActiveThreadRowByWorktreePath({ worktreePath }).pipe(
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "ProjectionSnapshotQuery.getActiveThreadByWorktreePath:query",
+            "ProjectionSnapshotQuery.getActiveThreadByWorktreePath:decodeRow",
+          ),
+        ),
+        Effect.map((option) =>
+          Option.isNone(option) || option.value.worktreePath === null
+            ? Option.none<ProjectionThreadWorktreeLookup>()
+            : Option.some({
+                threadId: option.value.threadId,
+                projectId: option.value.projectId,
+                workspaceRoot: option.value.workspaceRoot,
+                worktreePath: option.value.worktreePath,
+              } satisfies ProjectionThreadWorktreeLookup),
+        ),
+      );
+
   const getProjectShellById: ProjectionSnapshotQueryShape["getProjectShellById"] = (projectId) =>
     getActiveProjectRowById({ projectId }).pipe(
       Effect.mapError(
@@ -2121,6 +2167,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     getSnapshotSequence,
     getCounts,
     getActiveProjectByWorkspaceRoot,
+    getActiveThreadByWorktreePath,
     getProjectShellById,
     getFirstActiveThreadIdByProjectId,
     getThreadCheckpointContext,

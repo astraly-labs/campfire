@@ -20,6 +20,8 @@ import type {
   SideThreadDetailSnapshot,
   SideThreadEvent,
   SideThreadInboxDismissedPayload,
+  SideThreadMarkedReadPayload,
+  SideThreadMessageEditedPayload,
   SideThreadMessagePostedPayload,
   SideThreadMessageReactedPayload,
 } from "@t3tools/contracts";
@@ -67,6 +69,10 @@ const actorOf = (planned: PlannedSideThreadEvent): string => {
       return (planned.payload as SideThreadArchivedPayload).archivedBy;
     case "sidethread.inbox-dismissed":
       return (planned.payload as SideThreadInboxDismissedPayload).userId;
+    case "sidethread.marked-read":
+      return (planned.payload as SideThreadMarkedReadPayload).user.id;
+    case "sidethread.message-edited":
+      return (planned.payload as SideThreadMessageEditedPayload).editor.id;
   }
 };
 

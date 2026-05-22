@@ -653,7 +653,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             'full-access',
             'default',
             NULL,
-            NULL,
+            '/tmp/worktrees/thread-second',
             NULL,
             '2026-03-01T00:00:07.000Z',
             '2026-03-01T00:00:08.000Z',
@@ -699,6 +699,22 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         if (firstThreadId._tag === "Some") {
           assert.equal(firstThreadId.value, ThreadId.make("thread-first"));
         }
+
+        const worktreeHit = yield* snapshotQuery.getActiveThreadByWorktreePath(
+          "/tmp/worktrees/thread-second",
+        );
+        assert.equal(worktreeHit._tag, "Some");
+        if (worktreeHit._tag === "Some") {
+          assert.equal(worktreeHit.value.threadId, ThreadId.make("thread-second"));
+          assert.equal(worktreeHit.value.projectId, asProjectId("project-active"));
+          assert.equal(worktreeHit.value.workspaceRoot, "/tmp/workspace");
+          assert.equal(worktreeHit.value.worktreePath, "/tmp/worktrees/thread-second");
+        }
+
+        const worktreeMiss = yield* snapshotQuery.getActiveThreadByWorktreePath(
+          "/tmp/worktrees/does-not-exist",
+        );
+        assert.equal(worktreeMiss._tag, "None");
       }),
   );
 

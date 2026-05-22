@@ -61,6 +61,14 @@ function InboxRouteView() {
 
   const openInboxItem = async (item: InboxItem) => {
     if (!environmentId) return;
+
+    // Workspace-wide global chat — no parent thread to deep-link to. Just
+    // navigate to /global; the route mounts the global SideThread directly.
+    if (item.parentThreadId === null) {
+      void navigate({ to: "/global" });
+      return;
+    }
+
     // Older mentions were created when `SideThreadAnchorButton` was passed
     // `routeThreadKey` (the scoped `<env>:<thread>` form) as its ThreadId
     // prop. That string then leaked into the side thread's `parentThreadId`
@@ -184,9 +192,11 @@ function InboxRouteView() {
         ) : (
           <ul className="flex-1 overflow-y-auto divide-y divide-border/40">
             {grouped.map((group) => (
-              <li key={group.parentThreadId}>
+              <li key={group.parentThreadId ?? "__global__"}>
                 <div className="bg-muted/30 px-4 py-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
-                  Conversation {group.parentThreadId.slice(0, 8)}
+                  {group.parentThreadId === null
+                    ? "Global chat"
+                    : `Conversation ${group.parentThreadId.slice(0, 8)}`}
                 </div>
                 <ul className="divide-y divide-border/30">
                   {group.items.map((item) => {
@@ -307,27 +317,31 @@ function waitForThreadResolution(threadRef: ScopedThreadRef): Promise<ThreadReso
 }
 
 interface ParentThreadGroup {
-  readonly parentThreadId: ThreadId;
+  /** `null` for the workspace-wide global chat group. */
+  readonly parentThreadId: ThreadId | null;
   readonly items: ReadonlyArray<InboxItem>;
 }
 
 /**
  * Group inbox items by their parent agent thread so the UI surfaces "this
  * is the same conversation" affordance — keeps the list visually scannable
- * when one thread accumulates many mentions over time.
+ * when one thread accumulates many mentions over time. Items belonging to
+ * the workspace-wide global chat (parentThreadId === null) collapse into a
+ * single dedicated group keyed by `null`.
  */
 function groupItemsByParentThread(
   items: ReadonlyArray<InboxItem>,
 ): ReadonlyArray<ParentThreadGroup> {
-  const order: ThreadId[] = [];
-  const byParent = new Map<ThreadId, InboxItem[]>();
+  const order: Array<ThreadId | null> = [];
+  const byParent = new Map<ThreadId | null, InboxItem[]>();
   for (const item of items) {
-    const list = byParent.get(item.parentThreadId);
+    const key = item.parentThreadId;
+    const list = byParent.get(key);
     if (list) {
       list.push(item);
     } else {
-      byParent.set(item.parentThreadId, [item]);
-      order.push(item.parentThreadId);
+      byParent.set(key, [item]);
+      order.push(key);
     }
   }
   return order.map((parentThreadId) => ({

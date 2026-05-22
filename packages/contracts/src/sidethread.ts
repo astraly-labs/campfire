@@ -41,6 +41,40 @@ const ParentThreadIdField = Schema.NullOr(ThreadId).pipe(
 );
 
 /**
+ * Polymorphic pointer to "another conversation" that the author wants to
+ * attach to a side-thread message — the "link a chat" affordance. Renders
+ * as a clickable card that navigates to the target.
+ *
+ * V1 ships two kinds: a regular agent thread, and the workspace-wide global
+ * chat. The discriminated union keeps the door open for future kinds
+ * (e.g. `side-thread` to deep-link into a specific peer side thread) without
+ * re-shaping the message payload.
+ */
+export const LinkedAgentThreadRef = Schema.Struct({
+  kind: Schema.Literal("agent-thread"),
+  threadId: ThreadId,
+});
+export type LinkedAgentThreadRef = typeof LinkedAgentThreadRef.Type;
+
+export const LinkedGlobalChatRef = Schema.Struct({
+  kind: Schema.Literal("global-chat"),
+});
+export type LinkedGlobalChatRef = typeof LinkedGlobalChatRef.Type;
+
+export const LinkedRef = Schema.Union([LinkedAgentThreadRef, LinkedGlobalChatRef]);
+export type LinkedRef = typeof LinkedRef.Type;
+
+/**
+ * Default-decoded to `null` so historical messages without a link decode
+ * unchanged. Composer ships the resolved {@link LinkedRef} alongside
+ * `mentions` / `quotedMessageId` / `attachments`.
+ */
+const LinkedRefField = Schema.NullOr(LinkedRef).pipe(
+  Schema.withDecodingDefaultKey(Effect.succeed(null)),
+);
+
+
+/**
  * Inline media stapled onto a side-thread message. V1 ships GIFs only —
  * the discriminated union keeps the door open for future `image`/`file`
  * variants without re-shaping the message payload.
@@ -117,6 +151,25 @@ export const isGlobalChat = (id: SideThreadId): boolean =>
 export const SideThreadMessageId = TrimmedNonEmptyString.pipe(Schema.brand("SideThreadMessageId"));
 export type SideThreadMessageId = typeof SideThreadMessageId.Type;
 
+/**
+ * Reply-to pointer for a message that is itself a side-thread message —
+ * Telegram-style "tap to reply". Distinct from {@link QuotedMessageIdField}
+ * which targets a parent-thread *agent* message (the "Take a look" flow).
+ * Default-null so events persisted before this feature decode cleanly.
+ */
+const ReplyToSideThreadMessageIdField = Schema.NullOr(SideThreadMessageId).pipe(
+  Schema.withDecodingDefaultKey(Effect.succeed(null)),
+);
+
+/**
+ * Timestamp of the last in-place edit, or `null` for never-edited
+ * messages. The UI uses non-null as the trigger for the "edited" hint
+ * next to the timestamp (Telegram convention).
+ */
+const EditedAtField = Schema.NullOr(IsoDateTime).pipe(
+  Schema.withDecodingDefaultKey(Effect.succeed(null)),
+);
+
 export const SideThreadAggregateKind = Schema.Literal("sidethread");
 export type SideThreadAggregateKind = typeof SideThreadAggregateKind.Type;
 
@@ -142,8 +195,35 @@ export const SideThreadMessage = Schema.Struct({
   quotedMessageId: QuotedMessageIdField,
   attachments: AttachmentsField,
   reactions: ReactionsField,
+  /** Optional "link a chat" pointer; see {@link LinkedRef}. */
+  linkedRef: LinkedRefField,
+  /** Optional reply target — see {@link ReplyToSideThreadMessageIdField}. */
+  replyToSideThreadMessageId: ReplyToSideThreadMessageIdField,
+  /** Last edit timestamp, or `null` if the message has never been edited. */
+  editedAt: EditedAtField,
 });
 export type SideThreadMessage = typeof SideThreadMessage.Type;
+
+/**
+ * Per-user "last read" marker inside a side thread. We pin the {@link UserRef}
+ * (rather than just the id) so the UI can render "seen by Bob" without a
+ * directory lookup if Bob is later renamed or removed from the workspace.
+ *
+ * `lastReadAt` is the `occurredAt` of the last message the user has
+ * acknowledged — a message M is considered seen by U when
+ * `readBy[U].lastReadAt >= M.createdAt`. We compare on timestamps rather
+ * than messageIds so we don't need an index lookup to answer "is this
+ * message seen".
+ */
+export const SideThreadReadMarker = Schema.Struct({
+  user: UserRef,
+  lastReadAt: IsoDateTime,
+});
+export type SideThreadReadMarker = typeof SideThreadReadMarker.Type;
+
+const ReadByField = Schema.Array(SideThreadReadMarker).pipe(
+  Schema.withDecodingDefaultKey(Effect.succeed([])),
+);
 
 /**
  * Read-model snapshot of a side thread aggregate.
@@ -157,6 +237,8 @@ export const SideThread = Schema.Struct({
   updatedAt: IsoDateTime,
   archivedAt: Schema.NullOr(IsoDateTime),
   messages: Schema.Array(SideThreadMessage),
+  /** Per-user "last read" markers. Empty for fresh threads or older events. */
+  readBy: ReadByField,
 });
 export type SideThread = typeof SideThread.Type;
 
@@ -208,6 +290,10 @@ export const SideThreadMessagePostCommand = Schema.Struct({
   quotedMessageId: QuotedMessageIdField,
   /** Inline media (GIFs in V1). Defaults to empty for older clients. */
   attachments: AttachmentsField,
+  /** Optional pointer to another conversation. Defaults to `null`. */
+  linkedRef: LinkedRefField,
+  /** Optional reply target (a previous message in the same side thread). */
+  replyToSideThreadMessageId: ReplyToSideThreadMessageIdField,
 });
 export type SideThreadMessagePostCommand = typeof SideThreadMessagePostCommand.Type;
 
@@ -254,12 +340,45 @@ export const SideThreadInboxDismissCommand = Schema.Struct({
 });
 export type SideThreadInboxDismissCommand = typeof SideThreadInboxDismissCommand.Type;
 
+/**
+ * In-place edit of a previously-posted side-thread message. The decider
+ * enforces that {@link editor} matches the original author — peers
+ * cannot rewrite each other's messages. Empty text is rejected (use the
+ * future delete command for that).
+ */
+export const SideThreadMessageEditCommand = Schema.Struct({
+  type: Schema.Literal("sidethread.message.edit"),
+  commandId: CommandId,
+  sideThreadId: SideThreadId,
+  messageId: SideThreadMessageId,
+  editor: UserRef,
+  text: TrimmedNonEmptyString,
+});
+export type SideThreadMessageEditCommand = typeof SideThreadMessageEditCommand.Type;
+
+/**
+ * Telegram-style "I've seen up to here" marker. Clients dispatch this when
+ * the drawer is opened or when a new message arrives while the drawer is
+ * focused. The decider drops the command as a no-op if `lastReadAt` is not
+ * strictly newer than the user's current marker — read state is monotonic.
+ */
+export const SideThreadMarkReadCommand = Schema.Struct({
+  type: Schema.Literal("sidethread.mark-read"),
+  commandId: CommandId,
+  sideThreadId: SideThreadId,
+  user: UserRef,
+  lastReadAt: IsoDateTime,
+});
+export type SideThreadMarkReadCommand = typeof SideThreadMarkReadCommand.Type;
+
 export const SideThreadCommand = Schema.Union([
   SideThreadCreateCommand,
   SideThreadMessagePostCommand,
   SideThreadMessageReactCommand,
   SideThreadArchiveCommand,
   SideThreadInboxDismissCommand,
+  SideThreadMarkReadCommand,
+  SideThreadMessageEditCommand,
 ]);
 export type SideThreadCommand = typeof SideThreadCommand.Type;
 
@@ -269,6 +388,8 @@ export const SideThreadCommandType = Schema.Literals([
   "sidethread.message.react",
   "sidethread.archive",
   "sidethread.inbox.dismiss",
+  "sidethread.mark-read",
+  "sidethread.message.edit",
 ]);
 export type SideThreadCommandType = typeof SideThreadCommandType.Type;
 
@@ -306,6 +427,8 @@ export const SideThreadMessagePostedPayload = Schema.Struct({
   mentions: MentionsField,
   quotedMessageId: QuotedMessageIdField,
   attachments: AttachmentsField,
+  linkedRef: LinkedRefField,
+  replyToSideThreadMessageId: ReplyToSideThreadMessageIdField,
 });
 export type SideThreadMessagePostedPayload = typeof SideThreadMessagePostedPayload.Type;
 
@@ -334,6 +457,21 @@ export const SideThreadInboxDismissedPayload = Schema.Struct({
   userId: UserId,
 });
 export type SideThreadInboxDismissedPayload = typeof SideThreadInboxDismissedPayload.Type;
+
+export const SideThreadMarkedReadPayload = Schema.Struct({
+  sideThreadId: SideThreadId,
+  user: UserRef,
+  lastReadAt: IsoDateTime,
+});
+export type SideThreadMarkedReadPayload = typeof SideThreadMarkedReadPayload.Type;
+
+export const SideThreadMessageEditedPayload = Schema.Struct({
+  sideThreadId: SideThreadId,
+  messageId: SideThreadMessageId,
+  editor: UserRef,
+  text: TrimmedNonEmptyString,
+});
+export type SideThreadMessageEditedPayload = typeof SideThreadMessageEditedPayload.Type;
 
 export const SideThreadCreatedEvent = Schema.Struct({
   ...SideThreadEventBaseFields,
@@ -370,12 +508,28 @@ export const SideThreadInboxDismissedEvent = Schema.Struct({
 });
 export type SideThreadInboxDismissedEvent = typeof SideThreadInboxDismissedEvent.Type;
 
+export const SideThreadMarkedReadEvent = Schema.Struct({
+  ...SideThreadEventBaseFields,
+  type: Schema.Literal("sidethread.marked-read"),
+  payload: SideThreadMarkedReadPayload,
+});
+export type SideThreadMarkedReadEvent = typeof SideThreadMarkedReadEvent.Type;
+
+export const SideThreadMessageEditedEvent = Schema.Struct({
+  ...SideThreadEventBaseFields,
+  type: Schema.Literal("sidethread.message-edited"),
+  payload: SideThreadMessageEditedPayload,
+});
+export type SideThreadMessageEditedEvent = typeof SideThreadMessageEditedEvent.Type;
+
 export const SideThreadEvent = Schema.Union([
   SideThreadCreatedEvent,
   SideThreadMessagePostedEvent,
   SideThreadMessageReactedEvent,
   SideThreadArchivedEvent,
   SideThreadInboxDismissedEvent,
+  SideThreadMarkedReadEvent,
+  SideThreadMessageEditedEvent,
 ]);
 export type SideThreadEvent = typeof SideThreadEvent.Type;
 
@@ -385,6 +539,8 @@ export const SideThreadEventType = Schema.Literals([
   "sidethread.message-reacted",
   "sidethread.archived",
   "sidethread.inbox-dismissed",
+  "sidethread.marked-read",
+  "sidethread.message-edited",
 ]);
 export type SideThreadEventType = typeof SideThreadEventType.Type;
 

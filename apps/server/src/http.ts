@@ -206,10 +206,38 @@ export const attachmentsRouteLayer = HttpRouter.add(
   }).pipe(Effect.catchTag("AuthError", respondToAuthError)),
 );
 
-// Serves an arbitrary file from a registered project's workspace. Used by the
-// in-app preview drawer + download buttons. Two guards: (1) `cwd` must match a
-// known active project (lookup in the projection), and (2) the resolved path
-// must remain inside that workspaceRoot (delegated to WorkspacePaths).
+// Resolves a client-provided `cwd` to the absolute root inside which we are
+// willing to serve files. Accepts two shapes so the chat works the same way
+// whether the active thread runs in the project workspace root or in a git
+// worktree:
+//   1. cwd matches an active project's workspaceRoot → use that root
+//   2. cwd matches an active thread's worktreePath → use the worktree path
+// Returns null when neither lookup hits — caller turns that into a 403.
+const resolveCwdToServingRoot = (
+  cwd: string,
+): Effect.Effect<string | null, never, ProjectionSnapshotQuery> =>
+  Effect.gen(function* () {
+    const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
+    const projectOption = yield* projectionSnapshotQuery
+      .getActiveProjectByWorkspaceRoot(cwd)
+      .pipe(Effect.catch(() => Effect.succeed(Option.none())));
+    if (Option.isSome(projectOption)) {
+      return projectOption.value.workspaceRoot;
+    }
+    const threadOption = yield* projectionSnapshotQuery
+      .getActiveThreadByWorktreePath(cwd)
+      .pipe(Effect.catch(() => Effect.succeed(Option.none())));
+    if (Option.isSome(threadOption)) {
+      return threadOption.value.worktreePath;
+    }
+    return null;
+  });
+
+// Serves an arbitrary file from a registered project's workspace (or an
+// active thread's worktree). Used by the in-app preview drawer + download
+// buttons. Two guards: (1) `cwd` must resolve to a known active workspace or
+// worktree (lookup in the projection), and (2) the resolved path must remain
+// inside that root (delegated to WorkspacePaths).
 export const workspaceFileRouteLayer = HttpRouter.add(
   "GET",
   "/workspace-file",
@@ -228,14 +256,10 @@ export const workspaceFileRouteLayer = HttpRouter.add(
       return HttpServerResponse.text("Missing cwd or path parameter", { status: 400 });
     }
 
-    const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
-    const projectOption = yield* projectionSnapshotQuery
-      .getActiveProjectByWorkspaceRoot(cwd)
-      .pipe(Effect.catch(() => Effect.succeed(Option.none())));
-    if (Option.isNone(projectOption)) {
+    const workspaceRoot = yield* resolveCwdToServingRoot(cwd);
+    if (workspaceRoot === null) {
       return HttpServerResponse.text("Unknown workspace", { status: 403 });
     }
-    const workspaceRoot = projectOption.value.workspaceRoot;
 
     const path = yield* Path.Path;
     let relativePath = requestedPath;
@@ -309,14 +333,10 @@ export const workspaceFilesTreeRouteLayer = HttpRouter.add(
       return HttpServerResponse.text("Missing cwd parameter", { status: 400 });
     }
 
-    const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
-    const projectOption = yield* projectionSnapshotQuery
-      .getActiveProjectByWorkspaceRoot(cwd)
-      .pipe(Effect.catch(() => Effect.succeed(Option.none())));
-    if (Option.isNone(projectOption)) {
+    const workspaceRoot = yield* resolveCwdToServingRoot(cwd);
+    if (workspaceRoot === null) {
       return HttpServerResponse.text("Unknown workspace", { status: 403 });
     }
-    const workspaceRoot = projectOption.value.workspaceRoot;
 
     const vcsRegistry = yield* VcsDriverRegistry;
     const handle = yield* vcsRegistry

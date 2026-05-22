@@ -26,7 +26,8 @@ import { InboxReadModelService, type InboxReadModelShape } from "../Services/Inb
 
 interface InboxRow {
   readonly side_thread_id: string;
-  readonly parent_thread_id: string;
+  /** NULL when the row belongs to the workspace-wide global chat. */
+  readonly parent_thread_id: string | null;
   readonly quoted_message_id: string | null;
   readonly last_mention_message_id: string;
   readonly last_mention_at: string;
@@ -45,7 +46,7 @@ const rowToInboxItem = (row: InboxRow): Effect.Effect<InboxItem, never> => {
   };
   const item = {
     sideThreadId: row.side_thread_id as SideThreadId,
-    parentThreadId: row.parent_thread_id as ThreadId,
+    parentThreadId: row.parent_thread_id === null ? null : (row.parent_thread_id as ThreadId),
     quotedMessageId: (row.quoted_message_id ?? null) as MessageId | null,
     lastMentionAt: row.last_mention_at,
     lastMentionMessageId: row.last_mention_message_id as SideThreadMessageId,

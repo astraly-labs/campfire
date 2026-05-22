@@ -27,7 +27,12 @@ import { UserRef } from "./user.ts";
  */
 export const InboxItem = Schema.Struct({
   sideThreadId: SideThreadId,
-  parentThreadId: ThreadId,
+  /**
+   * `null` for the workspace-wide global chat — that side-thread has no
+   * parent agent thread. Clients should route such rows to `/global` instead
+   * of the standard parent-thread deep link.
+   */
+  parentThreadId: Schema.NullOr(ThreadId),
   quotedMessageId: Schema.NullOr(MessageId),
   lastMentionAt: IsoDateTime,
   lastMentionMessageId: SideThreadMessageId,

@@ -82,6 +82,7 @@ export const projectSideThreadEvent = (
         updatedAt: event.occurredAt,
         archivedAt: null,
         messages: [],
+        readBy: [],
       };
       const nextSideThreads = new Map(nextBase.sideThreads);
       nextSideThreads.set(created.id, created);
@@ -108,6 +109,10 @@ export const projectSideThreadEvent = (
             quotedMessageId: event.payload.quotedMessageId ?? null,
             attachments: event.payload.attachments ?? [],
             reactions: [],
+            linkedRef: event.payload.linkedRef ?? null,
+            replyToSideThreadMessageId:
+              event.payload.replyToSideThreadMessageId ?? null,
+            editedAt: null,
           },
         ],
       };
@@ -164,6 +169,57 @@ export const projectSideThreadEvent = (
       // Per-user inbox state — does not mutate the side-thread aggregate
       // snapshot, only the dedicated dismissals projection table.
       return nextBase;
+    }
+
+    case "sidethread.message-edited": {
+      const current = nextBase.sideThreads.get(event.payload.sideThreadId);
+      if (!current) return nextBase;
+      const messageIndex = current.messages.findIndex(
+        (m) => m.id === event.payload.messageId,
+      );
+      if (messageIndex < 0) return nextBase;
+      const original = current.messages[messageIndex]!;
+      const updatedMessage: SideThreadMessage = {
+        ...original,
+        text: event.payload.text,
+        updatedAt: event.occurredAt,
+        editedAt: event.occurredAt,
+      };
+      const updated: SideThread = {
+        ...current,
+        updatedAt: event.occurredAt,
+        messages: current.messages.map((m, idx) => (idx === messageIndex ? updatedMessage : m)),
+      };
+      const nextSideThreads = new Map(nextBase.sideThreads);
+      nextSideThreads.set(updated.id, updated);
+      return { ...nextBase, sideThreads: nextSideThreads };
+    }
+
+    case "sidethread.marked-read": {
+      const current = nextBase.sideThreads.get(event.payload.sideThreadId);
+      if (!current) return nextBase;
+      const userId = event.payload.user.id;
+      const incomingAt = event.payload.lastReadAt;
+      const existingIndex = current.readBy.findIndex((m) => m.user.id === userId);
+      const nextMarker = { user: event.payload.user, lastReadAt: incomingAt };
+      let nextReadBy: SideThread["readBy"];
+      if (existingIndex < 0) {
+        nextReadBy = [...current.readBy, nextMarker];
+      } else {
+        const existing = current.readBy[existingIndex]!;
+        // Monotonic max — a late-arriving older marker (e.g. from a peer
+        // device that was behind) must not rewind the seen-up-to point.
+        if (existing.lastReadAt >= incomingAt) return nextBase;
+        nextReadBy = current.readBy.map((m, idx) => (idx === existingIndex ? nextMarker : m));
+      }
+      const updated: SideThread = {
+        ...current,
+        updatedAt: event.occurredAt,
+        readBy: nextReadBy,
+      };
+      const nextSideThreads = new Map(nextBase.sideThreads);
+      nextSideThreads.set(updated.id, updated);
+      return { ...nextBase, sideThreads: nextSideThreads };
     }
   }
 };

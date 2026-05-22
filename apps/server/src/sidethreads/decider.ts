@@ -15,6 +15,8 @@ import type {
   SideThreadCreateCommand,
   SideThreadEvent,
   SideThreadInboxDismissCommand,
+  SideThreadMarkReadCommand,
+  SideThreadMessageEditCommand,
   SideThreadMessagePostCommand,
   SideThreadMessageReactCommand,
 } from "@t3tools/contracts";
@@ -64,6 +66,10 @@ export const decideSideThreadCommand = Effect.fn("decideSideThreadCommand")(func
       return yield* decideArchive({ command, readModel, now });
     case "sidethread.inbox.dismiss":
       return yield* decideInboxDismiss({ command, readModel, now });
+    case "sidethread.mark-read":
+      return yield* decideMarkRead({ command, readModel, now });
+    case "sidethread.message.edit":
+      return yield* decideEdit({ command, readModel, now });
   }
 });
 
@@ -132,6 +138,20 @@ const decidePost = ({
         detail: "Message must have text or at least one attachment",
       });
     }
+    // When the reply target is set, verify it points at an existing
+    // message in the same side thread — otherwise we'd persist a
+    // dangling pointer that the UI would render as a broken chip.
+    if (command.replyToSideThreadMessageId !== null) {
+      const target = sideThread.messages.find(
+        (m) => m.id === command.replyToSideThreadMessageId,
+      );
+      if (!target) {
+        return yield* new SideThreadCommandInvariantError({
+          commandType: command.type,
+          detail: `Reply target not found in side thread: ${command.replyToSideThreadMessageId}`,
+        });
+      }
+    }
     return {
       ...baseEnvelope(command, command.sideThreadId, now),
       type: "sidethread.message-posted" as const,
@@ -143,6 +163,8 @@ const decidePost = ({
         mentions: command.mentions,
         quotedMessageId: command.quotedMessageId,
         attachments: command.attachments,
+        linkedRef: command.linkedRef,
+        replyToSideThreadMessageId: command.replyToSideThreadMessageId,
       },
     };
   });
@@ -253,6 +275,94 @@ const decideInboxDismiss = ({
       payload: {
         sideThreadId: command.sideThreadId,
         userId: command.userId,
+      },
+    };
+  });
+
+const decideEdit = ({
+  command,
+  readModel,
+  now,
+}: {
+  command: SideThreadMessageEditCommand;
+  readModel: SideThreadReadModel;
+  now: IsoDateTime;
+}): Effect.Effect<PlannedSideThreadEvent, SideThreadCommandInvariantError> =>
+  Effect.gen(function* () {
+    const sideThread = readModel.sideThreads.get(command.sideThreadId);
+    if (!sideThread) {
+      return yield* new SideThreadCommandInvariantError({
+        commandType: command.type,
+        detail: `Unknown SideThread: ${command.sideThreadId}`,
+      });
+    }
+    if (sideThread.archivedAt !== null) {
+      return yield* new SideThreadCommandInvariantError({
+        commandType: command.type,
+        detail: `SideThread is archived: ${command.sideThreadId}`,
+      });
+    }
+    const message = sideThread.messages.find((m) => m.id === command.messageId);
+    if (!message) {
+      return yield* new SideThreadCommandInvariantError({
+        commandType: command.type,
+        detail: `Unknown message: ${command.messageId}`,
+      });
+    }
+    // A user can only rewrite their own messages — never another peer's.
+    // The transport already pins identity to the WS session, but defend
+    // here too so a buggy client can't silently corrupt history.
+    if (message.author.id !== command.editor.id) {
+      return yield* new SideThreadCommandInvariantError({
+        commandType: command.type,
+        detail: `Only the author can edit a message: ${command.messageId}`,
+      });
+    }
+    // No-op guard: don't burn an event for a "rewrite to same text".
+    if (message.text === command.text) {
+      return yield* new SideThreadCommandInvariantError({
+        commandType: command.type,
+        detail: "Edit is a no-op (text unchanged)",
+      });
+    }
+    return {
+      ...baseEnvelope(command, command.sideThreadId, now),
+      type: "sidethread.message-edited" as const,
+      payload: {
+        sideThreadId: command.sideThreadId,
+        messageId: command.messageId,
+        editor: command.editor,
+        text: command.text,
+      },
+    };
+  });
+
+const decideMarkRead = ({
+  command,
+  readModel,
+  now,
+}: {
+  command: SideThreadMarkReadCommand;
+  readModel: SideThreadReadModel;
+  now: IsoDateTime;
+}): Effect.Effect<PlannedSideThreadEvent, SideThreadCommandInvariantError> =>
+  Effect.gen(function* () {
+    if (!readModel.sideThreads.has(command.sideThreadId)) {
+      return yield* new SideThreadCommandInvariantError({
+        commandType: command.type,
+        detail: `Unknown SideThread: ${command.sideThreadId}`,
+      });
+    }
+    // Read markers are monotonic — we always emit and let the projector
+    // take the max. Same upsert pattern as `inbox.dismiss`. This keeps
+    // the decider stateless w.r.t. read-marker history.
+    return {
+      ...baseEnvelope(command, command.sideThreadId, now),
+      type: "sidethread.marked-read" as const,
+      payload: {
+        sideThreadId: command.sideThreadId,
+        user: command.user,
+        lastReadAt: command.lastReadAt,
       },
     };
   });

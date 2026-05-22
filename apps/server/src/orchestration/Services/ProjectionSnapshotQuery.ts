@@ -41,6 +41,13 @@ export interface ProjectionThreadCheckpointContext {
   readonly checkpoints: ReadonlyArray<OrchestrationCheckpointSummary>;
 }
 
+export interface ProjectionThreadWorktreeLookup {
+  readonly threadId: ThreadId;
+  readonly projectId: ProjectId;
+  readonly workspaceRoot: string;
+  readonly worktreePath: string;
+}
+
 export interface ProjectionFullThreadDiffContext {
   readonly threadId: ThreadId;
   readonly projectId: ProjectId;
@@ -113,6 +120,15 @@ export interface ProjectionSnapshotQueryShape {
   readonly getActiveProjectByWorkspaceRoot: (
     workspaceRoot: string,
   ) => Effect.Effect<Option.Option<OrchestrationProject>, ProjectionRepositoryError>;
+
+  /**
+   * Read the active thread + its owning project's workspaceRoot for an exact
+   * worktree path match. Used by HTTP routes that accept a cwd which may be a
+   * thread worktree rather than the project workspaceRoot.
+   */
+  readonly getActiveThreadByWorktreePath: (
+    worktreePath: string,
+  ) => Effect.Effect<Option.Option<ProjectionThreadWorktreeLookup>, ProjectionRepositoryError>;
 
   /**
    * Read a single active project shell row by id.

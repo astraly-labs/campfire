@@ -118,6 +118,32 @@ export class SideThreadEventNormalizer {
           },
         };
       }
+      case "sidethread.marked-read": {
+        // Read markers are a post-canonicalisation feature; pass through
+        // the id-map rewrite for symmetry with reactions.
+        const canonical = this.idMap.get(event.payload.sideThreadId);
+        if (!canonical || canonical === event.payload.sideThreadId) return event;
+        return {
+          ...event,
+          aggregateId: canonical,
+          payload: {
+            ...event.payload,
+            sideThreadId: canonical,
+          },
+        };
+      }
+      case "sidethread.message-edited": {
+        const canonical = this.idMap.get(event.payload.sideThreadId);
+        if (!canonical || canonical === event.payload.sideThreadId) return event;
+        return {
+          ...event,
+          aggregateId: canonical,
+          payload: {
+            ...event.payload,
+            sideThreadId: canonical,
+          },
+        };
+      }
     }
   }
 }

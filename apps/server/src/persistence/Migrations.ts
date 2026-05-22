@@ -54,6 +54,7 @@ import Migration0038 from "./Migrations/038_ProjectionProjectCreatedBy.ts";
 import Migration0039 from "./Migrations/039_ProjectionInboxDismissals.ts";
 import Migration0040 from "./Migrations/040_ConsolidateSideThreadsPerParent.ts";
 import Migration0041 from "./Migrations/041_GlobalSideThreads.ts";
+import Migration0042 from "./Migrations/042_GlobalChatMentionsNullableParent.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -107,6 +108,7 @@ export const migrationEntries = [
   [39, "ProjectionInboxDismissals", Migration0039],
   [40, "ConsolidateSideThreadsPerParent", Migration0040],
   [41, "GlobalSideThreads", Migration0041],
+  [42, "GlobalChatMentionsNullableParent", Migration0042],
 ] as const;
 
 export const makeMigrationLoader = (throughId?: number) =>

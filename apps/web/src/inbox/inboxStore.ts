@@ -164,7 +164,11 @@ export function isInboxItemUnread(
  */
 export function useMentionedParentThreadIds(): ReadonlySet<ThreadId> {
   const parentThreadIds = useInboxStore(
-    useShallow((state) => state.items.map((item) => item.parentThreadId)),
+    useShallow((state) =>
+      state.items
+        .map((item) => item.parentThreadId)
+        .filter((id): id is ThreadId => id !== null),
+    ),
   );
   return useMemo(() => new Set(parentThreadIds), [parentThreadIds]);
 }

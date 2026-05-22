@@ -173,6 +173,7 @@ const makeSideThreadProjectionPipeline = Effect.gen(function* () {
             updatedAt: event.occurredAt,
             archivedAt: null,
             messages: [],
+            readBy: [],
           };
           yield* insertSnapshot(snapshot, event.sequence);
           break;
@@ -206,6 +207,8 @@ const makeSideThreadProjectionPipeline = Effect.gen(function* () {
           const current = yield* loadSnapshot(event.payload.sideThreadId);
           const mentionsForMessage = event.payload.mentions ?? [];
           const attachmentsForMessage = event.payload.attachments ?? [];
+          const linkedRefForMessage = event.payload.linkedRef ?? null;
+          const replyToForMessage = event.payload.replyToSideThreadMessageId ?? null;
           if (current) {
             const updated: SideThread = {
               ...current,
@@ -222,6 +225,9 @@ const makeSideThreadProjectionPipeline = Effect.gen(function* () {
                   quotedMessageId,
                   attachments: attachmentsForMessage,
                   reactions: [],
+                  linkedRef: linkedRefForMessage,
+                  replyToSideThreadMessageId: replyToForMessage,
+                  editedAt: null,
                 },
               ],
             };
@@ -231,53 +237,50 @@ const makeSideThreadProjectionPipeline = Effect.gen(function* () {
           // Inbox projection: one row per (message, mentioned user). The
           // (message_id, user_id) PK makes bootstrap replay idempotent and
           // de-duplicates if a buggy command ships the same user twice.
-          if (mentionsForMessage.length > 0) {
-            const parentThreadId = current?.parentThreadId;
-            // We need parentThreadId to power the inbox. If the snapshot
-            // hasn't materialised yet (out-of-order replay), skip — bootstrap
-            // will redo the insert after the SideThread snapshot lands.
-            // V1 limitation: mentions inside the workspace-wide global chat
-            // have `parentThreadId === null` and are intentionally NOT
-            // pushed to the inbox (the `projection_side_thread_message_mentions`
-            // schema requires a non-null parent). The mention still appears
-            // inline in the global chat itself.
-            if (parentThreadId) {
-              const textPreview = truncateForPreview(event.payload.text);
-              for (const mention of mentionsForMessage) {
-                yield* sql`
-                  INSERT INTO projection_side_thread_message_mentions (
-                    message_id,
-                    user_id,
-                    side_thread_id,
-                    parent_thread_id,
-                    quoted_message_id,
-                    author_user_id,
-                    author_display_name,
-                    text_preview,
-                    occurred_at
-                  ) VALUES (
-                    ${event.payload.messageId},
-                    ${mention.id},
-                    ${event.payload.sideThreadId},
-                    ${parentThreadId},
-                    ${quotedMessageId},
-                    ${event.payload.author.id},
-                    ${event.payload.author.displayName},
-                    ${textPreview},
-                    ${event.occurredAt}
-                  )
-                  ON CONFLICT(message_id, user_id) DO UPDATE SET
-                    side_thread_id = excluded.side_thread_id,
-                    parent_thread_id = excluded.parent_thread_id,
-                    quoted_message_id = excluded.quoted_message_id,
-                    author_user_id = excluded.author_user_id,
-                    author_display_name = excluded.author_display_name,
-                    text_preview = excluded.text_preview,
-                    occurred_at = excluded.occurred_at
-                `.pipe(
-                  Effect.mapError(toPersistenceSqlError("SideThreadProjection.insertMention")),
-                );
-              }
+          //
+          // `parent_thread_id` may be NULL — that's how the workspace-wide
+          // global chat appears in the inbox. We still need the SideThread
+          // snapshot to be materialised before we can derive the parent (or
+          // confirm it's a global chat), so skip when `current` is missing
+          // (out-of-order replay); bootstrap re-runs the insert after the
+          // snapshot lands.
+          if (mentionsForMessage.length > 0 && current) {
+            const parentThreadId = current.parentThreadId;
+            const textPreview = truncateForPreview(event.payload.text);
+            for (const mention of mentionsForMessage) {
+              yield* sql`
+                INSERT INTO projection_side_thread_message_mentions (
+                  message_id,
+                  user_id,
+                  side_thread_id,
+                  parent_thread_id,
+                  quoted_message_id,
+                  author_user_id,
+                  author_display_name,
+                  text_preview,
+                  occurred_at
+                ) VALUES (
+                  ${event.payload.messageId},
+                  ${mention.id},
+                  ${event.payload.sideThreadId},
+                  ${parentThreadId},
+                  ${quotedMessageId},
+                  ${event.payload.author.id},
+                  ${event.payload.author.displayName},
+                  ${textPreview},
+                  ${event.occurredAt}
+                )
+                ON CONFLICT(message_id, user_id) DO UPDATE SET
+                  side_thread_id = excluded.side_thread_id,
+                  parent_thread_id = excluded.parent_thread_id,
+                  quoted_message_id = excluded.quoted_message_id,
+                  author_user_id = excluded.author_user_id,
+                  author_display_name = excluded.author_display_name,
+                  text_preview = excluded.text_preview,
+                  occurred_at = excluded.occurred_at
+              `.pipe(
+                Effect.mapError(toPersistenceSqlError("SideThreadProjection.insertMention")),
+              );
             }
           }
           break;
@@ -346,6 +349,70 @@ const makeSideThreadProjectionPipeline = Effect.gen(function* () {
           `.pipe(
             Effect.mapError(toPersistenceSqlError("SideThreadProjection.upsertInboxDismissal")),
           );
+          break;
+        }
+
+        case "sidethread.message-edited": {
+          // Update both the dedicated flat row (so inbox preview / text
+          // searches reflect the edit) and the snapshot JSON inside the
+          // aggregate. The flat-row UPDATE is no-op safe if the row
+          // isn't there (defensive replay).
+          yield* sql`
+            UPDATE projection_side_thread_messages
+            SET text = ${event.payload.text}, updated_at = ${event.occurredAt}
+            WHERE message_id = ${event.payload.messageId}
+          `.pipe(Effect.mapError(toPersistenceSqlError("SideThreadProjection.editMessage")));
+
+          const current = yield* loadSnapshot(event.payload.sideThreadId);
+          if (!current) break;
+          const messageIndex = current.messages.findIndex(
+            (m) => m.id === event.payload.messageId,
+          );
+          if (messageIndex < 0) break;
+          const original = current.messages[messageIndex]!;
+          const updatedMessage: SideThreadMessage = {
+            ...original,
+            text: event.payload.text,
+            updatedAt: event.occurredAt,
+            editedAt: event.occurredAt,
+          };
+          const updated: SideThread = {
+            ...current,
+            updatedAt: event.occurredAt,
+            messages: current.messages.map((m, idx) =>
+              idx === messageIndex ? updatedMessage : m,
+            ),
+          };
+          yield* updateSnapshot(event.payload.sideThreadId, updated);
+          break;
+        }
+
+        case "sidethread.marked-read": {
+          // Read markers live inside the snapshot JSON — no dedicated SQL
+          // table (same trade-off as reactions). Replay is idempotent
+          // because we take max() on apply.
+          const current = yield* loadSnapshot(event.payload.sideThreadId);
+          if (!current) break;
+          const userId = event.payload.user.id;
+          const incomingAt = event.payload.lastReadAt;
+          const existingIndex = current.readBy.findIndex((m) => m.user.id === userId);
+          const nextMarker = { user: event.payload.user, lastReadAt: incomingAt };
+          let nextReadBy: SideThread["readBy"];
+          if (existingIndex < 0) {
+            nextReadBy = [...current.readBy, nextMarker];
+          } else {
+            const existing = current.readBy[existingIndex]!;
+            if (existing.lastReadAt >= incomingAt) break;
+            nextReadBy = current.readBy.map((m, idx) =>
+              idx === existingIndex ? nextMarker : m,
+            );
+          }
+          const updated: SideThread = {
+            ...current,
+            updatedAt: event.occurredAt,
+            readBy: nextReadBy,
+          };
+          yield* updateSnapshot(event.payload.sideThreadId, updated);
           break;
         }
       }
