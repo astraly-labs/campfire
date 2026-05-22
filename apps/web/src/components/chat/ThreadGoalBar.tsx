@@ -2,6 +2,7 @@ import type { EnvironmentId, OrchestrationThreadGoal, ThreadId } from "@t3tools/
 import {
   CheckCircle2Icon,
   CircleSlashIcon,
+  ClockIcon,
   LoaderIcon,
   PauseIcon,
   PencilIcon,
@@ -12,12 +13,22 @@ import {
 import { useCallback, useState } from "react";
 
 import { ensureEnvironmentApi } from "../../environmentApi";
+import { usePendingGoalsStore } from "../../pendingGoalsStore";
 import { cn } from "~/lib/utils";
 
 interface Props {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly goal: OrchestrationThreadGoal;
+  /**
+   * When true, the goal lives only in the client-side pending store (no Codex
+   * session yet). Edit/clear route through that store instead of the
+   * codexSet/ClearThreadGoal RPCs, and the pause/resume action is hidden
+   * because there's no Codex-side state to pause yet.
+   */
+  readonly isPending?: boolean;
+  /** Required when `isPending` is true. */
+  readonly scopedThreadKey?: string;
 }
 
 // Mirrors Codex's goal bar (see the Codex desktop app). Source of truth for
@@ -28,10 +39,18 @@ interface Props {
 //
 // Renders nothing unless a goal is set. Only mounted for Codex-backed threads
 // (gated by the parent in ChatView).
-export function ThreadGoalBar({ environmentId, threadId, goal }: Props) {
+export function ThreadGoalBar({
+  environmentId,
+  threadId,
+  goal,
+  isPending: isPendingMode = false,
+  scopedThreadKey,
+}: Props) {
   const api = ensureEnvironmentApi(environmentId);
   const [pending, setPending] = useState<null | "toggle" | "clear" | "edit">(null);
   const [error, setError] = useState<string | null>(null);
+  const setPendingGoal = usePendingGoalsStore((state) => state.setPendingGoal);
+  const clearPendingGoal = usePendingGoalsStore((state) => state.clearPendingGoal);
 
   const isActive = goal.status === "active";
   const isPaused = goal.status === "paused";
@@ -42,7 +61,7 @@ export function ThreadGoalBar({ environmentId, threadId, goal }: Props) {
     goal.status === "budgetLimited";
 
   const handleToggle = useCallback(async () => {
-    if (pending || isTerminal) return;
+    if (pending || isTerminal || isPendingMode) return;
     setPending("toggle");
     setError(null);
     try {
@@ -55,10 +74,14 @@ export function ThreadGoalBar({ environmentId, threadId, goal }: Props) {
     } finally {
       setPending(null);
     }
-  }, [api, threadId, isActive, isTerminal, pending]);
+  }, [api, threadId, isActive, isTerminal, pending, isPendingMode]);
 
   const handleClear = useCallback(async () => {
     if (pending) return;
+    if (isPendingMode) {
+      if (scopedThreadKey) clearPendingGoal(scopedThreadKey);
+      return;
+    }
     setPending("clear");
     setError(null);
     try {
@@ -68,7 +91,7 @@ export function ThreadGoalBar({ environmentId, threadId, goal }: Props) {
     } finally {
       setPending(null);
     }
-  }, [api, threadId, pending]);
+  }, [api, threadId, pending, isPendingMode, scopedThreadKey, clearPendingGoal]);
 
   const handleEdit = useCallback(async () => {
     if (pending) return;
@@ -76,6 +99,10 @@ export function ThreadGoalBar({ environmentId, threadId, goal }: Props) {
     if (next === null) return;
     const trimmed = next.trim();
     if (!trimmed || trimmed === goal.objective) return;
+    if (isPendingMode) {
+      if (scopedThreadKey) setPendingGoal(scopedThreadKey, trimmed);
+      return;
+    }
     setPending("edit");
     setError(null);
     try {
@@ -85,10 +112,10 @@ export function ThreadGoalBar({ environmentId, threadId, goal }: Props) {
     } finally {
       setPending(null);
     }
-  }, [api, threadId, goal.objective, pending]);
+  }, [api, threadId, goal.objective, pending, isPendingMode, scopedThreadKey, setPendingGoal]);
 
-  const statusLabel = statusToLabel(goal.status);
-  const StatusIcon = statusToIcon(goal.status);
+  const statusLabel = isPendingMode ? "Pending goal" : statusToLabel(goal.status);
+  const StatusIcon = isPendingMode ? ClockIcon : statusToIcon(goal.status);
 
   return (
     <div className="mx-auto mb-1 max-w-208 px-1">
@@ -101,7 +128,13 @@ export function ThreadGoalBar({ environmentId, threadId, goal }: Props) {
         <StatusIcon
           className={cn(
             "size-3.5 shrink-0",
-            isPaused ? "text-amber-500" : isActive ? "text-emerald-500" : "text-muted-foreground",
+            isPendingMode
+              ? "text-amber-500"
+              : isPaused
+                ? "text-amber-500"
+                : isActive
+                  ? "text-emerald-500"
+                  : "text-muted-foreground",
           )}
           aria-hidden
         />
@@ -109,9 +142,18 @@ export function ThreadGoalBar({ environmentId, threadId, goal }: Props) {
         <span className="min-w-0 flex-1 truncate text-muted-foreground" title={goal.objective}>
           {goal.objective}
         </span>
-        <span className="shrink-0 tabular-nums text-muted-foreground/70">
-          {formatElapsed(goal.timeUsedSeconds)}
-        </span>
+        {isPendingMode ? (
+          <span
+            className="shrink-0 text-[10px] uppercase tracking-wide text-amber-600 dark:text-amber-400"
+            title="Will be applied to Codex when the first message is sent"
+          >
+            awaiting session
+          </span>
+        ) : (
+          <span className="shrink-0 tabular-nums text-muted-foreground/70">
+            {formatElapsed(goal.timeUsedSeconds)}
+          </span>
+        )}
 
         <div className="flex shrink-0 items-center gap-0.5 text-muted-foreground/80">
           <button
@@ -124,24 +166,26 @@ export function ThreadGoalBar({ environmentId, threadId, goal }: Props) {
           >
             <PencilIcon className="size-3.5" aria-hidden />
           </button>
-          <button
-            type="button"
-            onClick={handleToggle}
-            disabled={pending !== null || isTerminal}
-            className={iconButtonClass}
-            aria-label={isActive ? "Pause goal" : "Resume goal"}
-            title={
-              isActive ? "Pause goal" : isPaused ? "Resume goal" : "Goal is in a terminal state"
-            }
-          >
-            {pending === "toggle" ? (
-              <LoaderIcon className="size-3.5 animate-spin" aria-hidden />
-            ) : isActive ? (
-              <PauseIcon className="size-3.5" aria-hidden />
-            ) : (
-              <PlayIcon className="size-3.5" aria-hidden />
-            )}
-          </button>
+          {!isPendingMode ? (
+            <button
+              type="button"
+              onClick={handleToggle}
+              disabled={pending !== null || isTerminal}
+              className={iconButtonClass}
+              aria-label={isActive ? "Pause goal" : "Resume goal"}
+              title={
+                isActive ? "Pause goal" : isPaused ? "Resume goal" : "Goal is in a terminal state"
+              }
+            >
+              {pending === "toggle" ? (
+                <LoaderIcon className="size-3.5 animate-spin" aria-hidden />
+              ) : isActive ? (
+                <PauseIcon className="size-3.5" aria-hidden />
+              ) : (
+                <PlayIcon className="size-3.5" aria-hidden />
+              )}
+            </button>
+          ) : null}
           <button
             type="button"
             onClick={handleClear}

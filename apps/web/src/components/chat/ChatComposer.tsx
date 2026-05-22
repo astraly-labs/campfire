@@ -19,6 +19,7 @@ import {
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
 } from "@t3tools/contracts";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime";
 import {
   memo,
   useCallback,
@@ -2030,6 +2031,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           threadId={activeThreadId}
           initialObjective={props.activeThread?.goal?.objective}
           onError={(message) => props.setThreadError(activeThreadId, message)}
+          scopedThreadKey={scopedThreadKey(
+            scopeThreadRef(props.environmentId, activeThreadId),
+          )}
+          // `session.providerInstanceId` is the canonical marker of a live
+          // Codex session — `runCodexThreadCommand` on the server rejects
+          // `goal-set` unless the projection has both a session row AND a
+          // provider instance id. Anything weaker (e.g. session !== null)
+          // would let the dialog dispatch RPCs that immediately fail.
+          hasActiveCodexSession={
+            props.activeThread?.session?.provider === "codex" &&
+            props.activeThread.session.providerInstanceId !== undefined
+          }
         />
       ) : null}
     <form

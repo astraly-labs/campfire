@@ -3,6 +3,7 @@ import { LoaderIcon, TargetIcon, Trash2Icon } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 
 import { ensureEnvironmentApi } from "../../environmentApi";
+import { usePendingGoalsStore } from "../../pendingGoalsStore";
 import { Button } from "../ui/button";
 import {
   Dialog,
@@ -23,6 +24,19 @@ interface Props {
   /** Existing objective, if a goal is already set. Pre-fills the input. */
   readonly initialObjective: string | undefined;
   readonly onError: (message: string) => void;
+  /**
+   * `scopedThreadKey(scopeThreadRef(environmentId, threadId))`. Used to key the
+   * pending goal store when the thread has no live Codex session to flush
+   * against yet — e.g. a freshly created draft thread.
+   */
+  readonly scopedThreadKey: string;
+  /**
+   * True when the thread has a live Codex session that can accept the
+   * `thread/goal/set` RPC right now. When false (draft thread, never-started
+   * server thread, etc.) the dialog persists the objective to the pending
+   * store; ChatView's session-watcher flushes it once the session is up.
+   */
+  readonly hasActiveCodexSession: boolean;
 }
 
 // Dialog mounted by ChatComposer when the user picks `/goal` from the slash
@@ -36,12 +50,16 @@ export function ThreadGoalDialog({
   threadId,
   initialObjective,
   onError,
+  scopedThreadKey,
+  hasActiveCodexSession,
 }: Props) {
   const [draft, setDraft] = useState(initialObjective ?? "");
   const [pending, setPending] = useState<null | "save" | "clear">(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const formId = useId();
   const hasExistingGoal = (initialObjective ?? "").trim().length > 0;
+  const setPendingGoal = usePendingGoalsStore((state) => state.setPendingGoal);
+  const clearPendingGoal = usePendingGoalsStore((state) => state.clearPendingGoal);
 
   useEffect(() => {
     if (!open) return;
@@ -73,6 +91,14 @@ export function ThreadGoalDialog({
       onOpenChange(false);
       return;
     }
+    if (!hasActiveCodexSession) {
+      // No Codex session to push to yet — buffer the objective locally.
+      // ChatView's session watcher will flush this via codexSetThreadGoal
+      // once a session is up (typically right after the first turn starts).
+      setPendingGoal(scopedThreadKey, trimmed);
+      onOpenChange(false);
+      return;
+    }
     setPending("save");
     try {
       const api = ensureEnvironmentApi(environmentId);
@@ -88,10 +114,21 @@ export function ThreadGoalDialog({
 
   const clear = async () => {
     if (pending) return;
+    if (!hasActiveCodexSession) {
+      // Mirror the save() short-circuit: with no session, the only thing to
+      // clear is the local pending entry.
+      clearPendingGoal(scopedThreadKey);
+      onOpenChange(false);
+      return;
+    }
     setPending("clear");
     try {
       const api = ensureEnvironmentApi(environmentId);
       await api.orchestration.codexClearThreadGoal({ threadId });
+      // If the user had a pending entry and a server goal at the same time
+      // (shouldn't really happen, but be defensive) — clearing on the server
+      // also drops the local pending state.
+      clearPendingGoal(scopedThreadKey);
       onOpenChange(false);
     } catch (cause: unknown) {
       const message = cause instanceof Error ? cause.message : String(cause);
@@ -140,6 +177,12 @@ export function ThreadGoalDialog({
             <p className="text-[11px] text-muted-foreground">
               Press Enter to save · Empty {hasExistingGoal ? "clears" : "cancels"}
             </p>
+            {!hasActiveCodexSession ? (
+              <p className="text-[11px] text-amber-600 dark:text-amber-400">
+                No Codex session yet — the goal will be applied to Codex when
+                you send your first message.
+              </p>
+            ) : null}
           </form>
         </DialogPanel>
         <DialogFooter>

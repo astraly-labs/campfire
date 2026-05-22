@@ -149,6 +149,7 @@ import {
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
 import { ThreadGoalBar } from "./chat/ThreadGoalBar";
+import { usePendingGoal, usePendingGoalsStore } from "../pendingGoalsStore";
 import { ThreadSummaryBar } from "./chat/ThreadSummaryBar";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
@@ -851,6 +852,95 @@ export default function ChatView(props: ChatViewProps) {
     [activeThread],
   );
   const activeThreadKey = activeThreadRef ? scopedThreadKey(activeThreadRef) : null;
+  const activePendingGoal = usePendingGoal(activeThreadKey);
+  // Synthesize an OrchestrationThreadGoal shape from the pending objective so
+  // ThreadGoalBar can render it like a normal goal. Default to "active"; we
+  // overload the visual via the `isPending` flag (no pause/resume button,
+  // amber "awaiting session" badge instead of an elapsed timer).
+  const activePendingGoalShape = useMemo(() => {
+    if (!activePendingGoal) return null;
+    const nowIso = new Date().toISOString();
+    return {
+      objective: activePendingGoal.objective,
+      status: "active" as const,
+      tokenBudget: null,
+      tokensUsed: 0,
+      timeUsedSeconds: 0,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    };
+  }, [activePendingGoal]);
+  const markPendingGoalSyncing = usePendingGoalsStore((s) => s.markSyncing);
+  const markPendingGoalPending = usePendingGoalsStore((s) => s.markPending);
+  const clearPendingGoalForKey = usePendingGoalsStore((s) => s.clearPendingGoal);
+  // Flush a pending goal as soon as the thread has a live Codex session.
+  // Conditions intentionally mirror ChatComposer's `hasActiveCodexSession`
+  // gate so the RPC only fires when the server's `runCodexThreadCommand`
+  // would actually accept it.
+  const activeSessionProvider = activeThread?.session?.provider;
+  const activeSessionInstanceId = activeThread?.session?.providerInstanceId;
+  const activeSessionStatus = activeThread?.session?.status;
+  const pendingGoalObjective = activePendingGoal?.objective;
+  const pendingGoalStatus = activePendingGoal?.status;
+  const pendingGoalThreadKey = activePendingGoal ? activeThreadKey : null;
+  const pendingGoalThreadId = activePendingGoal ? activeThreadId : null;
+  const pendingGoalEnvironmentId = activePendingGoal
+    ? activeThread?.environmentId ?? null
+    : null;
+  useEffect(() => {
+    if (!pendingGoalThreadKey || !pendingGoalThreadId || !pendingGoalEnvironmentId) return;
+    if (!pendingGoalObjective) return;
+    if (pendingGoalStatus !== "pending") return;
+    if (activeSessionProvider !== "codex" || activeSessionInstanceId === undefined) return;
+    // The web ThreadSession.status is the *legacy* enum projected by store.ts
+    // (connecting/ready/running/error/closed). Only "ready" and "running"
+    // mean Codex is responsive enough to accept thread/goal/set.
+    if (activeSessionStatus !== "ready" && activeSessionStatus !== "running") {
+      return;
+    }
+    let cancelled = false;
+    markPendingGoalSyncing(pendingGoalThreadKey);
+    void (async () => {
+      try {
+        const api = readEnvironmentApi(pendingGoalEnvironmentId);
+        if (!api) {
+          // No live API for this environment (closed?). Reset to "pending"
+          // so a later session activity attempt retries — this is a
+          // transient infrastructure miss, not a goal-set failure.
+          if (!cancelled) markPendingGoalPending(pendingGoalThreadKey);
+          return;
+        }
+        await api.orchestration.codexSetThreadGoal({
+          threadId: pendingGoalThreadId,
+          objective: pendingGoalObjective,
+        });
+        if (!cancelled) clearPendingGoalForKey(pendingGoalThreadKey);
+      } catch (cause) {
+        // Intentionally leave the entry in "syncing" on RPC failure to avoid
+        // a busy-retry loop (the effect deps would flip the status back to
+        // "pending" and re-fire on every render). The goal still renders as
+        // pending in the bar; the user can edit via the dialog (which writes
+        // a fresh "pending" entry) or clear it explicitly.
+        const message = cause instanceof Error ? cause.message : String(cause);
+        console.warn("[🎯 ThreadGoal] failed to flush pending goal", message);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    pendingGoalThreadKey,
+    pendingGoalThreadId,
+    pendingGoalEnvironmentId,
+    pendingGoalObjective,
+    pendingGoalStatus,
+    activeSessionProvider,
+    activeSessionInstanceId,
+    activeSessionStatus,
+    markPendingGoalSyncing,
+    markPendingGoalPending,
+    clearPendingGoalForKey,
+  ]);
   const existingOpenTerminalThreadKeys = useMemo(() => {
     const existingThreadKeys = new Set<string>([...serverThreadKeys, ...draftThreadKeys]);
     return openTerminalThreadKeys.filter((nextThreadKey) => existingThreadKeys.has(nextThreadKey));
@@ -3654,17 +3744,41 @@ export default function ChatView(props: ChatViewProps) {
           >
             <div className="relative isolate">
               <ComposerBannerStack className="relative z-0" items={composerBannerItems} />
-              {activeThreadId &&
-              isServerThread &&
-              activeThread?.environmentId &&
-              activeThread?.goal &&
-              activeThread.session?.provider === "codex" ? (
-                <ThreadGoalBar
-                  environmentId={activeThread.environmentId}
-                  threadId={activeThreadId}
-                  goal={activeThread.goal}
-                />
-              ) : null}
+              {(() => {
+                if (!activeThreadId || !activeThread?.environmentId) return null;
+                // Live goal: Codex session is active AND the projection has
+                // already received a thread/goal/updated for it. This is the
+                // authoritative source and wins over any local pending state.
+                if (
+                  isServerThread &&
+                  activeThread.goal &&
+                  activeThread.session?.provider === "codex"
+                ) {
+                  return (
+                    <ThreadGoalBar
+                      environmentId={activeThread.environmentId}
+                      threadId={activeThreadId}
+                      goal={activeThread.goal}
+                    />
+                  );
+                }
+                // Pending goal: user set /goal before a Codex session existed.
+                // Render with `isPending` so edit/clear route through the
+                // pending store and the bar shows "awaiting session". The
+                // session watcher below flushes it as soon as Codex is live.
+                if (activePendingGoalShape && activeThreadKey) {
+                  return (
+                    <ThreadGoalBar
+                      environmentId={activeThread.environmentId}
+                      threadId={activeThreadId}
+                      goal={activePendingGoalShape}
+                      isPending
+                      scopedThreadKey={activeThreadKey}
+                    />
+                  );
+                }
+                return null;
+              })()}
               {activeThreadId && isServerThread && activeThread?.environmentId ? (
                 <ThreadSummaryBar
                   environmentId={activeThread.environmentId}
