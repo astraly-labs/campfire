@@ -70,6 +70,19 @@ const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =
           continue;
         }
 
+        // A thread paused on a pending user-input question looks idle (no
+        // active turn), but reaping its session drops the in-memory pending
+        // request: the answer the user eventually submits then has no live
+        // session to deliver to and is silently lost. Keep the session alive
+        // until the question is answered (or the thread is otherwise closed).
+        if (thread?.hasPendingUserInput) {
+          yield* Effect.logDebug("provider.session.reaper.skipped-pending-user-input", {
+            threadId: binding.threadId,
+            idleDurationMs,
+          });
+          continue;
+        }
+
         const reaped = yield* providerService.stopSession({ threadId: binding.threadId }).pipe(
           Effect.tap(() =>
             Effect.logInfo("provider.session.reaped", {
