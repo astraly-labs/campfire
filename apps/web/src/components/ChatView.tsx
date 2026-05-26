@@ -69,6 +69,7 @@ import { type LegendListRef } from "@legendapp/list/react";
 import {
   buildPendingUserInputAnswers,
   derivePendingUserInputProgress,
+  findFirstUnansweredPendingUserInputQuestionIndex,
   setPendingUserInputCustomAnswer,
   togglePendingUserInputOptionSelection,
   type PendingUserInputDraftAnswer,
@@ -3191,11 +3192,22 @@ export default function ChatView(props: ChatViewProps) {
     if (activePendingProgress.isLastQuestion) {
       if (activePendingResolvedAnswers) {
         void onRespondToUserInput(activePendingUserInput.requestId, activePendingResolvedAnswers);
+        return;
       }
+      // On the last question but the prompt is still incomplete (e.g. an
+      // earlier answer was cleared): jump back to the first unanswered
+      // question instead of leaving Submit as a silent dead-end.
+      setActivePendingUserInputQuestionIndex(
+        findFirstUnansweredPendingUserInputQuestionIndex(
+          activePendingUserInput.questions,
+          activePendingDraftAnswers,
+        ),
+      );
       return;
     }
     setActivePendingUserInputQuestionIndex(activePendingProgress.questionIndex + 1);
   }, [
+    activePendingDraftAnswers,
     activePendingProgress,
     activePendingResolvedAnswers,
     activePendingUserInput,

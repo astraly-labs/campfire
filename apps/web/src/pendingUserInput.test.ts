@@ -66,17 +66,27 @@ describe("resolvePendingUserInputAnswer", () => {
     ).toEqual(["Server", "Web"]);
   });
 
-  it("clears the preset selection when a custom answer is entered", () => {
+  it("keeps the preset selection as a fallback when a custom answer is entered", () => {
     expect(
       setPendingUserInputCustomAnswer(
         {
           selectedOptionLabels: ["Server", "Web"],
         },
-        "doesn't matter",
+        "a typed answer wins for now",
       ),
     ).toEqual({
-      customAnswer: "doesn't matter",
+      customAnswer: "a typed answer wins for now",
+      selectedOptionLabels: ["Server", "Web"],
     });
+  });
+
+  it("falls back to the selected option once a custom answer is cleared", () => {
+    const afterTyping = setPendingUserInputCustomAnswer(
+      { selectedOptionLabels: ["Web"] },
+      "typed then deleted",
+    );
+    const afterClearing = setPendingUserInputCustomAnswer(afterTyping, "");
+    expect(resolvePendingUserInputAnswer(multiSelectQuestion, afterClearing)).toEqual(["Web"]);
   });
 });
 

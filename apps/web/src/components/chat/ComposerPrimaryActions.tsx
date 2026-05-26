@@ -108,7 +108,11 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           disabled={
             isEnvironmentUnavailable ||
             pendingAction.isResponding ||
-            (pendingAction.isLastQuestion ? !pendingAction.isComplete : !pendingAction.canAdvance)
+            // Enable as soon as the *current* question has an answer. On the
+            // last question this lets the click either submit (when every
+            // question is answered) or jump to the first still-unanswered
+            // question — never a silent dead-end.
+            !pendingAction.canAdvance
           }
         >
           {formatPendingPrimaryActionLabel({

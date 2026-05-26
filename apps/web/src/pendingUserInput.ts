@@ -62,14 +62,16 @@ export function setPendingUserInputCustomAnswer(
   draft: PendingUserInputDraftAnswer | undefined,
   customAnswer: string,
 ): PendingUserInputDraftAnswer {
-  const selectedOptionLabels =
-    customAnswer.trim().length > 0
-      ? undefined
-      : normalizeSelectedOptionLabels(draft?.selectedOptionLabels);
+  // Keep any previously selected option around even while a custom answer is
+  // being typed. `resolvePendingUserInputAnswer` already prefers a non-empty
+  // custom answer, so preserving the selection lets clearing the field fall
+  // back to "use the selected option" (as the composer hint promises) instead
+  // of silently leaving the question unanswered.
+  const selectedOptionLabels = normalizeSelectedOptionLabels(draft?.selectedOptionLabels);
 
   return {
     customAnswer,
-    ...(selectedOptionLabels && selectedOptionLabels.length > 0 ? { selectedOptionLabels } : {}),
+    ...(selectedOptionLabels.length > 0 ? { selectedOptionLabels } : {}),
   };
 }
 
