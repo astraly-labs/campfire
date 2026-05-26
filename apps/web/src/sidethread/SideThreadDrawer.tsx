@@ -1519,7 +1519,7 @@ export function DrawerBody({
             container with attachment icons inline; the round Send button
             floats to the right and only lights up when there's content. */}
         <div className="flex items-end gap-2">
-          <div className="flex flex-1 items-end gap-1 rounded-3xl border border-border/60 bg-card/60 px-2 py-1 focus-within:border-border focus-within:bg-card">
+          <div className="flex min-w-0 flex-1 items-end gap-1 rounded-3xl border border-border/60 bg-card/60 px-2 py-1 focus-within:border-border focus-within:bg-card">
             <div className="flex shrink-0 items-center gap-0.5 pb-1">
               <Button
                 type="button"
@@ -1561,7 +1561,7 @@ export function DrawerBody({
               }}
               placeholder="Message"
               rows={1}
-              className="field-sizing-content max-h-32 min-h-7 flex-1 resize-none overflow-y-auto border-0 bg-transparent px-1 py-1 text-sm leading-snug placeholder:text-muted-foreground/50 focus:outline-none focus:ring-0"
+              className="field-sizing-content max-h-60 min-h-7 min-w-0 flex-1 resize-none overflow-y-auto border-0 bg-transparent px-1 py-1 text-sm leading-snug placeholder:text-muted-foreground/50 focus:outline-none focus:ring-0"
               onKeyDown={onKeyDown}
             />
           </div>
