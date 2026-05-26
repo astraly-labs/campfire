@@ -30,15 +30,19 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
+import { ServerConfig } from "../../config.ts";
 import { toPersistenceSqlError } from "../../persistence/Errors.ts";
 import { SideThreadEventStore } from "../../persistence/Services/SideThreadEventStore.ts";
+import { persistSideThreadPostAttachments } from "../attachmentNormalizer.ts";
 import { decideSideThreadCommand, type PlannedSideThreadEvent } from "../decider.ts";
 import { SideThreadCommandInvariantError, type SideThreadDispatchError } from "../Errors.ts";
 import { SideThreadEventNormalizer } from "../normalize.ts";
@@ -103,14 +107,27 @@ const makeSideThreadEngine = Effect.gen(function* () {
   const commandQueue = yield* Queue.unbounded<CommandEnvelope>();
   const eventPubSub = yield* PubSub.unbounded<SideThreadEvent>();
 
-  const processEnvelope = (envelope: CommandEnvelope): Effect.Effect<void> =>
+  const processEnvelope = (
+    envelope: CommandEnvelope,
+  ): Effect.Effect<void, never, FileSystem.FileSystem | Path.Path | ServerConfig> =>
     Effect.exit(
       Effect.gen(function* () {
         const now = yield* nowIso;
+        // Resolve wire attachments → persisted attachments before deciding:
+        // upload images get written to the blob store and swapped for an id,
+        // GIFs pass through. The decider stays pure and never sees raw bytes.
+        const resolvedAttachments =
+          envelope.command.type === "sidethread.message.post"
+            ? yield* persistSideThreadPostAttachments({
+                sideThreadId: envelope.command.sideThreadId,
+                attachments: envelope.command.attachments,
+              })
+            : undefined;
         const planned = yield* decideSideThreadCommand({
           command: envelope.command,
           readModel: commandReadModel,
           now,
+          resolvedAttachments,
         });
         const actorUserId = actorOf(planned);
 

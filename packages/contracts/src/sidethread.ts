@@ -12,6 +12,11 @@ import {
   TrimmedNonEmptyString,
   TrimmedString,
 } from "./baseSchemas.ts";
+import {
+  ChatAttachmentId,
+  PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
+  PROVIDER_SEND_TURN_MAX_IMAGE_DATA_URL_CHARS,
+} from "./orchestration.ts";
 import { UserId, UserRef } from "./user.ts";
 
 /**
@@ -75,8 +80,12 @@ const LinkedRefField = Schema.NullOr(LinkedRef).pipe(
 
 
 /**
- * Inline media stapled onto a side-thread message. V1 ships GIFs only —
- * the discriminated union keeps the door open for future `image`/`file`
+ * Inline media stapled onto a side-thread message. Two persisted variants:
+ *  - `gif`: references an external provider URL (Tenor) — no bytes stored.
+ *  - `image`: a user-uploaded image whose bytes live in the server's
+ *    attachment blob store and are served from `/attachments/{id}`.
+ *
+ * The discriminated union (`kind`) keeps the door open for future `file`
  * variants without re-shaping the message payload.
  */
 export const SideThreadGifAttachment = Schema.Struct({
@@ -100,15 +109,79 @@ export const SideThreadGifAttachment = Schema.Struct({
 });
 export type SideThreadGifAttachment = typeof SideThreadGifAttachment.Type;
 
-export const SideThreadAttachment = Schema.Union([SideThreadGifAttachment]);
+/**
+ * Persisted (stored) image attachment. Unlike GIFs — which point at an
+ * external provider URL — user-uploaded images are written to the server's
+ * attachment blob store on dispatch and served from `/attachments/{id}`.
+ * The message therefore stores only metadata + the opaque blob `id`; the
+ * client resolves a playable URL from the id + its environment HTTP base.
+ *
+ * Deliberately mirrors orchestration's `ChatImageAttachment` (same
+ * {@link ChatAttachmentId}, size limit and `image/*` mime guard) so the
+ * side-thread chat and the agent chat share one blob store and one serving
+ * route. We omit width/height: the server doesn't decode image bytes, and
+ * the renderer constrains layout with a max-height like the agent chat.
+ */
+export const SideThreadImageAttachment = Schema.Struct({
+  kind: Schema.Literal("image"),
+  id: ChatAttachmentId,
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
+  mimeType: TrimmedNonEmptyString.check(Schema.isMaxLength(100), Schema.isPattern(/^image\//i)),
+  sizeBytes: NonNegativeInt.check(Schema.isLessThanOrEqualTo(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES)),
+});
+export type SideThreadImageAttachment = typeof SideThreadImageAttachment.Type;
+
+/**
+ * Persisted attachment union — the shape stored in the message and the
+ * `message-posted` event. Image bytes never appear here; they're swapped for
+ * a blob `id` by the server normalizer before the event is appended.
+ */
+export const SideThreadAttachment = Schema.Union([
+  SideThreadGifAttachment,
+  SideThreadImageAttachment,
+]);
 export type SideThreadAttachment = typeof SideThreadAttachment.Type;
 
 /**
- * Default-empty list of attachments. Same back-compat trick as
+ * Default-empty list of *persisted* attachments. Same back-compat trick as
  * {@link MentionsField}: messages persisted before this feature decode
  * cleanly with `attachments = []`.
  */
 const AttachmentsField = Schema.Array(SideThreadAttachment).pipe(
+  Schema.withDecodingDefaultKey(Effect.succeed([])),
+);
+
+/**
+ * Wire-only image variant carried by {@link SideThreadMessagePostCommand}.
+ * Holds the base64 `dataUrl` the browser captured. The server normalizes it
+ * into a persisted {@link SideThreadImageAttachment} (writes bytes, assigns a
+ * blob id) before the event is appended, so the stored payload never carries
+ * raw image bytes. Mirrors orchestration's `UploadChatImageAttachment`.
+ */
+export const SideThreadUploadImageAttachment = Schema.Struct({
+  kind: Schema.Literal("image"),
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
+  mimeType: TrimmedNonEmptyString.check(Schema.isMaxLength(100), Schema.isPattern(/^image\//i)),
+  sizeBytes: NonNegativeInt.check(Schema.isLessThanOrEqualTo(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES)),
+  dataUrl: TrimmedNonEmptyString.check(
+    Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_IMAGE_DATA_URL_CHARS),
+  ),
+});
+export type SideThreadUploadImageAttachment = typeof SideThreadUploadImageAttachment.Type;
+
+/**
+ * Attachment shapes accepted on the post-command wire (pre-persistence):
+ * GIFs (already URL-backed, pass through unchanged) and upload images
+ * (carry a `dataUrl` the server persists).
+ */
+export const SideThreadPostAttachment = Schema.Union([
+  SideThreadGifAttachment,
+  SideThreadUploadImageAttachment,
+]);
+export type SideThreadPostAttachment = typeof SideThreadPostAttachment.Type;
+
+/** Default-empty list of *wire* attachments for the post command. */
+const PostAttachmentsField = Schema.Array(SideThreadPostAttachment).pipe(
   Schema.withDecodingDefaultKey(Effect.succeed([])),
 );
 
@@ -288,8 +361,13 @@ export const SideThreadMessagePostCommand = Schema.Struct({
    * message in the parent thread.
    */
   quotedMessageId: QuotedMessageIdField,
-  /** Inline media (GIFs in V1). Defaults to empty for older clients. */
-  attachments: AttachmentsField,
+  /**
+   * Inline media: GIFs (URL-backed, persisted verbatim) and upload images
+   * (carry a base64 `dataUrl` the server writes to the blob store, swapping
+   * it for a persisted {@link SideThreadImageAttachment}). Defaults to empty
+   * for older clients.
+   */
+  attachments: PostAttachmentsField,
   /** Optional pointer to another conversation. Defaults to `null`. */
   linkedRef: LinkedRefField,
   /** Optional reply target (a previous message in the same side thread). */

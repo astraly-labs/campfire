@@ -11,6 +11,7 @@ import type {
   EventId,
   IsoDateTime,
   SideThreadArchiveCommand,
+  SideThreadAttachment,
   SideThreadCommand,
   SideThreadCreateCommand,
   SideThreadEvent,
@@ -31,6 +32,14 @@ export interface DecideSideThreadCommandParams {
   readonly command: SideThreadCommand;
   readonly readModel: SideThreadReadModel;
   readonly now: IsoDateTime;
+  /**
+   * Persisted attachments for a `sidethread.message.post` command, resolved
+   * upstream by the engine's attachment normalizer (upload images → blob
+   * ids). The decider uses these verbatim for its invariant and the event
+   * payload instead of `command.attachments` (which still carries the
+   * wire/upload shape). Absent/`[]` for every other command type.
+   */
+  readonly resolvedAttachments?: ReadonlyArray<SideThreadAttachment> | undefined;
 }
 
 const newEventId = (): EventId => crypto.randomUUID() as unknown as EventId;
@@ -54,12 +63,18 @@ export const decideSideThreadCommand = Effect.fn("decideSideThreadCommand")(func
   command,
   readModel,
   now,
+  resolvedAttachments,
 }: DecideSideThreadCommandParams) {
   switch (command.type) {
     case "sidethread.create":
       return yield* decideCreate({ command, readModel, now });
     case "sidethread.message.post":
-      return yield* decidePost({ command, readModel, now });
+      return yield* decidePost({
+        command,
+        readModel,
+        now,
+        attachments: resolvedAttachments ?? [],
+      });
     case "sidethread.message.react":
       return yield* decideReact({ command, readModel, now });
     case "sidethread.archive":
@@ -104,10 +119,13 @@ const decidePost = ({
   command,
   readModel,
   now,
+  attachments,
 }: {
   command: SideThreadMessagePostCommand;
   readModel: SideThreadReadModel;
   now: IsoDateTime;
+  /** Persisted attachments resolved by the engine (see DecideSideThreadCommandParams). */
+  attachments: ReadonlyArray<SideThreadAttachment>;
 }): Effect.Effect<PlannedSideThreadEvent, SideThreadCommandInvariantError> =>
   Effect.gen(function* () {
     const sideThread = readModel.sideThreads.get(command.sideThreadId);
@@ -129,10 +147,10 @@ const decidePost = ({
         detail: `Message id already used: ${command.messageId}`,
       });
     }
-    // A side-thread message must carry *something*. With GIF attachments
-    // we relaxed `text` to allow empty strings — re-enforce the "at least
-    // one" rule here so a buggy client can't persist a fully blank row.
-    if (command.text.length === 0 && command.attachments.length === 0) {
+    // A side-thread message must carry *something*. With GIF/image
+    // attachments we relaxed `text` to allow empty strings — re-enforce the
+    // "at least one" rule here so a buggy client can't persist a blank row.
+    if (command.text.length === 0 && attachments.length === 0) {
       return yield* new SideThreadCommandInvariantError({
         commandType: command.type,
         detail: "Message must have text or at least one attachment",
@@ -162,7 +180,7 @@ const decidePost = ({
         text: command.text,
         mentions: command.mentions,
         quotedMessageId: command.quotedMessageId,
-        attachments: command.attachments,
+        attachments,
         linkedRef: command.linkedRef,
         replyToSideThreadMessageId: command.replyToSideThreadMessageId,
       },
