@@ -8,6 +8,7 @@ import {
   type SideThreadMessage,
   type SideThreadMessageId,
   type SideThreadMessageReaction,
+  type SideThreadPostAttachment,
   type SideThreadStreamItem,
   type ThreadId,
   type UserRef,
@@ -18,16 +19,18 @@ import {
   ImageIcon,
   LinkIcon,
   MessageSquareIcon,
+  PaperclipIcon,
   PencilIcon,
   SendIcon,
   XIcon,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { readFileAsDataUrl } from "../components/ChatView.logic";
 import { ensureEnvironmentApi } from "../environmentApi";
 import { Button } from "../components/ui/button";
 import { InlineSlideDrawer } from "../components/ui/inline-slide-drawer";
-import { cn } from "~/lib/utils";
+import { cn, randomUUID } from "~/lib/utils";
 import {
   useCurrentUser,
   useEnsureIdentityLoaded,
@@ -57,6 +60,12 @@ import { useUiStateStore } from "../uiStateStore";
 import { clearTyping, notifyTyping } from "../presence/usePresenceHeartbeat";
 import { GifAttachmentInline } from "./GifAttachmentInline";
 import { GifPicker } from "./GifPicker";
+import { ImageAttachmentInline } from "./ImageAttachmentInline";
+import {
+  appendPendingImages,
+  imageFilesFrom,
+  type PendingImage,
+} from "./imageAttachments";
 import {
   dropHashtagToken,
   filterHashtagCandidates,
@@ -169,6 +178,8 @@ function isGroupedWith(
 
 interface MessageBubbleProps {
   readonly message: SideThreadMessage;
+  /** Environment whose HTTP base serves image-attachment blobs. */
+  readonly environmentId: EnvironmentId;
   readonly isMine: boolean;
   readonly isFirstOfGroup: boolean;
   readonly isLastOfGroup: boolean;
@@ -199,6 +210,7 @@ interface MessageBubbleProps {
  */
 function MessageBubble({
   message,
+  environmentId,
   isMine,
   isFirstOfGroup,
   isLastOfGroup,
@@ -355,6 +367,12 @@ function MessageBubble({
           {message.attachments.map((attachment, attachmentIndex) =>
             attachment.kind === "gif" ? (
               <GifAttachmentInline key={attachmentIndex} attachment={attachment} />
+            ) : attachment.kind === "image" ? (
+              <ImageAttachmentInline
+                key={attachmentIndex}
+                attachment={attachment}
+                environmentId={environmentId}
+              />
             ) : null,
           )}
           {message.linkedRef ? (
@@ -518,6 +536,7 @@ function scrollToSideThreadMessage(messageId: string) {
 function previewForReply(message: SideThreadMessage): string {
   const text = message.text.trim();
   if (text.length > 0) return text;
+  if (message.attachments.some((a) => a.kind === "image")) return "Photo";
   if (message.attachments.some((a) => a.kind === "gif")) return "GIF";
   if (message.linkedRef) {
     return message.linkedRef.kind === "global-chat" ? "Linked Global chat" : "Linked thread";
@@ -599,7 +618,16 @@ export function DrawerBody({
   const [hashtagHighlight, setHashtagHighlight] = useState(0);
   const [gifPickerOpen, setGifPickerOpen] = useState(false);
   const [linkPickerOpen, setLinkPickerOpen] = useState(false);
+  // Images staged in the composer (pasted / dropped / picked) and sent
+  // alongside the next message — Telegram-style "attach then send with an
+  // optional caption", mirroring the agent chat composer.
+  const [pendingImages, setPendingImages] = useState<ReadonlyArray<PendingImage>>([]);
+  const [isDragOver, setIsDragOver] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  // Mirror of `pendingImages` so the unmount cleanup can revoke the latest
+  // set of object URLs without re-running on every change.
+  const pendingImagesRef = useRef<ReadonlyArray<PendingImage>>([]);
   const api = ensureEnvironmentApi(environmentId);
   useEnsureIdentityLoaded(api);
   useEnsureUserDirectoryLoaded(api);
@@ -975,15 +1003,68 @@ export function DrawerBody({
     [activeHashtag, draft],
   );
 
+  // --- Image attachments (paste / drop / file pick) --------------------
+  // Keep `pendingImagesRef` in sync for the unmount revoke below.
+  useEffect(() => {
+    pendingImagesRef.current = pendingImages;
+  }, [pendingImages]);
+
+  // Reset staged images when switching side threads, and revoke their blob
+  // URLs on unmount so we don't leak them.
+  useEffect(() => {
+    return () => {
+      for (const image of pendingImagesRef.current) {
+        URL.revokeObjectURL(image.previewUrl);
+      }
+    };
+  }, []);
+  useEffect(() => {
+    setPendingImages((existing) => {
+      for (const image of existing) URL.revokeObjectURL(image.previewUrl);
+      return [];
+    });
+  }, [sideThreadId]);
+
+  const addImages = useCallback(
+    (files: ReadonlyArray<File>) => {
+      if (files.length === 0) return;
+      const { images, error: appendError } = appendPendingImages({
+        existing: pendingImages,
+        files,
+        makePreviewUrl: (file) => URL.createObjectURL(file),
+        makeId: () => randomUUID(),
+      });
+      setPendingImages(images);
+      if (appendError) setError(appendError);
+    },
+    [pendingImages],
+  );
+
+  const removeImage = useCallback((id: string) => {
+    setPendingImages((existing) => {
+      const target = existing.find((image) => image.id === id);
+      if (target) URL.revokeObjectURL(target.previewUrl);
+      return existing.filter((image) => image.id !== id);
+    });
+  }, []);
+
+  const clearImages = useCallback(() => {
+    setPendingImages((existing) => {
+      for (const image of existing) URL.revokeObjectURL(image.previewUrl);
+      return [];
+    });
+  }, []);
+
   const send = async () => {
     if (!currentUser) return;
     const text = draft.trim();
-    if (!text) return;
 
     // Edit mode short-circuits the normal post path entirely: we keep
     // mentions/quotes/links/replies intact on the original (the decider
-    // only rewrites `text`) and just ship the edit command.
+    // only rewrites `text`) and just ship the edit command. Edits are
+    // text-only — staged images are ignored while editing.
     if (editingMessage) {
+      if (!text) return;
       const target = editingMessage;
       setDraft("");
       setEditingMessage(null);
@@ -1005,6 +1086,30 @@ export function DrawerBody({
       return;
     }
 
+    // A post needs *something*: text or at least one staged image (mirrors
+    // the server invariant). Empty/empty submits are a no-op.
+    const images = pendingImages;
+    if (!text && images.length === 0) return;
+
+    // Read each staged image into a base64 data URL the server can persist.
+    // Done *before* clearing state so a read failure leaves the composer
+    // intact for a retry.
+    let imageAttachments: SideThreadPostAttachment[];
+    try {
+      imageAttachments = await Promise.all(
+        images.map(async (image) => ({
+          kind: "image" as const,
+          name: image.name,
+          mimeType: image.mimeType,
+          sizeBytes: image.sizeBytes,
+          dataUrl: await readFileAsDataUrl(image.file),
+        })),
+      );
+    } catch {
+      setError("Failed to read image attachment.");
+      return;
+    }
+
     // Only keep mentions whose handle still appears in the trimmed text —
     // mirror the same prune we do during typing so a stale entry doesn't
     // hit the server.
@@ -1021,6 +1126,7 @@ export function DrawerBody({
     setPendingLinkedRef(null);
     setPendingReplyTo(null);
     setActiveMention(null);
+    clearImages();
     clearTyping("side");
     try {
       await api.sideThread.dispatchCommand({
@@ -1034,7 +1140,7 @@ export function DrawerBody({
         text,
         mentions,
         quotedMessageId,
-        attachments: [],
+        attachments: imageAttachments,
         linkedRef,
         replyToSideThreadMessageId,
       });
@@ -1218,7 +1324,8 @@ export function DrawerBody({
 
   const messages = sideThread?.messages ?? [];
   const readBy = sideThread?.readBy ?? [];
-  const canSend = draft.trim().length > 0 && Boolean(currentUser);
+  const canSend =
+    (draft.trim().length > 0 || pendingImages.length > 0) && Boolean(currentUser);
   const messagesById = useMemo(() => {
     const m = new Map<SideThreadMessageId, SideThreadMessage>();
     for (const msg of messages) m.set(msg.id, msg);
@@ -1319,6 +1426,7 @@ export function DrawerBody({
               ) : null}
               <MessageBubble
                 message={message}
+                environmentId={environmentId}
                 isMine={isMine}
                 isFirstOfGroup={!grouped}
                 isLastOfGroup={!groupedNext}
@@ -1368,7 +1476,29 @@ export function DrawerBody({
           event.preventDefault();
           void send();
         }}
+        onDragOver={(event) => {
+          if (!event.dataTransfer.types.includes("Files")) return;
+          event.preventDefault();
+          setIsDragOver(true);
+        }}
+        onDragLeave={(event) => {
+          // Ignore leave events bubbling from children — only clear when the
+          // pointer actually exits the form.
+          if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+          setIsDragOver(false);
+        }}
+        onDrop={(event) => {
+          if (!event.dataTransfer.types.includes("Files")) return;
+          event.preventDefault();
+          setIsDragOver(false);
+          addImages(imageFilesFrom(event.dataTransfer.files));
+        }}
       >
+        {isDragOver ? (
+          <div className="pointer-events-none absolute inset-1 z-20 flex items-center justify-center rounded-xl border-2 border-dashed border-sky-500/60 bg-sky-500/10 text-xs font-medium text-sky-600 dark:text-sky-300">
+            Drop images to attach
+          </div>
+        ) : null}
         {pendingQuotedMessageId ? (
           <div className="flex items-center justify-between rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[10px] text-amber-700 dark:text-amber-300">
             <span>Quoting agent message</span>
@@ -1515,6 +1645,31 @@ export function DrawerBody({
           </ul>
         ) : null}
 
+        {pendingImages.length > 0 ? (
+          <div className="flex flex-wrap gap-2">
+            {pendingImages.map((image) => (
+              <div
+                key={image.id}
+                className="relative size-16 overflow-hidden rounded-lg border border-border/70 bg-background"
+              >
+                <img
+                  src={image.previewUrl}
+                  alt={image.name}
+                  className="size-full object-cover"
+                />
+                <button
+                  type="button"
+                  onClick={() => removeImage(image.id)}
+                  aria-label={`Remove ${image.name}`}
+                  className="absolute right-0.5 top-0.5 flex size-4 items-center justify-center rounded-full bg-black/60 text-white hover:bg-black/80"
+                >
+                  <XIcon className="size-2.5" />
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : null}
+
         {/* Telegram-style pill composer: textarea sits inside a rounded
             container with attachment icons inline; the round Send button
             floats to the right and only lights up when there's content. */}
@@ -1535,6 +1690,28 @@ export function DrawerBody({
               >
                 <ImageIcon className="size-4" />
               </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                onClick={() => fileInputRef.current?.click()}
+                aria-label="Attach image"
+                className="size-7 text-muted-foreground/70 hover:text-foreground"
+              >
+                <PaperclipIcon className="size-4" />
+              </Button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                className="hidden"
+                onChange={(event) => {
+                  addImages(imageFilesFrom(event.target.files));
+                  // Reset so picking the same file again still fires onChange.
+                  event.target.value = "";
+                }}
+              />
               <Button
                 type="button"
                 variant="ghost"
@@ -1563,6 +1740,14 @@ export function DrawerBody({
               rows={1}
               className="field-sizing-content max-h-60 min-h-7 min-w-0 flex-1 resize-none overflow-y-auto border-0 bg-transparent px-1 py-1 text-sm leading-snug placeholder:text-muted-foreground/50 focus:outline-none focus:ring-0"
               onKeyDown={onKeyDown}
+              onPaste={(event) => {
+                const images = imageFilesFrom(event.clipboardData.files);
+                if (images.length === 0) return;
+                // Swallow the paste so the textarea doesn't also insert the
+                // image's filename / a stray newline alongside the attachment.
+                event.preventDefault();
+                addImages(images);
+              }}
             />
           </div>
           <button
