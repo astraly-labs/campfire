@@ -2734,19 +2734,18 @@ export default function ChatView(props: ChatViewProps) {
   const onSend = async (e?: { preventDefault: () => void }) => {
     e?.preventDefault();
     const api = readEnvironmentApi(environmentId);
-    if (
-      !api ||
-      !activeThread ||
-      isSendBusy ||
-      isConnecting ||
-      activeEnvironmentUnavailable ||
-      sendInFlightRef.current
-    )
-      return;
+    if (!api || !activeThread || activeEnvironmentUnavailable) return;
+    // Answering a pending agent question must not be gated behind the
+    // send-busy / in-flight guards below. A thread is frequently "busy"
+    // precisely because it is waiting for this answer (or has a stuck/zombie
+    // turn), so blocking here traps the user: the response can never be
+    // dispatched and the turn never resumes. Resolve the pending question
+    // before applying the normal send guards.
     if (activePendingProgress) {
       onAdvanceActivePendingUserInput();
       return;
     }
+    if (isSendBusy || isConnecting || sendInFlightRef.current) return;
     const sendCtx = composerRef.current?.getSendContext();
     if (!sendCtx) return;
     const {
