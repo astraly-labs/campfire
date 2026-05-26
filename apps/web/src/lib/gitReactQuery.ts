@@ -23,8 +23,13 @@ export const gitQueryKeys = {
   all: ["git"] as const,
   refs: (environmentId: EnvironmentId | null, cwd: string | null) =>
     ["git", "refs", environmentId ?? null, cwd] as const,
-  branchSearch: (environmentId: EnvironmentId | null, cwd: string | null, query: string) =>
-    ["git", "refs", environmentId ?? null, cwd, "search", query] as const,
+  branchSearch: (
+    environmentId: EnvironmentId | null,
+    cwd: string | null,
+    query: string,
+    includeRemoteDuplicates: boolean,
+  ) =>
+    ["git", "refs", environmentId ?? null, cwd, "search", query, includeRemoteDuplicates] as const,
 };
 
 export const gitMutationKeys = {
@@ -75,11 +80,21 @@ export function gitBranchSearchInfiniteQueryOptions(input: {
   cwd: string | null;
   query: string;
   enabled?: boolean;
+  // When true, the server keeps `origin/*` refs even if a local branch of the
+  // same name exists. Used by the worktree base picker so `origin/main` stays
+  // selectable. Part of the query key to avoid colliding with the deduped list.
+  includeRemoteDuplicates?: boolean;
 }) {
   const normalizedQuery = input.query.trim();
+  const includeRemoteDuplicates = input.includeRemoteDuplicates ?? false;
 
   return infiniteQueryOptions({
-    queryKey: gitQueryKeys.branchSearch(input.environmentId, input.cwd, normalizedQuery),
+    queryKey: gitQueryKeys.branchSearch(
+      input.environmentId,
+      input.cwd,
+      normalizedQuery,
+      includeRemoteDuplicates,
+    ),
     initialPageParam: 0,
     queryFn: async ({ pageParam }) => {
       if (!input.cwd) throw new Error("Git refs are unavailable.");
@@ -90,6 +105,7 @@ export function gitBranchSearchInfiniteQueryOptions(input: {
         ...(normalizedQuery.length > 0 ? { query: normalizedQuery } : {}),
         cursor: pageParam,
         limit: GIT_BRANCHES_PAGE_SIZE,
+        ...(includeRemoteDuplicates ? { includeRemoteDuplicates: true } : {}),
       });
     },
     getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
@@ -110,12 +126,7 @@ export function gitListOpenPullRequestsQueryOptions(input: {
   enabled?: boolean;
 }) {
   return queryOptions({
-    queryKey: [
-      "git",
-      "list-open-pull-requests",
-      input.environmentId ?? null,
-      input.cwd,
-    ] as const,
+    queryKey: ["git", "list-open-pull-requests", input.environmentId ?? null, input.cwd] as const,
     queryFn: async () => {
       if (!input.cwd || !input.environmentId) {
         throw new Error("Open pull requests are unavailable.");
@@ -126,8 +137,7 @@ export function gitListOpenPullRequestsQueryOptions(input: {
         limit: GIT_OPEN_PRS_DEFAULT_LIMIT,
       });
     },
-    enabled:
-      input.environmentId !== null && input.cwd !== null && (input.enabled ?? true),
+    enabled: input.environmentId !== null && input.cwd !== null && (input.enabled ?? true),
     staleTime: GIT_OPEN_PRS_STALE_TIME_MS,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,

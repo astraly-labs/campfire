@@ -1561,7 +1561,7 @@ export function DrawerBody({
               }}
               placeholder="Message"
               rows={1}
-              className="max-h-32 min-h-7 flex-1 resize-none border-0 bg-transparent px-1 py-1 text-sm leading-snug placeholder:text-muted-foreground/50 focus:outline-none focus:ring-0"
+              className="field-sizing-content max-h-32 min-h-7 flex-1 resize-none overflow-y-auto border-0 bg-transparent px-1 py-1 text-sm leading-snug placeholder:text-muted-foreground/50 focus:outline-none focus:ring-0"
               onKeyDown={onKeyDown}
             />
           </div>

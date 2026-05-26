@@ -255,6 +255,41 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         assert.equal(result.branch, current);
       }),
     );
+
+    it.effect("hides origin/* by default but keeps them with includeRemoteDuplicates", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-remote-");
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        // Local `main` with a pushed `origin/main` remote-tracking ref — the
+        // exact shape that makes the worktree base picker drop `origin/main`.
+        yield* git(cwd, ["branch", "-M", "main"]);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["push", "-u", "origin", "main"]);
+
+        const deduped = yield* driver.listRefs({ cwd });
+        assert.equal(
+          deduped.refs.some((ref) => ref.name === "origin/main"),
+          false,
+        );
+        assert.equal(
+          deduped.refs.some((ref) => ref.name === "main" && !ref.isRemote),
+          true,
+        );
+
+        const withDuplicates = yield* driver.listRefs({ cwd, includeRemoteDuplicates: true });
+        assert.equal(
+          withDuplicates.refs.some((ref) => ref.name === "origin/main" && ref.isRemote === true),
+          true,
+        );
+        assert.equal(
+          withDuplicates.refs.some((ref) => ref.name === "main" && !ref.isRemote),
+          true,
+        );
+      }),
+    );
   });
 
   describe("worktree operations", () => {

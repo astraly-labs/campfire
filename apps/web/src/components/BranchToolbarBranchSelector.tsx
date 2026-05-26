@@ -142,6 +142,11 @@ export function BranchToolbarBranchSelector({
       hasServerThread,
       draftThreadEnvMode: draftThread?.envMode,
     });
+  // True while picking the base branch for a not-yet-created worktree. In this
+  // mode we surface remote refs even when a local branch of the same name
+  // exists, so `origin/main` stays selectable as a worktree base.
+  const isSelectingWorktreeBase =
+    effectiveEnvMode === "worktree" && !envLocked && !activeWorktreePath;
 
   // ---------------------------------------------------------------------------
   // Thread branch mutation (colocated — only this component calls it)
@@ -220,9 +225,14 @@ export function BranchToolbarBranchSelector({
   useEffect(() => {
     if (!branchCwd) return;
     void queryClient.prefetchInfiniteQuery(
-      gitBranchSearchInfiniteQueryOptions({ environmentId, cwd: branchCwd, query: "" }),
+      gitBranchSearchInfiniteQueryOptions({
+        environmentId,
+        cwd: branchCwd,
+        query: "",
+        includeRemoteDuplicates: isSelectingWorktreeBase,
+      }),
     );
-  }, [branchCwd, environmentId, queryClient]);
+  }, [branchCwd, environmentId, isSelectingWorktreeBase, queryClient]);
 
   const {
     data: branchesSearchData,
@@ -235,6 +245,7 @@ export function BranchToolbarBranchSelector({
       environmentId,
       cwd: branchCwd,
       query: deferredTrimmedBranchQuery,
+      includeRemoteDuplicates: isSelectingWorktreeBase,
     }),
   );
   const refs = useMemo(
@@ -281,31 +292,30 @@ export function BranchToolbarBranchSelector({
   );
   // Per-tab ref subsets — "remote" excludes remote refs whose derived local
   // name is already present in the local list (e.g. drop `origin/main` when
-  // `main` is already shown in the Local tab) to avoid duplicates.
+  // `main` is already shown in the Local tab) to avoid duplicates. The worktree
+  // base picker opts out of that dedup so `origin/main` stays selectable even
+  // when a local `main` exists.
   const localRefs = useMemo(() => refs.filter((ref) => !ref.isRemote), [refs]);
-  const localBranchSet = useMemo(
-    () => new Set(localRefs.map((ref) => ref.name)),
-    [localRefs],
-  );
+  const localBranchSet = useMemo(() => new Set(localRefs.map((ref) => ref.name)), [localRefs]);
   const remoteRefs = useMemo(
     () =>
       refs.filter(
         (ref) =>
           ref.isRemote === true &&
-          !localBranchSet.has(deriveLocalBranchNameFromRemoteRef(ref.name)),
+          (isSelectingWorktreeBase ||
+            !localBranchSet.has(deriveLocalBranchNameFromRemoteRef(ref.name))),
       ),
-    [refs, localBranchSet],
+    [refs, isSelectingWorktreeBase, localBranchSet],
   );
   const prItemByValue = useMemo(
-    () => new Map<string, (typeof openPullRequests)[number]>(
-      openPullRequests.map((pr) => [`__pr__:${pr.number}`, pr]),
-    ),
+    () =>
+      new Map<string, (typeof openPullRequests)[number]>(
+        openPullRequests.map((pr) => [`__pr__:${pr.number}`, pr]),
+      ),
     [openPullRequests],
   );
   const normalizedDeferredBranchQuery = deferredTrimmedBranchQuery.toLowerCase();
   const prReference = parsePullRequestReference(trimmedBranchQuery);
-  const isSelectingWorktreeBase =
-    effectiveEnvMode === "worktree" && !envLocked && !activeWorktreePath;
   // The search-driven "Checkout #N" affordance becomes redundant inside the
   // PRs tab (which already lists open PRs); keep it on Local/Remote tabs only.
   const checkoutPullRequestItemValue =
@@ -324,9 +334,7 @@ export function BranchToolbarBranchSelector({
       return Array.from(prItemByValue.keys());
     }
     const items =
-      activeTab === "remote"
-        ? remoteRefs.map((ref) => ref.name)
-        : localRefs.map((ref) => ref.name);
+      activeTab === "remote" ? remoteRefs.map((ref) => ref.name) : localRefs.map((ref) => ref.name);
     if (createBranchItemValue && !hasExactBranchMatch) {
       items.push(createBranchItemValue);
     }
@@ -769,9 +777,7 @@ export function BranchToolbarBranchSelector({
           </ComboboxList>
         )}
         {branchStatusText ? <ComboboxStatus>{branchStatusText}</ComboboxStatus> : null}
-        {isSelectingWorktreeBase &&
-        onWorktreeFetchFromRemoteChange &&
-        activeTab !== "prs" ? (
+        {isSelectingWorktreeBase && onWorktreeFetchFromRemoteChange && activeTab !== "prs" ? (
           <label className="flex cursor-pointer items-center gap-2 border-t px-3 py-2 text-xs text-muted-foreground hover:text-foreground">
             <Checkbox
               checked={worktreeFetchFromRemote ?? true}

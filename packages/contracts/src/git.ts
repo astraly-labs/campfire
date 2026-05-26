@@ -138,6 +138,11 @@ export const VcsListRefsInput = Schema.Struct({
   limit: Schema.optional(
     PositiveInt.check(Schema.isLessThanOrEqualTo(GIT_LIST_BRANCHES_MAX_LIMIT)),
   ),
+  // When true, keep `origin/*` refs even if a local branch of the same name
+  // exists (normally they are deduped away). The worktree base picker needs the
+  // remote refs visible so a new worktree can be based on the freshest remote
+  // state (e.g. `origin/main`) rather than a possibly stale local branch.
+  includeRemoteDuplicates: Schema.optional(Schema.Boolean),
 });
 export type VcsListRefsInput = typeof VcsListRefsInput.Type;
 

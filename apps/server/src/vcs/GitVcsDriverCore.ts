@@ -1866,9 +1866,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
               })
           : [];
 
+      const combinedBranches = [...localBranches, ...remoteBranches];
       const refs = paginateBranches({
         refs: filterBranchesForListQuery(
-          dedupeRemoteBranchesWithLocalMatches([...localBranches, ...remoteBranches]),
+          input.includeRemoteDuplicates
+            ? combinedBranches
+            : dedupeRemoteBranchesWithLocalMatches(combinedBranches),
           input.query,
         ),
         cursor: input.cursor,

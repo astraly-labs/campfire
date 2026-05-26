@@ -90,6 +90,50 @@ describe("git mutation options", () => {
   });
 });
 
+describe("gitBranchSearchInfiniteQueryOptions", () => {
+  it("uses a distinct query key when includeRemoteDuplicates differs for the same cwd", () => {
+    const deduped = gitBranchSearchInfiniteQueryOptions({
+      environmentId: ENVIRONMENT_A,
+      cwd: "/repo/a",
+      query: "",
+    }).queryKey;
+    const withDuplicates = gitBranchSearchInfiniteQueryOptions({
+      environmentId: ENVIRONMENT_A,
+      cwd: "/repo/a",
+      query: "",
+      includeRemoteDuplicates: true,
+    }).queryKey;
+
+    expect(deduped).not.toEqual(withDuplicates);
+  });
+
+  it("still scopes the worktree-base list under the cwd ref prefix so it invalidates", async () => {
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(
+      gitBranchSearchInfiniteQueryOptions({
+        environmentId: ENVIRONMENT_A,
+        cwd: "/repo/a",
+        query: "",
+        includeRemoteDuplicates: true,
+      }).queryKey,
+      BRANCH_SEARCH_RESULT,
+    );
+
+    await invalidateGitQueries(queryClient, { environmentId: ENVIRONMENT_A, cwd: "/repo/a" });
+
+    expect(
+      queryClient.getQueryState(
+        gitBranchSearchInfiniteQueryOptions({
+          environmentId: ENVIRONMENT_A,
+          cwd: "/repo/a",
+          query: "",
+          includeRemoteDuplicates: true,
+        }).queryKey,
+      )?.isInvalidated,
+    ).toBe(true);
+  });
+});
+
 describe("invalidateGitQueries", () => {
   it("can invalidate a single cwd without blasting other git query scopes", async () => {
     const queryClient = new QueryClient();
