@@ -1,10 +1,12 @@
 /**
- * InboxReadModelService — queries the `projection_side_thread_message_mentions`
- * table to render per-user inbox snapshots.
+ * InboxReadModelService — renders per-user inbox snapshots by unioning two
+ * projection tables: `projection_side_thread_message_mentions` (mention rows)
+ * and `projection_side_thread_participants` + `projection_side_thread_messages`
+ * (activity rows for threads the user has posted in).
  *
  * The aggregate-per-side-thread shape (`InboxItem`) is computed at read time
- * rather than materialised: SQLite handles the GROUP BY in milliseconds for
- * the expected volumes (handful of side-threads per user, dozens of mentions).
+ * rather than materialised: SQLite handles the window functions in
+ * milliseconds for the expected volumes (handful of side-threads per user).
  *
  * @module InboxReadModelService
  */
@@ -16,9 +18,10 @@ import type { ProjectionRepositoryError } from "../../persistence/Errors.ts";
 
 export interface InboxReadModelShape {
   /**
-   * Return the inbox for a user, sorted most-recent-first. Items are
-   * collapsed so the same side-thread appears once with `mentionsCount` and
-   * the latest mention's metadata.
+   * Return the inbox for a user: mention rows first, then activity rows. Each
+   * side-thread appears at most once per `kind`, collapsed to `count` plus the
+   * latest mention's / message's metadata. The client splits by `kind` and
+   * sorts each section by `lastActivityAt`.
    */
   readonly listForUser: (
     userId: UserId,

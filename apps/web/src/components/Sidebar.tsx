@@ -2658,7 +2658,7 @@ const SidebarChromeFooter = memo(function SidebarChromeFooter() {
             {inboxUnreadCount > 0 ? (
               <span
                 className="ml-auto rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-500"
-                aria-label={`${inboxUnreadCount} mentions non lues`}
+                aria-label={`${inboxUnreadCount} notifications non lues`}
               >
                 {inboxUnreadCount}
               </span>

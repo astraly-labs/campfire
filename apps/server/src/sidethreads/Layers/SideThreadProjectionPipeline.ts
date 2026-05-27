@@ -69,26 +69,12 @@ const applyReactionDeltaSnapshot = (
   const nextReactions =
     nextUsers.length === 0
       ? message.reactions.filter((_, idx) => idx !== bucketIndex)
-      : message.reactions.map((r, idx) =>
-          idx === bucketIndex ? { ...r, users: nextUsers } : r,
-        );
+      : message.reactions.map((r, idx) => (idx === bucketIndex ? { ...r, users: nextUsers } : r));
   return { ...message, updatedAt: occurredAt, reactions: nextReactions };
 };
 
-const PREVIEW_MAX_CHARS = 240;
-/**
- * Single-line, length-capped preview of a side-thread message stored
- * alongside each mention so the inbox can render rows without re-fetching
- * the full message. Stays > 1 char so the contract's
- * `TrimmedNonEmptyString` decoder doesn't reject it on read.
- */
-const truncateForPreview = (text: string): string => {
-  const singleLine = text.replace(/\s+/g, " ").trim();
-  if (singleLine.length === 0) return "…";
-  if (singleLine.length <= PREVIEW_MAX_CHARS) return singleLine;
-  return `${singleLine.slice(0, PREVIEW_MAX_CHARS - 1).trimEnd()}…`;
-};
 import { SideThreadEventStore } from "../../persistence/Services/SideThreadEventStore.ts";
+import { truncateForPreview } from "../preview.ts";
 import {
   SideThreadProjectionPipeline,
   type SideThreadProjectionPipelineShape,
@@ -204,6 +190,25 @@ const makeSideThreadProjectionPipeline = Effect.gen(function* () {
             ON CONFLICT(message_id) DO NOTHING
           `.pipe(Effect.mapError(toPersistenceSqlError("SideThreadProjection.insertMessage")));
 
+          // Participant projection: record that the author has posted in this
+          // side thread. One row per (side_thread_id, user_id); the PK + DO
+          // NOTHING keeps replay idempotent and pins first_posted_at to the
+          // earliest message. This is the "activity" half of the inbox —
+          // it lets a later message by someone else notify every prior poster
+          // even when nobody was @mentioned.
+          yield* sql`
+            INSERT INTO projection_side_thread_participants (
+              side_thread_id,
+              user_id,
+              first_posted_at
+            ) VALUES (
+              ${event.payload.sideThreadId},
+              ${event.payload.author.id},
+              ${event.occurredAt}
+            )
+            ON CONFLICT(side_thread_id, user_id) DO NOTHING
+          `.pipe(Effect.mapError(toPersistenceSqlError("SideThreadProjection.insertParticipant")));
+
           const current = yield* loadSnapshot(event.payload.sideThreadId);
           const mentionsForMessage = event.payload.mentions ?? [];
           const attachmentsForMessage = event.payload.attachments ?? [];
@@ -278,9 +283,7 @@ const makeSideThreadProjectionPipeline = Effect.gen(function* () {
                   author_display_name = excluded.author_display_name,
                   text_preview = excluded.text_preview,
                   occurred_at = excluded.occurred_at
-              `.pipe(
-                Effect.mapError(toPersistenceSqlError("SideThreadProjection.insertMention")),
-              );
+              `.pipe(Effect.mapError(toPersistenceSqlError("SideThreadProjection.insertMention")));
             }
           }
           break;
@@ -294,9 +297,7 @@ const makeSideThreadProjectionPipeline = Effect.gen(function* () {
           // serial loop, so no concurrency window to worry about.
           const current = yield* loadSnapshot(event.payload.sideThreadId);
           if (!current) break;
-          const messageIndex = current.messages.findIndex(
-            (m) => m.id === event.payload.messageId,
-          );
+          const messageIndex = current.messages.findIndex((m) => m.id === event.payload.messageId);
           if (messageIndex < 0) break;
           const message = current.messages[messageIndex]!;
           const updatedMessage = applyReactionDeltaSnapshot(
@@ -310,9 +311,7 @@ const makeSideThreadProjectionPipeline = Effect.gen(function* () {
           const updated: SideThread = {
             ...current,
             updatedAt: event.occurredAt,
-            messages: current.messages.map((m, idx) =>
-              idx === messageIndex ? updatedMessage : m,
-            ),
+            messages: current.messages.map((m, idx) => (idx === messageIndex ? updatedMessage : m)),
           };
           yield* updateSnapshot(event.payload.sideThreadId, updated);
           break;
@@ -365,9 +364,7 @@ const makeSideThreadProjectionPipeline = Effect.gen(function* () {
 
           const current = yield* loadSnapshot(event.payload.sideThreadId);
           if (!current) break;
-          const messageIndex = current.messages.findIndex(
-            (m) => m.id === event.payload.messageId,
-          );
+          const messageIndex = current.messages.findIndex((m) => m.id === event.payload.messageId);
           if (messageIndex < 0) break;
           const original = current.messages[messageIndex]!;
           const updatedMessage: SideThreadMessage = {
@@ -379,9 +376,7 @@ const makeSideThreadProjectionPipeline = Effect.gen(function* () {
           const updated: SideThread = {
             ...current,
             updatedAt: event.occurredAt,
-            messages: current.messages.map((m, idx) =>
-              idx === messageIndex ? updatedMessage : m,
-            ),
+            messages: current.messages.map((m, idx) => (idx === messageIndex ? updatedMessage : m)),
           };
           yield* updateSnapshot(event.payload.sideThreadId, updated);
           break;
@@ -403,9 +398,7 @@ const makeSideThreadProjectionPipeline = Effect.gen(function* () {
           } else {
             const existing = current.readBy[existingIndex]!;
             if (existing.lastReadAt >= incomingAt) break;
-            nextReadBy = current.readBy.map((m, idx) =>
-              idx === existingIndex ? nextMarker : m,
-            );
+            nextReadBy = current.readBy.map((m, idx) => (idx === existingIndex ? nextMarker : m));
           }
           const updated: SideThread = {
             ...current,
@@ -424,6 +417,9 @@ const makeSideThreadProjectionPipeline = Effect.gen(function* () {
     );
     yield* sql`DELETE FROM projection_side_thread_message_mentions`.pipe(
       Effect.mapError(toPersistenceSqlError("SideThreadProjection.bootstrap:truncateMentions")),
+    );
+    yield* sql`DELETE FROM projection_side_thread_participants`.pipe(
+      Effect.mapError(toPersistenceSqlError("SideThreadProjection.bootstrap:truncateParticipants")),
     );
     yield* sql`DELETE FROM projection_side_thread_messages`.pipe(
       Effect.mapError(toPersistenceSqlError("SideThreadProjection.bootstrap:truncateMessages")),

@@ -1411,12 +1411,20 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId, initialIdentity: Resolv
               const userId = identity.user.id;
               const initialItems = yield* inboxReadModel.listForUser(userId);
 
-              // Two derived streams merged into one push channel:
+              // Three derived streams merged into one push channel:
               //  - mentionsStream: a new mention of the current user → re-query
-              //    the inbox and emit `upserted` so the row appears/updates.
-              //  - dismissalsStream: this user dismissed an inbox row → emit
+              //    the inbox and emit `upserted` for the mention row.
+              //  - activityStream: a new message by someone else in a thread
+              //    the user participates in → emit `upserted` for the activity
+              //    row. Membership is enforced implicitly: a non-participant
+              //    gets no activity row from `listForUser`, so `find` misses.
+              //  - dismissalsStream: this user dismissed a mention row → emit
               //    `removed` so other tabs of the same user drop it without
               //    re-querying.
+              //
+              // The re-query pattern is safe because SideThreadEngine commits
+              // the projection inside the same transaction *before* publishing
+              // to `streamDomainEvents`, so the row is already materialised.
               const mentionsStream = sideThreadEngine.streamDomainEvents.pipe(
                 Stream.filter(
                   (event) =>
@@ -1433,7 +1441,40 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId, initialIdentity: Resolv
                         }),
                     ),
                     Effect.map((items) =>
-                      items.find((item) => item.sideThreadId === event.aggregateId),
+                      items.find(
+                        (item) =>
+                          item.kind === "mention" && item.sideThreadId === event.aggregateId,
+                      ),
+                    ),
+                  ),
+                ),
+                Stream.flatMap((maybeItem) =>
+                  maybeItem
+                    ? Stream.make({ kind: "upserted" as const, item: maybeItem })
+                    : Stream.empty,
+                ),
+              );
+
+              const activityStream = sideThreadEngine.streamDomainEvents.pipe(
+                Stream.filter(
+                  (event) =>
+                    event.type === "sidethread.message-posted" &&
+                    event.payload.author.id !== userId,
+                ),
+                Stream.mapEffect((event) =>
+                  inboxReadModel.listForUser(userId).pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new InboxSubscribeError({
+                          message: "Failed to refresh inbox after activity",
+                          cause,
+                        }),
+                    ),
+                    Effect.map((items) =>
+                      items.find(
+                        (item) =>
+                          item.kind === "activity" && item.sideThreadId === event.aggregateId,
+                      ),
                     ),
                   ),
                 ),
@@ -1451,6 +1492,9 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId, initialIdentity: Resolv
                 ),
                 Stream.map((event) => ({
                   kind: "removed" as const,
+                  // Dismissal only ever clears the mention row; the activity
+                  // row (if any) clears by visiting, not dismissing.
+                  itemKind: "mention" as const,
                   // Narrowed by the filter above — guaranteed inbox-dismissed.
                   sideThreadId: (
                     event as Extract<typeof event, { type: "sidethread.inbox-dismissed" }>
@@ -1458,7 +1502,10 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId, initialIdentity: Resolv
                 })),
               );
 
-              const liveStream = Stream.merge(mentionsStream, dismissalsStream);
+              const liveStream = Stream.merge(
+                Stream.merge(mentionsStream, activityStream),
+                dismissalsStream,
+              );
 
               return Stream.concat(
                 Stream.make({ kind: "snapshot" as const, items: initialItems }),
