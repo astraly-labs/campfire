@@ -5,6 +5,7 @@ import { DraftId } from "./composerDraftStore";
 
 import {
   buildDraftThreadRouteParams,
+  buildThreadDeeplinkUrl,
   buildThreadRouteParams,
   resolveThreadRouteRef,
   resolveThreadRouteTarget,
@@ -33,6 +34,18 @@ describe("threadRoutes", () => {
 
     expect(resolveThreadRouteRef({ environmentId: "env-1" })).toBeNull();
     expect(resolveThreadRouteRef({ threadId: "thread-1" })).toBeNull();
+  });
+
+  it("builds an absolute thread deeplink url from origin and ref", () => {
+    const ref = scopeThreadRef("env-1" as never, ThreadId.make("thread-1"));
+
+    expect(buildThreadDeeplinkUrl(ref, "https://app.example.com")).toBe(
+      "https://app.example.com/env-1/thread-1",
+    );
+    // Trailing slashes on the origin are normalized away.
+    expect(buildThreadDeeplinkUrl(ref, "https://app.example.com/")).toBe(
+      "https://app.example.com/env-1/thread-1",
+    );
   });
 
   it("builds canonical draft route params from a draft id", () => {

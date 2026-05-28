@@ -2,7 +2,13 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import type { ChatAttachment, ModelSelection, ProviderInstanceId } from "@t3tools/contracts";
-import { TextGenerationError } from "@t3tools/contracts";
+import {
+  DEFAULT_GIT_TEXT_GENERATION_MODEL,
+  DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER,
+  isProviderAvailable,
+  ProviderDriverKind,
+  TextGenerationError,
+} from "@t3tools/contracts";
 
 import {
   ProviderInstanceRegistry,
@@ -222,50 +228,205 @@ export type TextGenerationOp =
   | "generateThreadHandoff"
   | "generateConversationSummary";
 
-const resolveInstance = (
+const CODEX_DRIVER_KIND = ProviderDriverKind.make("codex");
+
+/**
+ * One provider attempt: a concrete `textGeneration` implementation plus the
+ * `ModelSelection` to run it with. Fallback candidates carry a rewritten
+ * selection (the fallback provider's default text-gen model) because the
+ * originally-requested model slug belongs to the originally-requested
+ * provider and is meaningless on a different driver.
+ */
+interface ProviderCandidate {
+  readonly textGeneration: TextGenerationShape;
+  readonly modelSelection: ModelSelection;
+  readonly instanceId: ProviderInstanceId;
+  /** True when this candidate is a fallback (not the configured instance). */
+  readonly isFallback: boolean;
+}
+
+const rewriteSelectionForFallback = (instance: ProviderInstance): ModelSelection => ({
+  instanceId: instance.instanceId,
+  model:
+    DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER[instance.driverKind] ??
+    DEFAULT_GIT_TEXT_GENERATION_MODEL,
+  // The requested provider's option selections (e.g. Claude reasoning effort)
+  // do not transfer to a different driver, so start the fallback clean.
+  options: [],
+});
+
+/**
+ * Build the ordered list of provider attempts for a text-generation call.
+ *
+ * Ordering:
+ *   1. The configured instance with its original selection — UNLESS we already
+ *      know it is unauthenticated or unavailable (then we skip the doomed call
+ *      and its ~seconds-long 401 latency).
+ *   2. Every other authenticated + available instance, Codex first, each with
+ *      its own default text-gen model.
+ *
+ * If that leaves nothing (configured instance has `unknown` auth and there is
+ * no authenticated alternative), the configured instance is re-added so its
+ * own — informative — error surfaces instead of a synthetic one. When the
+ * configured id is unknown and no instance can serve, callers get the same
+ * "no provider instance registered" error as before.
+ */
+const resolveProviderCandidates = (
   registry: ProviderInstanceRegistryShape,
   operation: TextGenerationOp,
-  instanceId: ProviderInstanceId,
-): Effect.Effect<ProviderInstance["textGeneration"], TextGenerationError> =>
-  registry.getInstance(instanceId).pipe(
-    Effect.flatMap((instance) =>
-      instance
-        ? Effect.succeed(instance.textGeneration)
-        : Effect.fail(
-            new TextGenerationError({
-              operation,
-              detail: `No provider instance registered for id '${instanceId}'.`,
-            }),
-          ),
-    ),
-  );
+  requested: ModelSelection,
+): Effect.Effect<ReadonlyArray<ProviderCandidate>, TextGenerationError> =>
+  Effect.gen(function* () {
+    const instances = yield* registry.listInstances;
+    const withSnapshots = yield* Effect.forEach(instances, (instance) =>
+      instance.snapshot.getSnapshot.pipe(Effect.map((snapshot) => ({ instance, snapshot }))),
+    );
+
+    const requestedId = requested.instanceId;
+    const requestedEntry = withSnapshots.find(
+      ({ instance }) => instance.instanceId === requestedId,
+    );
+
+    const candidates: ProviderCandidate[] = [];
+    const seen = new Set<ProviderInstanceId>();
+
+    if (
+      requestedEntry &&
+      requestedEntry.snapshot.auth.status !== "unauthenticated" &&
+      isProviderAvailable(requestedEntry.snapshot)
+    ) {
+      candidates.push({
+        textGeneration: requestedEntry.instance.textGeneration,
+        modelSelection: requested,
+        instanceId: requestedId,
+        isFallback: false,
+      });
+      seen.add(requestedId);
+    }
+
+    const fallbacks = withSnapshots
+      .filter(
+        ({ instance, snapshot }) =>
+          !seen.has(instance.instanceId) &&
+          snapshot.auth.status === "authenticated" &&
+          isProviderAvailable(snapshot),
+      )
+      .toSorted((a, b) => {
+        const aCodex = a.instance.driverKind === CODEX_DRIVER_KIND;
+        const bCodex = b.instance.driverKind === CODEX_DRIVER_KIND;
+        return aCodex === bCodex ? 0 : aCodex ? -1 : 1;
+      });
+
+    for (const { instance } of fallbacks) {
+      candidates.push({
+        textGeneration: instance.textGeneration,
+        modelSelection: rewriteSelectionForFallback(instance),
+        instanceId: instance.instanceId,
+        isFallback: true,
+      });
+      seen.add(instance.instanceId);
+    }
+
+    if (candidates.length === 0) {
+      if (requestedEntry) {
+        // Configured instance has `unknown` auth and there's no authenticated
+        // alternative — try it anyway so its own error (or success) wins.
+        candidates.push({
+          textGeneration: requestedEntry.instance.textGeneration,
+          modelSelection: requested,
+          instanceId: requestedId,
+          isFallback: false,
+        });
+      } else {
+        return yield* new TextGenerationError({
+          operation,
+          detail: `No provider instance registered for id '${requestedId}'.`,
+        });
+      }
+    }
+
+    return candidates;
+  });
+
+/**
+ * Run a text-generation operation against the configured provider, falling
+ * back to another authenticated provider (Codex first) when the configured
+ * one is unauthenticated/unavailable up front, or fails at call time (e.g. a
+ * runtime 401 from an expired token the snapshot still believed valid).
+ */
+const runWithProviderFallback = <Input extends { readonly modelSelection: ModelSelection }, Result>(
+  registry: ProviderInstanceRegistryShape,
+  operation: TextGenerationOp,
+  input: Input,
+  run: (
+    textGeneration: TextGenerationShape,
+    input: Input,
+  ) => Effect.Effect<Result, TextGenerationError>,
+): Effect.Effect<Result, TextGenerationError> =>
+  Effect.gen(function* () {
+    const candidates = yield* resolveProviderCandidates(registry, operation, input.modelSelection);
+
+    let firstError: TextGenerationError | null = null;
+    for (let index = 0; index < candidates.length; index += 1) {
+      const candidate = candidates[index]!;
+      const attempt = yield* run(candidate.textGeneration, {
+        ...input,
+        modelSelection: candidate.modelSelection,
+      } as Input).pipe(
+        Effect.map((value) => ({ ok: true as const, value })),
+        Effect.catch((error: TextGenerationError) => Effect.succeed({ ok: false as const, error })),
+      );
+
+      if (attempt.ok) {
+        if (candidate.isFallback) {
+          yield* Effect.logInfo(
+            `[🔁 TextGen Fallback] '${operation}': configured provider '${input.modelSelection.instanceId}' unavailable/failed; served by '${candidate.instanceId}' (${candidate.modelSelection.model}).`,
+          );
+        }
+        return attempt.value;
+      }
+
+      firstError ??= attempt.error;
+    }
+
+    return yield* (
+      firstError ??
+        new TextGenerationError({
+          operation,
+          detail: `No usable provider instance for id '${input.modelSelection.instanceId}'.`,
+        })
+    );
+  });
 
 export const makeTextGenerationFromRegistry = (
   registry: ProviderInstanceRegistryShape,
 ): TextGenerationShape => ({
   generateCommitMessage: (input) =>
-    resolveInstance(registry, "generateCommitMessage", input.modelSelection.instanceId).pipe(
-      Effect.flatMap((textGeneration) => textGeneration.generateCommitMessage(input)),
+    runWithProviderFallback(registry, "generateCommitMessage", input, (textGeneration, attempt) =>
+      textGeneration.generateCommitMessage(attempt),
     ),
   generatePrContent: (input) =>
-    resolveInstance(registry, "generatePrContent", input.modelSelection.instanceId).pipe(
-      Effect.flatMap((textGeneration) => textGeneration.generatePrContent(input)),
+    runWithProviderFallback(registry, "generatePrContent", input, (textGeneration, attempt) =>
+      textGeneration.generatePrContent(attempt),
     ),
   generateBranchName: (input) =>
-    resolveInstance(registry, "generateBranchName", input.modelSelection.instanceId).pipe(
-      Effect.flatMap((textGeneration) => textGeneration.generateBranchName(input)),
+    runWithProviderFallback(registry, "generateBranchName", input, (textGeneration, attempt) =>
+      textGeneration.generateBranchName(attempt),
     ),
   generateThreadTitle: (input) =>
-    resolveInstance(registry, "generateThreadTitle", input.modelSelection.instanceId).pipe(
-      Effect.flatMap((textGeneration) => textGeneration.generateThreadTitle(input)),
+    runWithProviderFallback(registry, "generateThreadTitle", input, (textGeneration, attempt) =>
+      textGeneration.generateThreadTitle(attempt),
     ),
   generateThreadHandoff: (input) =>
-    resolveInstance(registry, "generateThreadHandoff", input.modelSelection.instanceId).pipe(
-      Effect.flatMap((textGeneration) => textGeneration.generateThreadHandoff(input)),
+    runWithProviderFallback(registry, "generateThreadHandoff", input, (textGeneration, attempt) =>
+      textGeneration.generateThreadHandoff(attempt),
     ),
   generateConversationSummary: (input) =>
-    resolveInstance(registry, "generateConversationSummary", input.modelSelection.instanceId).pipe(
-      Effect.flatMap((textGeneration) => textGeneration.generateConversationSummary(input)),
+    runWithProviderFallback(
+      registry,
+      "generateConversationSummary",
+      input,
+      (textGeneration, attempt) => textGeneration.generateConversationSummary(attempt),
     ),
 });
 

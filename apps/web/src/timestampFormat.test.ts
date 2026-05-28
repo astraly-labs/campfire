@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  formatDayGroupLabel,
   formatElapsedDurationLabel,
   formatExpiresInLabel,
   formatRelativeTimeUntilLabel,
   getTimestampFormatOptions,
+  startOfDay,
 } from "./timestampFormat";
 
 describe("getTimestampFormatOptions", () => {
@@ -110,5 +112,47 @@ describe("formatElapsedDurationLabel", () => {
     expect(formatElapsedDurationLabel("2026-04-07T11:45:00.000Z")).toBe("15m");
     expect(formatElapsedDurationLabel("2026-04-07T06:00:00.000Z")).toBe("6h");
     expect(formatElapsedDurationLabel("2026-04-03T12:00:00.000Z")).toBe("4d");
+  });
+});
+
+describe("startOfDay", () => {
+  it("collapses times on the same calendar day and separates different days", () => {
+    const noon = new Date("2026-04-15T12:00:00.000Z");
+    const afternoon = new Date("2026-04-15T15:00:00.000Z");
+    const nextDay = new Date("2026-04-16T12:00:00.000Z");
+    expect(startOfDay(noon)).toBe(startOfDay(afternoon));
+    expect(startOfDay(noon)).not.toBe(startOfDay(nextDay));
+  });
+});
+
+describe("formatDayGroupLabel", () => {
+  // Anchor at noon UTC so subtracting whole days lands on the intended local
+  // calendar day across reasonable timezones.
+  const now = new Date("2026-04-15T12:00:00.000Z");
+  const daysAgo = (days: number) => new Date(now.getTime() - days * 86_400_000).toISOString();
+
+  it("uses the caller-supplied today / yesterday labels", () => {
+    const opts = { now, todayLabel: "Aujourd'hui", yesterdayLabel: "Hier" };
+    expect(formatDayGroupLabel(daysAgo(0), opts)).toBe("Aujourd'hui");
+    expect(formatDayGroupLabel(daysAgo(1), opts)).toBe("Hier");
+  });
+
+  it("defaults to English today / yesterday labels", () => {
+    expect(formatDayGroupLabel(daysAgo(0), { now })).toBe("Today");
+    expect(formatDayGroupLabel(daysAgo(1), { now })).toBe("Yesterday");
+  });
+
+  it("shows the localized weekday name within the past week", () => {
+    const iso = daysAgo(3);
+    expect(formatDayGroupLabel(iso, { now, locale: "en-US" })).toBe(
+      new Date(iso).toLocaleDateString("en-US", { weekday: "long" }),
+    );
+  });
+
+  it("shows the localized month and day for older dates", () => {
+    const iso = daysAgo(30);
+    expect(formatDayGroupLabel(iso, { now, locale: "en-US" })).toBe(
+      new Date(iso).toLocaleDateString("en-US", { month: "long", day: "numeric" }),
+    );
   });
 });

@@ -1,38 +1,39 @@
 /**
- * `/inbox` — Slack-style inbox split into two sections:
- *   - "Mentions": side-threads where the current user was @-mentioned.
- *   - "Activité": side-threads the user participates in that got a new message
- *     from someone else.
- * Clicking a row deep-links into the parent thread and pops the side-thread
- * drawer on the anchor message.
+ * `/inbox` — Slack-style unified inbox. One chronological feed shows everything
+ * that needs the user's attention (mentions + activity), grouped by calendar
+ * day. A filter bar narrows the feed to Unread / Mentions / Activity without
+ * leaving the page. Clicking a row deep-links into the parent thread and pops
+ * the side-thread drawer on the anchor message.
  */
 import { scopeThreadRef } from "@t3tools/client-runtime";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import type { InboxItem, ThreadId } from "@t3tools/contracts";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { AtSignIcon, CheckCheckIcon, InboxIcon, MessagesSquareIcon, XIcon } from "lucide-react";
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../components/ui/empty";
 import { SidebarInset, SidebarTrigger } from "../components/ui/sidebar";
+import { Toggle, ToggleGroup } from "../components/ui/toggle-group";
 import { toastManager } from "../components/ui/toast";
 import { ensureEnvironmentApi, readEnvironmentApi } from "../environmentApi";
 import { usePrimaryEnvironmentId } from "../environments/primary";
 import { retainThreadDetailSubscription } from "../environments/runtime/service";
 import { useCurrentUser } from "../identity/identityStore";
 import {
-  isInboxItemUnread,
-  useActivityItems,
+  type InboxFilter,
+  type InboxRow,
   useActivityUnreadCount,
+  useInboxRows,
   useInboxStore,
-  useMentionItems,
+  useInboxUnreadCount,
   useMentionUnreadCount,
 } from "../inbox/inboxStore";
 import { selectThreadExistsByRef, selectThreadMissingByRef, useStore } from "../store";
 import { buildThreadRouteParams } from "../threadRoutes";
-import { formatRelativeTimeLabel } from "../timestampFormat";
+import { formatDayGroupLabel, formatRelativeTimeLabel, startOfDay } from "../timestampFormat";
 import { useUiStateStore } from "../uiStateStore";
 import { useSideThreadStore } from "../sidethread/sideThreadStore";
 import { cn } from "~/lib/utils";
@@ -46,21 +47,58 @@ import { cn } from "~/lib/utils";
  */
 const MISSING_THREAD_DETECTION_TIMEOUT_MS = 1_500;
 
+const INBOX_FILTERS: ReadonlyArray<{ readonly value: InboxFilter; readonly label: string }> = [
+  { value: "all", label: "Tout" },
+  { value: "unread", label: "Non lus" },
+  { value: "mention", label: "Mentions" },
+  { value: "activity", label: "Activité" },
+];
+
+const EMPTY_COPY: Record<InboxFilter, { readonly title: string; readonly description: string }> = {
+  all: {
+    title: "Boîte de réception vide",
+    description: "Les mentions et les nouveaux messages de vos fils apparaîtront ici.",
+  },
+  unread: {
+    title: "Tout est lu",
+    description: "Aucun élément non lu pour le moment.",
+  },
+  mention: {
+    title: "Aucune mention",
+    description: "Quand un coéquipier vous tague @vous dans un fil, le message apparaît ici.",
+  },
+  activity: {
+    title: "Aucune nouvelle activité",
+    description: "Les nouveaux messages dans les fils où vous participez apparaissent ici.",
+  },
+};
+
+function isInboxFilter(value: string | undefined): value is InboxFilter {
+  return value === "all" || value === "unread" || value === "mention" || value === "activity";
+}
+
 function InboxRouteView() {
   const environmentId = usePrimaryEnvironmentId();
   const status = useInboxStore((state) => state.status);
   const errorMessage = useInboxStore((state) => state.errorMessage);
   const refresh = useInboxStore((state) => state.refresh);
   const dismiss = useInboxStore((state) => state.dismiss);
-  const mentionItems = useMentionItems();
-  const activityItems = useActivityItems();
-  const mentionUnread = useMentionUnreadCount();
-  const activityUnread = useActivityUnreadCount();
-  const lastVisitedAtById = useUiStateStore((state) => state.threadLastVisitedAtById);
   const markThreadsVisited = useUiStateStore((state) => state.markThreadsVisited);
   const currentUser = useCurrentUser();
   const openSideThread = useSideThreadStore((state) => state.open);
   const navigate = useNavigate();
+
+  const [filter, setFilter] = useState<InboxFilter>("all");
+  const rows = useInboxRows(filter);
+  const allUnread = useInboxUnreadCount();
+  const mentionUnread = useMentionUnreadCount();
+  const activityUnread = useActivityUnreadCount();
+
+  const dayGroups = useMemo(() => groupRowsByDay(rows), [rows]);
+  const visibleUnread = useMemo(
+    () => rows.reduce((total, row) => total + (row.unread ? 1 : 0), 0),
+    [rows],
+  );
 
   useEffect(() => {
     if (!environmentId) return;
@@ -135,9 +173,9 @@ function InboxRouteView() {
     }
   };
 
-  const markAllRead = (items: ReadonlyArray<InboxItem>) => {
+  const markAllVisibleRead = () => {
     markThreadsVisited(
-      items.map((item) => ({ threadId: item.sideThreadId, visitedAt: item.lastActivityAt })),
+      rows.map((row) => ({ threadId: row.item.sideThreadId, visitedAt: row.item.lastActivityAt })),
     );
   };
 
@@ -145,6 +183,15 @@ function InboxRouteView() {
     if (!environmentId || !currentUser) return;
     void dismiss(ensureEnvironmentApi(environmentId), item.sideThreadId, currentUser.id);
   };
+
+  const tabBadge = (value: InboxFilter): number => {
+    if (value === "all") return allUnread;
+    if (value === "mention") return mentionUnread;
+    if (value === "activity") return activityUnread;
+    return 0;
+  };
+
+  const empty = EMPTY_COPY[filter];
 
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
@@ -168,6 +215,47 @@ function InboxRouteView() {
           </div>
         </header>
 
+        <div className="flex items-center gap-2 border-b border-border px-3 py-2 sm:px-5">
+          <ToggleGroup
+            variant="outline"
+            size="xs"
+            value={[filter]}
+            onValueChange={(value) => {
+              const next = value[0];
+              if (isInboxFilter(next)) setFilter(next);
+            }}
+          >
+            {INBOX_FILTERS.map((tab) => {
+              const badge = tabBadge(tab.value);
+              return (
+                <Toggle key={tab.value} value={tab.value} aria-label={tab.label}>
+                  {tab.value === "mention" ? <AtSignIcon className="size-3.5" /> : null}
+                  {tab.value === "activity" ? <MessagesSquareIcon className="size-3.5" /> : null}
+                  {tab.label}
+                  {badge > 0 ? (
+                    <Badge
+                      variant="secondary"
+                      className="ml-0.5 rounded-md px-1 py-0 text-[10px] tabular-nums"
+                    >
+                      {badge}
+                    </Badge>
+                  ) : null}
+                </Toggle>
+              );
+            })}
+          </ToggleGroup>
+          <Button
+            size="xs"
+            variant="ghost"
+            className="ml-auto"
+            disabled={visibleUnread === 0}
+            onClick={markAllVisibleRead}
+          >
+            <CheckCheckIcon className="size-3.5" />
+            Tout marquer comme lu
+          </Button>
+        </div>
+
         {errorMessage ? (
           <div className="border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-xs text-destructive">
             {errorMessage}
@@ -175,184 +263,121 @@ function InboxRouteView() {
         ) : null}
 
         <div className="flex-1 overflow-y-auto">
-          <InboxSection
-            title="Mentions"
-            icon={<AtSignIcon className="size-4 text-muted-foreground" />}
-            items={mentionItems}
-            unreadCount={mentionUnread}
-            canDismiss
-            loading={status === "loading"}
-            emptyTitle="Aucune mention"
-            emptyDescription="Quand un coéquipier vous tague @vous dans un fil, le message apparaît ici."
-            lastVisitedAtById={lastVisitedAtById}
-            onOpen={openInboxItem}
-            onDismiss={onDismiss}
-            onMarkAllRead={() => markAllRead(mentionItems)}
-            dismissDisabled={!environmentId || !currentUser}
-          />
-          <InboxSection
-            title="Activité"
-            icon={<MessagesSquareIcon className="size-4 text-muted-foreground" />}
-            items={activityItems}
-            unreadCount={activityUnread}
-            canDismiss={false}
-            loading={status === "loading"}
-            emptyTitle="Aucune nouvelle activité"
-            emptyDescription="Les nouveaux messages dans les fils où vous participez apparaissent ici."
-            lastVisitedAtById={lastVisitedAtById}
-            onOpen={openInboxItem}
-            onMarkAllRead={() => markAllRead(activityItems)}
-          />
+          {status === "loading" && rows.length === 0 ? (
+            <div className="px-4 py-6 text-center text-sm text-muted-foreground/60">Chargement…</div>
+          ) : rows.length === 0 ? (
+            <Empty className="py-12">
+              <EmptyHeader className="max-w-md">
+                <div className="mx-auto mb-4 flex size-10 items-center justify-center rounded-xl border border-border/70 bg-background/70 text-muted-foreground">
+                  <InboxIcon className="size-5" />
+                </div>
+                <EmptyTitle className="text-foreground text-lg">{empty.title}</EmptyTitle>
+                <EmptyDescription className="mt-2 text-sm leading-relaxed text-muted-foreground/78">
+                  {empty.description}
+                </EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          ) : (
+            <div>
+              {dayGroups.map((group) => (
+                <section key={group.key}>
+                  <div className="sticky top-0 z-10 border-b border-border/40 bg-background/95 px-4 py-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70 backdrop-blur">
+                    {group.label}
+                  </div>
+                  <ul className="divide-y divide-border/30">
+                    {group.rows.map((row) => (
+                      <InboxRowItem
+                        key={row.item.sideThreadId}
+                        row={row}
+                        onOpen={openInboxItem}
+                        onDismiss={onDismiss}
+                        dismissDisabled={!environmentId || !currentUser}
+                      />
+                    ))}
+                  </ul>
+                </section>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </SidebarInset>
   );
 }
 
-interface InboxSectionProps {
-  readonly title: string;
-  readonly icon: React.ReactNode;
-  readonly items: ReadonlyArray<InboxItem>;
-  readonly unreadCount: number;
-  readonly canDismiss: boolean;
-  readonly loading: boolean;
-  readonly emptyTitle: string;
-  readonly emptyDescription: string;
-  readonly lastVisitedAtById: Record<string, string>;
+interface InboxRowItemProps {
+  readonly row: InboxRow;
   readonly onOpen: (item: InboxItem) => void | Promise<void>;
-  readonly onMarkAllRead: () => void;
-  readonly onDismiss?: (item: InboxItem) => void;
-  readonly dismissDisabled?: boolean;
+  readonly onDismiss: (item: InboxItem) => void;
+  readonly dismissDisabled: boolean;
 }
 
-function InboxSection({
-  title,
-  icon,
-  items,
-  unreadCount,
-  canDismiss,
-  loading,
-  emptyTitle,
-  emptyDescription,
-  lastVisitedAtById,
-  onOpen,
-  onMarkAllRead,
-  onDismiss,
-  dismissDisabled,
-}: InboxSectionProps) {
-  const grouped = useMemo(() => groupItemsByParentThread(items), [items]);
+function InboxRowItem({ row, onOpen, onDismiss, dismissDisabled }: InboxRowItemProps) {
+  const { item, isMention, dismissable, unread } = row;
+  const TypeIcon = isMention ? AtSignIcon : MessagesSquareIcon;
 
   return (
-    <section className="border-b border-border/60 last:border-b-0">
-      <header className="sticky top-0 z-10 flex items-center gap-2 border-b border-border/40 bg-background/95 px-4 py-2 backdrop-blur">
-        {icon}
-        <span className="text-sm font-medium text-foreground">{title}</span>
-        <Badge variant="secondary" className="ml-1 rounded-md px-1.5 py-0 text-[10px]">
-          {unreadCount}
-        </Badge>
-        <Button
-          size="xs"
-          variant="ghost"
-          className="ml-auto"
-          disabled={unreadCount === 0}
-          onClick={onMarkAllRead}
+    <li className="group relative">
+      <button
+        type="button"
+        onClick={() => {
+          void onOpen(item);
+        }}
+        className={cn(
+          "flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+          dismissable && "pr-12",
+          unread && "bg-amber-500/5",
+        )}
+      >
+        <span
+          className={cn(
+            "mt-1.5 size-2 shrink-0 rounded-full",
+            unread ? "bg-amber-500" : "bg-transparent",
+          )}
+          aria-label={unread ? "non lu" : "lu"}
+        />
+        <TypeIcon
+          className={cn(
+            "mt-0.5 size-4 shrink-0",
+            isMention ? "text-amber-500/80" : "text-muted-foreground/70",
+          )}
+          aria-hidden
+        />
+        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <div className="flex items-baseline justify-between gap-2">
+            <span className="text-sm font-medium text-foreground">
+              {item.lastAuthor.displayName}
+            </span>
+            <span className="shrink-0 text-[10px] text-muted-foreground/60">
+              {formatRelativeTimeLabel(item.lastActivityAt)}
+            </span>
+          </div>
+          <p className="line-clamp-2 text-sm text-foreground/75">{item.lastPreview}</p>
+          {item.count > 1 ? (
+            <span className="text-[10px] text-muted-foreground/60">
+              {isMention
+                ? `${item.count} mentions dans ce fil`
+                : `${item.count} messages dans ce fil`}
+            </span>
+          ) : null}
+        </div>
+      </button>
+      {dismissable ? (
+        <button
+          type="button"
+          aria-label="Ignorer la mention"
+          title="Ignorer la mention"
+          disabled={dismissDisabled}
+          onClick={(event) => {
+            event.stopPropagation();
+            onDismiss(item);
+          }}
+          className="absolute right-2 top-1/2 flex size-7 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground/60 opacity-0 transition-opacity hover:bg-accent hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-30"
         >
-          <CheckCheckIcon className="size-3.5" />
-          Tout marquer comme lu
-        </Button>
-      </header>
-
-      {loading && items.length === 0 ? (
-        <div className="px-4 py-6 text-center text-sm text-muted-foreground/60">Chargement…</div>
-      ) : items.length === 0 ? (
-        <Empty className="py-8">
-          <EmptyHeader className="max-w-md">
-            <div className="mx-auto mb-4 flex size-10 items-center justify-center rounded-xl border border-border/70 bg-background/70 text-muted-foreground">
-              <InboxIcon className="size-5" />
-            </div>
-            <EmptyTitle className="text-foreground text-lg">{emptyTitle}</EmptyTitle>
-            <EmptyDescription className="mt-2 text-sm leading-relaxed text-muted-foreground/78">
-              {emptyDescription}
-            </EmptyDescription>
-          </EmptyHeader>
-        </Empty>
-      ) : (
-        <ul className="divide-y divide-border/40">
-          {grouped.map((group) => (
-            <li key={group.parentThreadId ?? "__global__"}>
-              <div className="bg-muted/30 px-4 py-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
-                {group.parentThreadId === null
-                  ? "Global chat"
-                  : `Conversation ${group.parentThreadId.slice(0, 8)}`}
-              </div>
-              <ul className="divide-y divide-border/30">
-                {group.items.map((item) => {
-                  const unread = isInboxItemUnread(item, lastVisitedAtById);
-                  return (
-                    <li key={item.sideThreadId} className="group relative">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          void onOpen(item);
-                        }}
-                        className={cn(
-                          "flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                          canDismiss && "pr-12",
-                          unread && "bg-amber-500/5",
-                        )}
-                      >
-                        <span
-                          className={cn(
-                            "mt-1 size-2 shrink-0 rounded-full",
-                            unread ? "bg-amber-500" : "bg-transparent",
-                          )}
-                          aria-label={unread ? "non lu" : "lu"}
-                        />
-                        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                          <div className="flex items-baseline justify-between gap-2">
-                            <span className="text-sm font-medium text-foreground">
-                              {item.lastAuthor.displayName}
-                            </span>
-                            <span className="text-[10px] text-muted-foreground/60">
-                              {formatRelativeTimeLabel(item.lastActivityAt)}
-                            </span>
-                          </div>
-                          <p className="line-clamp-2 text-sm text-foreground/75">
-                            {item.lastPreview}
-                          </p>
-                          {item.count > 1 ? (
-                            <span className="text-[10px] text-muted-foreground/60">
-                              {item.kind === "mention"
-                                ? `${item.count} mentions dans ce fil`
-                                : `${item.count} messages dans ce fil`}
-                            </span>
-                          ) : null}
-                        </div>
-                      </button>
-                      {canDismiss && onDismiss ? (
-                        <button
-                          type="button"
-                          aria-label="Ignorer la mention"
-                          title="Ignorer la mention"
-                          disabled={dismissDisabled}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            onDismiss(item);
-                          }}
-                          className="absolute right-2 top-1/2 flex size-7 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground/60 opacity-0 transition-opacity hover:bg-accent hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-30"
-                        >
-                          <XIcon className="size-4" />
-                        </button>
-                      ) : null}
-                    </li>
-                  );
-                })}
-              </ul>
-            </li>
-          ))}
-        </ul>
-      )}
-    </section>
+          <XIcon className="size-4" />
+        </button>
+      ) : null}
+    </li>
   );
 }
 
@@ -402,38 +427,38 @@ function waitForThreadResolution(threadRef: ScopedThreadRef): Promise<ThreadReso
   });
 }
 
-interface ParentThreadGroup {
-  /** `null` for the workspace-wide global chat group. */
-  readonly parentThreadId: ThreadId | null;
-  readonly items: ReadonlyArray<InboxItem>;
+interface InboxDayGroup {
+  /** Local start-of-day epoch ms — the grouping key. */
+  readonly key: number;
+  /** Human label for the date separator ("Aujourd'hui", "Hier", "vendredi", "22 mai"). */
+  readonly label: string;
+  readonly rows: InboxRow[];
 }
 
 /**
- * Group inbox items by their parent agent thread so the UI surfaces "this
- * is the same conversation" affordance — keeps the list visually scannable
- * when one thread accumulates many items over time. Items belonging to the
- * workspace-wide global chat (parentThreadId === null) collapse into a single
- * dedicated group keyed by `null`.
+ * Bucket the (already most-recent-first) rows by calendar day so the feed gets
+ * Slack-style date separators. Consecutive same-day rows fall into one group.
  */
-function groupItemsByParentThread(
-  items: ReadonlyArray<InboxItem>,
-): ReadonlyArray<ParentThreadGroup> {
-  const order: Array<ThreadId | null> = [];
-  const byParent = new Map<ThreadId | null, InboxItem[]>();
-  for (const item of items) {
-    const key = item.parentThreadId;
-    const list = byParent.get(key);
-    if (list) {
-      list.push(item);
-    } else {
-      byParent.set(key, [item]);
-      order.push(key);
+function groupRowsByDay(rows: ReadonlyArray<InboxRow>): InboxDayGroup[] {
+  const groups: InboxDayGroup[] = [];
+  let current: InboxDayGroup | null = null;
+  for (const row of rows) {
+    const key = startOfDay(new Date(row.item.lastActivityAt));
+    if (!current || current.key !== key) {
+      current = {
+        key,
+        label: formatDayGroupLabel(row.item.lastActivityAt, {
+          locale: "fr",
+          todayLabel: "Aujourd'hui",
+          yesterdayLabel: "Hier",
+        }),
+        rows: [],
+      };
+      groups.push(current);
     }
+    current.rows.push(row);
   }
-  return order.map((parentThreadId) => ({
-    parentThreadId,
-    items: byParent.get(parentThreadId)!,
-  }));
+  return groups;
 }
 
 export const Route = createFileRoute("/_chat/inbox")({

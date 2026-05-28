@@ -10,7 +10,7 @@ import type {
   UserRef,
 } from "@t3tools/contracts";
 
-import { isInboxItemUnread, useInboxStore } from "./inboxStore";
+import { buildInboxRows, isInboxItemUnread, useInboxStore } from "./inboxStore";
 
 const mkUser = (id: string, displayName: string): UserRef => ({
   id: id as UserRef["id"],
@@ -47,6 +47,93 @@ describe("isInboxItemUnread", () => {
     const item = mkItem({ lastActivityAt: "2026-05-18T10:00:00.000Z" });
     const visited = { "st-1": "2026-05-18T11:00:00.000Z" };
     expect(isInboxItemUnread(item, visited)).toBe(false);
+  });
+});
+
+describe("buildInboxRows", () => {
+  it("collapses a thread's mention + activity into one dismissable row showing the newer content", () => {
+    const mention = mkItem({
+      kind: "mention",
+      sideThreadId: "st-a" as SideThreadId,
+      lastActivityAt: "2026-05-18T10:00:00.000Z",
+      lastPreview: "you were mentioned",
+      count: 2,
+    });
+    const activity = mkItem({
+      kind: "activity",
+      sideThreadId: "st-a" as SideThreadId,
+      lastActivityAt: "2026-05-18T12:00:00.000Z",
+      lastPreview: "newer message",
+      count: 5,
+    });
+
+    const rows = buildInboxRows([mention, activity], {}, "all");
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.isMention).toBe(true);
+    expect(rows[0]!.dismissable).toBe(true);
+    // Newer of the two wins for the displayed content.
+    expect(rows[0]!.item.lastPreview).toBe("newer message");
+  });
+
+  it("keeps an activity-only thread as a non-dismissable, non-mention row", () => {
+    const activity = mkItem({ kind: "activity", sideThreadId: "st-b" as SideThreadId });
+    const rows = buildInboxRows([activity], {}, "all");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.isMention).toBe(false);
+    expect(rows[0]!.dismissable).toBe(false);
+  });
+
+  it("sorts the unified list most-recent-first", () => {
+    const older = mkItem({
+      kind: "activity",
+      sideThreadId: "st-a" as SideThreadId,
+      lastActivityAt: "2026-05-18T09:00:00.000Z",
+    });
+    const newer = mkItem({
+      kind: "activity",
+      sideThreadId: "st-b" as SideThreadId,
+      lastActivityAt: "2026-05-18T15:00:00.000Z",
+    });
+    const rows = buildInboxRows([older, newer], {}, "all");
+    expect(rows.map((row) => row.item.sideThreadId)).toEqual(["st-b", "st-a"]);
+  });
+
+  it("'unread' drops read rows and still dedups a both-kind thread to one", () => {
+    const mention = mkItem({
+      kind: "mention",
+      sideThreadId: "st-a" as SideThreadId,
+      lastActivityAt: "2026-05-18T10:00:00.000Z",
+    });
+    const activity = mkItem({
+      kind: "activity",
+      sideThreadId: "st-a" as SideThreadId,
+      lastActivityAt: "2026-05-18T12:00:00.000Z",
+    });
+    const readThread = mkItem({
+      kind: "activity",
+      sideThreadId: "st-b" as SideThreadId,
+      lastActivityAt: "2026-05-18T10:00:00.000Z",
+    });
+    const visited = { "st-b": "2026-05-18T11:00:00.000Z" };
+
+    const rows = buildInboxRows([mention, activity, readThread], visited, "unread");
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.item.sideThreadId).toBe("st-a");
+  });
+
+  it("'mention' / 'activity' filters split by kind with the right dismissability", () => {
+    const mention = mkItem({ kind: "mention", sideThreadId: "st-a" as SideThreadId });
+    const activity = mkItem({ kind: "activity", sideThreadId: "st-b" as SideThreadId });
+
+    const mentionRows = buildInboxRows([mention, activity], {}, "mention");
+    expect(mentionRows.map((row) => row.item.sideThreadId)).toEqual(["st-a"]);
+    expect(mentionRows[0]!.dismissable).toBe(true);
+
+    const activityRows = buildInboxRows([mention, activity], {}, "activity");
+    expect(activityRows.map((row) => row.item.sideThreadId)).toEqual(["st-b"]);
+    expect(activityRows[0]!.dismissable).toBe(false);
   });
 });
 

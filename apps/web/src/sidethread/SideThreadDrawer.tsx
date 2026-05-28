@@ -31,6 +31,7 @@ import { ensureEnvironmentApi } from "../environmentApi";
 import { Button } from "../components/ui/button";
 import { InlineSlideDrawer } from "../components/ui/inline-slide-drawer";
 import { cn, randomUUID } from "~/lib/utils";
+import { formatDayGroupLabel, startOfDay } from "../timestampFormat";
 import {
   useCurrentUser,
   useEnsureIdentityLoaded,
@@ -139,28 +140,16 @@ function formatTimeOfDay(iso: string): string {
   });
 }
 
-function startOfDay(d: Date): number {
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-}
-
 /**
  * Label for the centered date chip that separates conversation days
  * ("Today" / "Yesterday" / "March 12"). Returns `null` when the previous
  * message is on the same calendar day — no chip needed.
  */
 function dateDividerLabel(currentIso: string, previousIso: string | null): string | null {
-  const current = new Date(currentIso);
-  if (previousIso) {
-    if (startOfDay(current) === startOfDay(new Date(previousIso))) return null;
+  if (previousIso && startOfDay(new Date(currentIso)) === startOfDay(new Date(previousIso))) {
+    return null;
   }
-  const now = new Date();
-  const diffDays = Math.round((startOfDay(now) - startOfDay(current)) / 86_400_000);
-  if (diffDays === 0) return "Today";
-  if (diffDays === 1) return "Yesterday";
-  if (diffDays < 7) {
-    return current.toLocaleDateString([], { weekday: "long" });
-  }
-  return current.toLocaleDateString([], { month: "long", day: "numeric" });
+  return formatDayGroupLabel(currentIso);
 }
 
 const GROUP_GAP_MS = 5 * 60 * 1000;

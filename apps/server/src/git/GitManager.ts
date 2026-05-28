@@ -453,6 +453,20 @@ function formatCommitMessage(subject: string, body: string): string {
   return `${subject}\n\n${trimmedBody}`;
 }
 
+/**
+ * Append a markdown backlink footer pointing at the campfire conversation that
+ * triggered the PR. No-op when no URL is provided so the generated body is
+ * left untouched.
+ */
+function appendPrBacklinkFooter(body: string, prBacklinkUrl: string | undefined): string {
+  const url = prBacklinkUrl?.trim() ?? "";
+  if (url.length === 0) {
+    return body;
+  }
+  const footer = `🔥 Created from the [campfire conversation](${url})`;
+  return `${body.trimEnd()}\n\n---\n\n${footer}\n`;
+}
+
 function parseCustomCommitMessage(raw: string): { subject: string; body: string } | null {
   const normalized = raw.replace(/\r\n/g, "\n").trim();
   if (normalized.length === 0) {
@@ -1266,6 +1280,7 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
     cwd: string,
     fallbackBranch: string | null,
     emit: GitActionProgressEmitter,
+    prBacklinkUrl?: string,
   ) {
     const provider = yield* sourceControlProvider(cwd);
     const terms = getChangeRequestTerminologyForKind(provider.kind);
@@ -1319,9 +1334,14 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
       modelSelection,
     });
 
+    // Append a backlink to the campfire conversation that triggered this PR.
+    // Done after generation (deterministic, model-independent) and only for a
+    // newly created PR — the `opened_existing` path returns earlier above.
+    const prBody = appendPrBacklinkFooter(generated.body, prBacklinkUrl);
+
     const bodyFile = path.join(tempDir, `t3code-pr-body-${process.pid}-${randomUUID()}.md`);
     yield* fileSystem
-      .writeFileString(bodyFile, generated.body)
+      .writeFileString(bodyFile, prBody)
       .pipe(
         Effect.mapError((cause) =>
           gitManagerError("runPrStep", "Failed to write pull request body temp file.", cause),
@@ -1783,7 +1803,13 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
               .pipe(
                 Effect.tap(() => Ref.set(currentPhase, Option.some("pr"))),
                 Effect.flatMap(() =>
-                  runPrStep(modelSelection, input.cwd, currentBranch, progress.emit),
+                  runPrStep(
+                    modelSelection,
+                    input.cwd,
+                    currentBranch,
+                    progress.emit,
+                    input.prBacklinkUrl,
+                  ),
                 ),
               )
           : { status: "skipped_not_requested" as const };

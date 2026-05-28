@@ -128,6 +128,12 @@ export const GitRunStackedActionInput = Schema.Struct({
   filePaths: Schema.optional(
     Schema.Array(TrimmedNonEmptyStringSchema).check(Schema.isMinLength(1)),
   ),
+  // Absolute deeplink URL to the campfire conversation that triggered this
+  // action. When present and the action opens a *new* pull request, the
+  // server appends a backlink footer to the generated PR body. Built on the
+  // client from `window.location.origin` so it stays correct in remote
+  // (Tailscale) mode where the server cannot know its externally-reachable URL.
+  prBacklinkUrl: Schema.optional(TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(2_048))),
 });
 export type GitRunStackedActionInput = typeof GitRunStackedActionInput.Type;
 

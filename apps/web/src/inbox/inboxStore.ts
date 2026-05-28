@@ -132,13 +132,16 @@ export const useInboxStore = create<InboxStore>((set, get) => ({
   reset: () => set({ items: [], status: "idle", errorMessage: null }),
 }));
 
+/** Most-recent-first, with a stable tiebreak so re-sorts don't jitter. */
+function compareByLastActivity(left: InboxItem, right: InboxItem): number {
+  if (left.lastActivityAt === right.lastActivityAt) {
+    return left.sideThreadId.localeCompare(right.sideThreadId);
+  }
+  return left.lastActivityAt < right.lastActivityAt ? 1 : -1;
+}
+
 function sortByLastActivity(items: ReadonlyArray<InboxItem>): InboxItem[] {
-  return [...items].sort((left, right) => {
-    if (left.lastActivityAt === right.lastActivityAt) {
-      return left.sideThreadId.localeCompare(right.sideThreadId);
-    }
-    return left.lastActivityAt < right.lastActivityAt ? 1 : -1;
-  });
+  return items.toSorted(compareByLastActivity);
 }
 
 /**
@@ -187,54 +190,132 @@ export function useInboxLiveSync(api: EnvironmentApi | undefined): void {
   }, [api]);
 }
 
+/**
+ * The four ways the unified inbox can be sliced. `all` and `unread` collapse a
+ * side-thread's mention + activity rows into one; `mention` / `activity` show a
+ * single kind verbatim.
+ */
+export type InboxFilter = "all" | "unread" | "mention" | "activity";
+
+/**
+ * A presentation row, decoupled from the raw `InboxItem` so the unified "all"
+ * view can collapse a thread's two underlying rows into one without losing the
+ * mention affordances.
+ */
+export interface InboxRow {
+  /** Item whose preview / author / timestamp are rendered (the most recent one). */
+  readonly item: InboxItem;
+  /** Render the @-mention treatment (icon) — true when a mention exists for the thread. */
+  readonly isMention: boolean;
+  /** Expose the "dismiss mention" action — only mentions are dismissable. */
+  readonly dismissable: boolean;
+  /** Whether the thread is unread relative to the last visit. */
+  readonly unread: boolean;
+}
+
+function newerItem(left: InboxItem, right: InboxItem): InboxItem {
+  return left.lastActivityAt >= right.lastActivityAt ? left : right;
+}
+
+/**
+ * Project the raw item list into display rows for a given filter.
+ *
+ * `mention` / `activity` map each row of that kind straight through. `all` and
+ * `unread` group by `sideThreadId`: a thread that is both a mention and an
+ * activity collapses into a single row that keeps the mention affordances
+ * (icon + dismiss) but shows the *newer* of the two for preview and unread
+ * state — so the same conversation never appears twice and the row reflects the
+ * latest event. Result is sorted most-recent-first.
+ */
+export function buildInboxRows(
+  items: ReadonlyArray<InboxItem>,
+  lastVisitedAtById: Record<string, string>,
+  filter: InboxFilter,
+): InboxRow[] {
+  if (filter === "mention" || filter === "activity") {
+    const rows = items
+      .filter((item) => item.kind === filter)
+      .map((item) => ({
+        item,
+        isMention: filter === "mention",
+        dismissable: filter === "mention",
+        unread: isInboxItemUnread(item, lastVisitedAtById),
+      }));
+    return rows.toSorted((left, right) => compareByLastActivity(left.item, right.item));
+  }
+
+  const byThread = new Map<SideThreadId, { mention?: InboxItem; activity?: InboxItem }>();
+  for (const item of items) {
+    const entry = byThread.get(item.sideThreadId) ?? {};
+    if (item.kind === "mention") entry.mention = item;
+    else entry.activity = item;
+    byThread.set(item.sideThreadId, entry);
+  }
+
+  const rows: InboxRow[] = [];
+  for (const { mention, activity } of byThread.values()) {
+    const item = mention && activity ? newerItem(mention, activity) : (mention ?? activity)!;
+    const row: InboxRow = {
+      item,
+      isMention: mention !== undefined,
+      dismissable: mention !== undefined,
+      unread: isInboxItemUnread(item, lastVisitedAtById),
+    };
+    if (filter === "unread" && !row.unread) continue;
+    rows.push(row);
+  }
+  return rows.toSorted((left, right) => compareByLastActivity(left.item, right.item));
+}
+
 function countUnread(
   items: ReadonlyArray<InboxItem>,
   lastVisitedAtById: Record<string, string>,
-  kind?: InboxItemKind,
+  kind: InboxItemKind,
 ): number {
   let unread = 0;
   for (const item of items) {
-    if (kind && item.kind !== kind) continue;
+    if (item.kind !== kind) continue;
     if (isInboxItemUnread(item, lastVisitedAtById)) unread += 1;
   }
   return unread;
 }
 
 /**
- * Total number of unread inbox entries (mentions + activity). Drives the
+ * Total unread conversations (mentions + activity), deduped by side-thread so a
+ * thread that is both an unread mention and unread activity counts once — keeps
+ * the sidebar badge consistent with the unified inbox's "Tout" tab. Drives the
  * sidebar badge.
  */
 export function useInboxUnreadCount(): number {
   const items = useInboxStore((state) => state.items);
   const lastVisitedAtById = useUiStateStore((state) => state.threadLastVisitedAtById);
-  return countUnread(items, lastVisitedAtById);
+  return useMemo(
+    () => buildInboxRows(items, lastVisitedAtById, "unread").length,
+    [items, lastVisitedAtById],
+  );
 }
 
-/** Unread mention rows — drives the "Mentions" section badge. */
+/** Unread mention rows — drives the "Mentions" tab badge. */
 export function useMentionUnreadCount(): number {
   const items = useInboxStore((state) => state.items);
   const lastVisitedAtById = useUiStateStore((state) => state.threadLastVisitedAtById);
   return countUnread(items, lastVisitedAtById, "mention");
 }
 
-/** Unread activity rows — drives the "Activité" section badge. */
+/** Unread activity rows — drives the "Activité" tab badge. */
 export function useActivityUnreadCount(): number {
   const items = useInboxStore((state) => state.items);
   const lastVisitedAtById = useUiStateStore((state) => state.threadLastVisitedAtById);
   return countUnread(items, lastVisitedAtById, "activity");
 }
 
-/** Mention rows only, already sorted most-recent-first. */
-export function useMentionItems(): ReadonlyArray<InboxItem> {
-  return useInboxStore(
-    useShallow((state) => state.items.filter((item) => item.kind === "mention")),
-  );
-}
-
-/** Activity rows only, already sorted most-recent-first. */
-export function useActivityItems(): ReadonlyArray<InboxItem> {
-  return useInboxStore(
-    useShallow((state) => state.items.filter((item) => item.kind === "activity")),
+/** Display rows for the inbox under `filter`, recomputed when inputs change. */
+export function useInboxRows(filter: InboxFilter): InboxRow[] {
+  const items = useInboxStore((state) => state.items);
+  const lastVisitedAtById = useUiStateStore((state) => state.threadLastVisitedAtById);
+  return useMemo(
+    () => buildInboxRows(items, lastVisitedAtById, filter),
+    [items, lastVisitedAtById, filter],
   );
 }
 

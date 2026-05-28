@@ -12,6 +12,7 @@ import type {
 } from "@t3tools/contracts";
 import { useIsMutating, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
+import { buildThreadDeeplinkUrl } from "../threadRoutes";
 import * as Option from "effect/Option";
 import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
@@ -1376,12 +1377,20 @@ export default function GitActionsControl({
         updateActiveProgressToast();
       };
 
+      // For actions that open a PR, attach a deeplink back to the conversation
+      // that triggered it so the server can inject a backlink into the PR body.
+      const prBacklinkUrl =
+        (action === "commit_push_pr" || action === "create_pr") && activeThreadRef
+          ? buildThreadDeeplinkUrl(activeThreadRef, window.location.origin)
+          : undefined;
+
       const promise = runImmediateGitActionMutation.mutateAsync({
         actionId,
         action,
         ...(commitMessage ? { commitMessage } : {}),
         ...(featureBranch ? { featureBranch } : {}),
         ...(filePaths ? { filePaths } : {}),
+        ...(prBacklinkUrl ? { prBacklinkUrl } : {}),
         onProgress: applyProgressEvent,
       });
 

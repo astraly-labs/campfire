@@ -401,6 +401,8 @@ function createTextGeneration(overrides: Partial<FakeGitTextGeneration> = {}): T
 function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
   service: GitHubCliShape;
   ghCalls: string[];
+  /** Body content of each `gh pr create`, captured from its `--body-file`. */
+  prCreateBodies: string[];
 } {
   const prListQueue = [...(scenario.prListSequence ?? [])];
   const prListQueueByHeadSelector = new Map(
@@ -410,6 +412,7 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
     ]),
   );
   const ghCalls: string[] = [];
+  const prCreateBodies: string[] = [];
 
   const execute: GitHubCliShape["execute"] = (input) => {
     const args = [...input.args];
@@ -438,11 +441,22 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
     }
 
     if (args[0] === "pr" && args[1] === "create") {
-      return Effect.succeed(
-        fakeGhOutput(
+      const bodyFileIndex = args.findIndex((value) => value === "--body-file");
+      const bodyFilePath = bodyFileIndex >= 0 ? args[bodyFileIndex + 1] : undefined;
+      return Effect.sync(() => {
+        if (bodyFilePath) {
+          // The body temp file still exists here; it is removed only after
+          // `createChangeRequest` resolves (`Effect.ensuring`).
+          try {
+            prCreateBodies.push(fs.readFileSync(bodyFilePath, "utf8"));
+          } catch {
+            // Some flows may not produce a readable body file; ignore.
+          }
+        }
+        return fakeGhOutput(
           (scenario.createdPrUrl ?? "https://github.com/pingdotgg/codething-mvp/pull/101") + "\n",
-        ),
-      );
+        );
+      });
     }
 
     if (args[0] === "pr" && args[1] === "view") {
@@ -647,6 +661,7 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
         }).pipe(Effect.asVoid),
     },
     ghCalls,
+    prCreateBodies,
   };
 }
 
@@ -659,6 +674,7 @@ function runStackedAction(
     commitMessage?: string;
     featureBranch?: boolean;
     filePaths?: readonly string[];
+    prBacklinkUrl?: string;
   },
   options?: Parameters<GitManagerShape["runStackedAction"]>[1],
 ) {
@@ -687,7 +703,11 @@ function makeManager(input?: {
   textGeneration?: Partial<FakeGitTextGeneration>;
   setupScriptRunner?: ProjectSetupScriptRunnerShape;
 }) {
-  const { service: gitHubCli, ghCalls } = createGitHubCliWithFakeGh(input?.ghScenario);
+  const {
+    service: gitHubCli,
+    ghCalls,
+    prCreateBodies,
+  } = createGitHubCliWithFakeGh(input?.ghScenario);
   const textGeneration = createTextGeneration(input?.textGeneration);
   const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
     prefix: "t3-git-manager-test-",
@@ -729,7 +749,7 @@ function makeManager(input?: {
 
   return makeGitManager().pipe(
     Effect.provide(managerLayer),
-    Effect.map((manager) => ({ manager, ghCalls })),
+    Effect.map((manager) => ({ manager, ghCalls, prCreateBodies })),
   );
 }
 
@@ -1880,6 +1900,94 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
           call.includes("pr create --base main --head feature/provider-fallback"),
         ),
       ).toBe(true);
+    }),
+  );
+
+  it.effect("appends a campfire backlink footer to a newly created PR body", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/backlink"]);
+      fs.writeFileSync(path.join(repoDir, "backlink.txt"), "backlink\n");
+      yield* runGit(repoDir, ["add", "backlink.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Backlink change"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+
+      const { manager, prCreateBodies } = yield* makeManager({
+        ghScenario: {
+          prListSequence: [
+            "[]",
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify([
+              {
+                number: 501,
+                title: "Backlink change",
+                url: "https://github.com/pingdotgg/codething-mvp/pull/501",
+                baseRefName: "main",
+                headRefName: "feature/backlink",
+              },
+            ]),
+          ],
+        },
+      });
+
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "create_pr",
+        prBacklinkUrl: "https://app.example.com/env-1/thread-1",
+      });
+
+      expect(result.pr.status).toBe("created");
+      expect(prCreateBodies).toHaveLength(1);
+      const body = prCreateBodies[0] ?? "";
+      expect(body).toContain(
+        "🔥 Created from the [campfire conversation](https://app.example.com/env-1/thread-1)",
+      );
+      // Footer is separated from the generated body by a horizontal rule.
+      expect(body).toContain("\n---\n");
+      // The generated body content is preserved above the footer.
+      expect(body).toContain("## Summary");
+    }),
+  );
+
+  it.effect("leaves the PR body untouched when no backlink url is provided", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/no-backlink"]);
+      fs.writeFileSync(path.join(repoDir, "no-backlink.txt"), "no backlink\n");
+      yield* runGit(repoDir, ["add", "no-backlink.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "No backlink change"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+
+      const { manager, prCreateBodies } = yield* makeManager({
+        ghScenario: {
+          prListSequence: [
+            "[]",
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify([
+              {
+                number: 502,
+                title: "No backlink change",
+                url: "https://github.com/pingdotgg/codething-mvp/pull/502",
+                baseRefName: "main",
+                headRefName: "feature/no-backlink",
+              },
+            ]),
+          ],
+        },
+      });
+
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "create_pr",
+      });
+
+      expect(result.pr.status).toBe("created");
+      expect(prCreateBodies).toHaveLength(1);
+      expect(prCreateBodies[0] ?? "").not.toContain("campfire conversation");
     }),
   );
 

@@ -28,6 +28,17 @@ export function buildDraftThreadRouteParams(draftId: DraftId): {
   return { draftId };
 }
 
+/**
+ * Absolute, shareable deeplink URL to a server thread — used e.g. as the
+ * backlink injected into a PR body. Built from `origin` (typically
+ * `window.location.origin`) plus the thread route `/$environmentId/$threadId`,
+ * so it stays correct in remote (Tailscale) mode where the server cannot know
+ * its own externally-reachable URL.
+ */
+export function buildThreadDeeplinkUrl(ref: ScopedThreadRef, origin: string): string {
+  return `${origin.replace(/\/+$/, "")}/${ref.environmentId}/${ref.threadId}`;
+}
+
 export function resolveThreadRouteRef(
   params: Partial<Record<"environmentId" | "threadId", string | undefined>>,
 ): ScopedThreadRef | null {

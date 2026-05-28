@@ -48,6 +48,41 @@ export function formatShortTimestamp(isoDate: string, timestampFormat: Timestamp
   return getTimestampFormatter(timestampFormat, false).format(new Date(isoDate));
 }
 
+/** Local midnight for `date`, as epoch ms — buckets timestamps by calendar day. */
+export function startOfDay(date: Date): number {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+}
+
+export interface DayGroupLabelOptions {
+  /** Reference "now" for the relative comparison. Defaults to the current time. */
+  readonly now?: Date;
+  /** Locale handed to `toLocaleDateString` for the weekday / "month day" labels. */
+  readonly locale?: string | string[];
+  /** Label for the current calendar day. Defaults to `"Today"`. */
+  readonly todayLabel?: string;
+  /** Label for the previous calendar day. Defaults to `"Yesterday"`. */
+  readonly yesterdayLabel?: string;
+}
+
+/**
+ * Label for a date separator that buckets items by calendar day: today and
+ * yesterday get relative words, the past week gets the weekday name, older
+ * dates get "month day". The today/yesterday words and locale are caller-
+ * supplied so the same logic serves both the (English) side-thread timeline
+ * and the (French) inbox.
+ */
+export function formatDayGroupLabel(isoDate: string, options: DayGroupLabelOptions = {}): string {
+  const { now = new Date(), locale, todayLabel = "Today", yesterdayLabel = "Yesterday" } = options;
+  const current = new Date(isoDate);
+  const diffDays = Math.round((startOfDay(now) - startOfDay(current)) / 86_400_000);
+  if (diffDays === 0) return todayLabel;
+  if (diffDays === 1) return yesterdayLabel;
+  if (diffDays < 7) {
+    return current.toLocaleDateString(locale, { weekday: "long" });
+  }
+  return current.toLocaleDateString(locale, { month: "long", day: "numeric" });
+}
+
 /**
  * Format a relative time string from an ISO date.
  * Returns `{ value: "20s", suffix: "ago" }` or `{ value: "just now", suffix: null }`
