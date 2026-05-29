@@ -83,6 +83,7 @@ function createTestClient() {
     },
     shell: {
       openInEditor: vi.fn(async () => undefined),
+      getPathForFile: vi.fn(async () => null),
     },
     git: {
       runStackedAction: vi.fn(async () => ({}) as any),

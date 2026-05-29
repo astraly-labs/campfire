@@ -24,12 +24,18 @@ const {
     () =>
       | {
           contextMenu: { show: ReturnType<typeof vi.fn> };
-          shell: { openExternal: ReturnType<typeof vi.fn> };
+          shell: {
+            openExternal: ReturnType<typeof vi.fn>;
+            getPathForFile: ReturnType<typeof vi.fn>;
+          };
         }
       | undefined
   >(() => ({
     contextMenu: { show: vi.fn(async () => null) },
-    shell: { openExternal: vi.fn(async () => undefined) },
+    shell: {
+      openExternal: vi.fn(async () => undefined),
+      getPathForFile: vi.fn(async () => null),
+    },
   })),
 }));
 

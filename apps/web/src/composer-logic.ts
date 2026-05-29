@@ -42,6 +42,19 @@ function tokenStartForCursor(text: string, cursor: number): number {
   return index + 1;
 }
 
+export function formatComposerFileReference(path: string): string {
+  if (!/[\s"'`]/.test(path)) {
+    return path;
+  }
+  if (!path.includes('"')) {
+    return `"${path}"`;
+  }
+  if (!path.includes("'")) {
+    return `'${path}'`;
+  }
+  return JSON.stringify(path);
+}
+
 export function expandCollapsedComposerCursor(text: string, cursorInput: number): number {
   const collapsedCursor = clampCursor(text, cursorInput);
   const segments = splitPromptIntoComposerSegments(text);

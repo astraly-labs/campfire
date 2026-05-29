@@ -88,6 +88,7 @@ function createRegisteredGitStatusClient(environmentId: EnvironmentId) {
     },
     shell: {
       openInEditor: vi.fn(async () => undefined),
+      getPathForFile: vi.fn(async () => null),
     },
     vcs: {
       pull: vi.fn(async () => undefined),

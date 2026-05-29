@@ -8,7 +8,10 @@ const { openInPreferredEditorMock, readLocalApiMock } = vi.hoisted(() => ({
   openInPreferredEditorMock: vi.fn(async () => "vscode"),
   readLocalApiMock: vi.fn(() => ({
     server: { getConfig: vi.fn(async () => ({ availableEditors: ["vscode"] })) },
-    shell: { openInEditor: vi.fn(async () => undefined) },
+    shell: {
+      openInEditor: vi.fn(async () => undefined),
+      getPathForFile: vi.fn(async () => null),
+    },
   })),
 }));
 

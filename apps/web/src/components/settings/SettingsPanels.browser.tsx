@@ -444,6 +444,7 @@ const createDesktopBridgeStub = (overrides?: {
       tailscaleServePort: input.port ?? 443,
     })),
     getAdvertisedEndpoints: vi.fn().mockResolvedValue(overrides?.advertisedEndpoints ?? []),
+    getPathForFile: vi.fn().mockReturnValue(null),
     pickFolder: vi.fn().mockResolvedValue(null),
     confirm: vi.fn().mockResolvedValue(false),
     setTheme: vi.fn().mockResolvedValue(undefined),

@@ -5,6 +5,7 @@ import {
   collapseExpandedComposerCursor,
   detectComposerTrigger,
   expandCollapsedComposerCursor,
+  formatComposerFileReference,
   isCollapsedCursorAdjacentToInlineToken,
   parseStandaloneComposerSlashCommand,
   replaceTextRange,
@@ -241,6 +242,22 @@ describe("replaceTextRange trailing space consumption", () => {
     const extendedEnd = text[rangeEnd] === " " ? rangeEnd + 1 : rangeEnd;
     const withConsume = replaceTextRange(text, rangeStart, extendedEnd, "@AGENTS.md ");
     expect(withConsume.text).toBe("and then @AGENTS.md summarize");
+  });
+});
+
+describe("formatComposerFileReference", () => {
+  it("leaves simple paths unquoted", () => {
+    expect(formatComposerFileReference("/tmp/input.json")).toBe("/tmp/input.json");
+  });
+
+  it("quotes paths containing whitespace", () => {
+    expect(formatComposerFileReference("/tmp/input data.json")).toBe('"/tmp/input data.json"');
+  });
+
+  it("falls back to single quotes when the path already contains double quotes", () => {
+    expect(formatComposerFileReference('/tmp/"quoted" name.json')).toBe(
+      "'/tmp/\"quoted\" name.json'",
+    );
   });
 });
 

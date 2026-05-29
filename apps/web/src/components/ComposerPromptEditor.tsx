@@ -869,6 +869,7 @@ export interface ComposerPromptEditorHandle {
   focus: () => void;
   focusAt: (cursor: number) => void;
   focusAtEnd: () => void;
+  insertTextAndFocus: (text: string) => void;
   readSnapshot: () => {
     value: string;
     cursor: number;
@@ -1535,6 +1536,29 @@ function ComposerPromptEditorInner({
     return snapshot;
   }, [editor]);
 
+  const insertTextAndFocus = useCallback(
+    (text: string) => {
+      const rootElement = editor.getRootElement();
+      if (rootElement) {
+        rootElement.focus();
+      }
+      editor.update(
+        () => {
+          let selection = $getSelection();
+          if (!$isRangeSelection(selection)) {
+            $setSelectionAtComposerOffset(snapshotRef.current.cursor);
+            selection = $getSelection();
+          }
+          if ($isRangeSelection(selection)) {
+            selection.insertText(text);
+          }
+        },
+        { tag: HISTORY_MERGE_TAG },
+      );
+    },
+    [editor],
+  );
+
   useImperativeHandle(
     editorRef,
     () => ({
@@ -1550,9 +1574,10 @@ function ComposerPromptEditorInner({
           ),
         );
       },
+      insertTextAndFocus,
       readSnapshot,
     }),
-    [focusAt, readSnapshot],
+    [focusAt, insertTextAndFocus, readSnapshot],
   );
 
   const handleEditorChange = useCallback((editorState: EditorState) => {
