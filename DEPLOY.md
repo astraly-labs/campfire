@@ -27,12 +27,20 @@ The deploy script copies the pairing URL to your clipboard. Open it (or paste it
 2. `git fetch origin --tags && git checkout campfire/v0 && git pull --ff-only`.
 3. If the pull touched `package.json` / `bun.lock` → `bun install`. Otherwise skip.
 4. Kill anything listening on ports `5733` (web) and `13773` (backend).
-5. Restart `bun run dev` with HTTPS env wired to the Tailscale Serve endpoints:
+5. Maintenance window (dev runner down, SQLite uncontended):
+   - Rotate `~/.t3/dev/logs/` if it has grown past 100 MB (renamed to
+     `logs.archive-<timestamp>/`, a fresh empty dir is recreated). Old archives
+     are left in place — clean them manually if disk pressure becomes an issue.
+   - `PRAGMA optimize` on `~/.t3/dev/state.sqlite` (selective `ANALYZE` on tables
+     whose stats have drifted; cheap, idempotent).
+   - This whole block is wrapped in `|| true` so a maintenance failure never
+     blocks the restart.
+6. Restart `bun run dev` with HTTPS env wired to the Tailscale Serve endpoints:
    - `VITE_HTTP_URL=https://jeffs-mac-mini.tail289246.ts.net:8444`
    - `VITE_WS_URL=wss://jeffs-mac-mini.tail289246.ts.net:8444`
    - `T3CODE_CORS_ORIGIN=https://jeffs-mac-mini.tail289246.ts.net:8443`
-6. Poll the backend `/api/auth/session` for up to 30s.
-7. Scrape the new pairing token from `/tmp/campfire-mac.log` and print the pairing URL (also copied to your clipboard via `pbcopy`).
+7. Poll the backend `/api/auth/session` for up to 30s.
+8. Scrape the new pairing token from `/tmp/campfire-mac.log` and print the pairing URL (also copied to your clipboard via `pbcopy`).
 
 Total downtime for paired teammates: roughly 5–30 seconds while the restart settles. WS clients reconnect automatically once the backend is back.
 

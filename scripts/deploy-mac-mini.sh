@@ -58,8 +58,40 @@ else
 fi
 
 step "Stopping any running dev server (ports 5733 / 13773)"
+# Two-phase shutdown: SIGTERM the port-holders so they can flush/close cleanly,
+# then SIGKILL any straggler that ignored SIGTERM (the Effect-runtime backend
+# has been observed to take many minutes to honor SIGTERM, leaving a multi-GB
+# zombie alongside the freshly started replacement and doubling memory use).
 ssh "${HOST}" 'lsof -iTCP -sTCP:LISTEN -P 2>/dev/null | awk "/(:5733|:13773)/{print \$2}" | sort -u | xargs -I {} kill {} 2>/dev/null || true'
-sleep 2
+sleep 5
+ssh "${HOST}" '
+  pgrep -fl "node --watch src/bin.ts|apps/web/node_modules/.bin/vite --host|scripts/dev-runner.ts" \
+    | awk "{print \$1}" | xargs -I {} kill -9 {} 2>/dev/null || true
+'
+sleep 1
+
+# Maintenance window: the dev runner is down so the SQLite store is uncontended
+# and the runtime log writer has released its handles. Cheap, safe to skip on
+# failure — we never let maintenance block the restart.
+step "Maintenance: rotate logs > 100 MB + PRAGMA optimize on state.sqlite"
+ssh "${HOST}" '
+  log_dir="$HOME/.t3/dev/logs"
+  if [ -d "$log_dir" ]; then
+    total_kb=$(du -sk "$log_dir" 2>/dev/null | awk "{print \$1}")
+    if [ "${total_kb:-0}" -gt 102400 ]; then
+      archive="$log_dir.archive-$(date +%Y%m%d-%H%M%S)"
+      mv "$log_dir" "$archive" && mkdir -p "$log_dir" \
+        && echo "    rotated logs to $(basename "$archive") (${total_kb} KB)"
+    else
+      echo "    logs dir ${total_kb:-0} KB — no rotation"
+    fi
+  fi
+  db="$HOME/.t3/dev/state.sqlite"
+  if [ -s "$db" ] && command -v sqlite3 >/dev/null 2>&1; then
+    sqlite3 "$db" "PRAGMA optimize;" 2>&1 | sed "s/^/    sqlite: /" || true
+    echo "    PRAGMA optimize done ($(du -sh "$db" | awk "{print \$1}"))"
+  fi
+' || true
 
 step "Starting dev server with HTTPS env wired"
 REALTIME_DEBUG="${VITE_REALTIME_DEBUG:-}"
