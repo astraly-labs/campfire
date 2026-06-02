@@ -183,12 +183,22 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
       ),
     );
 
+  const pruneStoppedOlderThan: ProviderSessionDirectoryShape["pruneStoppedOlderThan"] = (
+    cutoffIso,
+  ) =>
+    repository
+      .pruneStoppedOlderThan({ cutoffIso })
+      .pipe(
+        Effect.mapError(toPersistenceError("ProviderSessionDirectory.pruneStoppedOlderThan:prune")),
+      );
+
   return {
     upsert,
     getProvider,
     getBinding,
     listThreadIds,
     listBindings,
+    pruneStoppedOlderThan,
   } satisfies ProviderSessionDirectoryShape;
 });
 

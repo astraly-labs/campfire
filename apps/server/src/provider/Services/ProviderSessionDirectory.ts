@@ -62,6 +62,17 @@ export interface ProviderSessionDirectoryShape {
     ReadonlyArray<ProviderRuntimeBindingWithMetadata>,
     ProviderSessionDirectoryPersistenceError
   >;
+
+  /**
+   * Delete persisted bindings whose status is `stopped` and whose
+   * `lastSeenAt` is strictly older than `cutoffIso`. Returns the count
+   * deleted. Used by the session reaper to cap directory growth — the
+   * read path skips stopped rows already, so pruning never hides an
+   * active binding.
+   */
+  readonly pruneStoppedOlderThan: (
+    cutoffIso: string,
+  ) => Effect.Effect<number, ProviderSessionDirectoryPersistenceError>;
 }
 
 export class ProviderSessionDirectory extends Context.Service<

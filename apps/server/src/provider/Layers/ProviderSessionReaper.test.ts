@@ -142,6 +142,7 @@ describe("ProviderSessionReaper", () => {
     readonly stopSessionImplementation?: (input: {
       readonly threadId: ThreadId;
     }) => ReturnType<ProviderServiceShape["stopSession"]>;
+    readonly stoppedRetentionMs?: number;
   }) {
     const stoppedThreadIds = new Set<ThreadId>();
     const stopSession = vi.fn<ProviderServiceShape["stopSession"]>(
@@ -188,6 +189,9 @@ describe("ProviderSessionReaper", () => {
     const layer = makeProviderSessionReaperLive({
       inactivityThresholdMs: 1_000,
       sweepIntervalMs: 60_000,
+      ...(input.stoppedRetentionMs !== undefined
+        ? { stoppedRetentionMs: input.stoppedRetentionMs }
+        : {}),
     }).pipe(
       Layer.provideMerge(providerSessionDirectoryLayer),
       Layer.provideMerge(runtimeRepositoryLayer),
@@ -415,7 +419,10 @@ describe("ProviderSessionReaper", () => {
 
   it("skips persisted sessions that are already marked stopped", async () => {
     const threadId = ThreadId.make("thread-reaper-stopped");
-    const now = "2026-01-01T00:00:00.000Z";
+    // Use a "now"-relative timestamp so the prune step (which targets stopped
+    // rows older than the retention window) leaves this row alone; we want to
+    // verify the sweep skip-by-status logic, not the prune.
+    const now = DateTime.formatIso(await Effect.runPromise(DateTime.now));
     const harness = await createHarness({
       readModel: makeReadModel([
         {
@@ -442,7 +449,7 @@ describe("ProviderSessionReaper", () => {
         adapterKey: "claudeAgent",
         runtimeMode: "full-access",
         status: "stopped",
-        lastSeenAt: "2026-04-14T00:00:00.000Z",
+        lastSeenAt: now,
         resumeCursor: {
           opaque: "resume-stopped",
         },
@@ -458,6 +465,127 @@ describe("ProviderSessionReaper", () => {
     expect(harness.stopSession).not.toHaveBeenCalled();
     const remaining = await runtime!.runPromise(repository.getByThreadId({ threadId }));
     expect(Option.isSome(remaining)).toBe(true);
+  });
+
+  it("prunes stopped sessions older than the retention window", async () => {
+    const oldStoppedThreadId = ThreadId.make("thread-reaper-prune-old");
+    const recentStoppedThreadId = ThreadId.make("thread-reaper-prune-recent");
+    const runningThreadId = ThreadId.make("thread-reaper-prune-running");
+    const now = DateTime.formatIso(await Effect.runPromise(DateTime.now));
+
+    const harness = await createHarness({
+      stoppedRetentionMs: 60_000,
+      readModel: makeReadModel([
+        {
+          id: oldStoppedThreadId,
+          session: {
+            threadId: oldStoppedThreadId,
+            status: "stopped",
+            providerName: "claudeAgent",
+            runtimeMode: "full-access",
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: now,
+          },
+        },
+        {
+          id: recentStoppedThreadId,
+          session: {
+            threadId: recentStoppedThreadId,
+            status: "stopped",
+            providerName: "claudeAgent",
+            runtimeMode: "full-access",
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: now,
+          },
+        },
+        {
+          id: runningThreadId,
+          session: {
+            threadId: runningThreadId,
+            status: "ready",
+            providerName: "claudeAgent",
+            runtimeMode: "full-access",
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: now,
+          },
+        },
+      ]),
+    });
+    const repository = await runtime!.runPromise(Effect.service(ProviderSessionRuntimeRepository));
+
+    // "old stopped" — last_seen far in the past, well outside the 60s window
+    await runtime!.runPromise(
+      repository.upsert({
+        threadId: oldStoppedThreadId,
+        providerName: "claudeAgent",
+        providerInstanceId: null,
+        adapterKey: "claudeAgent",
+        runtimeMode: "full-access",
+        status: "stopped",
+        lastSeenAt: "2020-01-01T00:00:00.000Z",
+        resumeCursor: { opaque: "resume-prune-old" },
+        runtimePayload: null,
+      }),
+    );
+    // "recent stopped" — last_seen NOW, comfortably inside the retention window
+    await runtime!.runPromise(
+      repository.upsert({
+        threadId: recentStoppedThreadId,
+        providerName: "claudeAgent",
+        providerInstanceId: null,
+        adapterKey: "claudeAgent",
+        runtimeMode: "full-access",
+        status: "stopped",
+        lastSeenAt: now,
+        resumeCursor: { opaque: "resume-prune-recent" },
+        runtimePayload: null,
+      }),
+    );
+    // "running" — last_seen "ancient", but status='running' should keep it
+    // safe regardless of how old it looks (prune only targets status='stopped')
+    await runtime!.runPromise(
+      repository.upsert({
+        threadId: runningThreadId,
+        providerName: "claudeAgent",
+        providerInstanceId: null,
+        adapterKey: "claudeAgent",
+        runtimeMode: "full-access",
+        status: "running",
+        lastSeenAt: "2020-01-01T00:00:00.000Z",
+        resumeCursor: { opaque: "resume-prune-running" },
+        runtimePayload: null,
+      }),
+    );
+
+    const reaper = await runtime!.runPromise(Effect.service(ProviderSessionReaper));
+    scope = await Effect.runPromise(Scope.make("sequential"));
+    await Effect.runPromise(reaper.start().pipe(Scope.provide(scope)));
+    await Effect.runPromise(drainFibers);
+
+    expect(
+      Option.isNone(
+        await runtime!.runPromise(repository.getByThreadId({ threadId: oldStoppedThreadId })),
+      ),
+    ).toBe(true);
+    expect(
+      Option.isSome(
+        await runtime!.runPromise(repository.getByThreadId({ threadId: recentStoppedThreadId })),
+      ),
+    ).toBe(true);
+    expect(
+      Option.isSome(
+        await runtime!.runPromise(repository.getByThreadId({ threadId: runningThreadId })),
+      ),
+    ).toBe(true);
+    // The "running" thread had ancient lastSeenAt but its stopSession call
+    // would only fire via the active-reap path below; we expect it to be
+    // attempted (idle, no active turn, no pending input) and succeed via the
+    // default stopSession mock — the prune step shouldn't have removed it
+    // before the loop got there.
+    expect(harness.stopSession).toHaveBeenCalledWith({ threadId: runningThreadId });
   });
 
   it("continues reaping other sessions when one stop attempt fails", async () => {

@@ -45,6 +45,12 @@ export type GetProviderSessionRuntimeInput = typeof GetProviderSessionRuntimeInp
 export const DeleteProviderSessionRuntimeInput = Schema.Struct({ threadId: ThreadId });
 export type DeleteProviderSessionRuntimeInput = typeof DeleteProviderSessionRuntimeInput.Type;
 
+export const PruneStoppedProviderSessionRuntimesInput = Schema.Struct({
+  cutoffIso: IsoDateTime,
+});
+export type PruneStoppedProviderSessionRuntimesInput =
+  typeof PruneStoppedProviderSessionRuntimesInput.Type;
+
 /**
  * ProviderSessionRuntimeRepositoryShape - Service API for provider runtime records.
  */
@@ -81,6 +87,20 @@ export interface ProviderSessionRuntimeRepositoryShape {
   readonly deleteByThreadId: (
     input: DeleteProviderSessionRuntimeInput,
   ) => Effect.Effect<void, ProviderSessionRuntimeRepositoryError>;
+
+  /**
+   * Delete rows whose `status` is `stopped` and whose `last_seen_at` is
+   * strictly older than `cutoffIso`. Returns the count of deleted rows.
+   *
+   * Safe to call at any time: the only reader that cares about stopped rows
+   * is the ProviderSessionReaper sweep, which already skips them. Pruning
+   * keeps `provider_session_runtime` (and the in-memory runtime directory
+   * hydrated from it at startup) bounded — otherwise stopped rows accumulate
+   * forever as the team uses the backend.
+   */
+  readonly pruneStoppedOlderThan: (
+    input: PruneStoppedProviderSessionRuntimesInput,
+  ) => Effect.Effect<number, ProviderSessionRuntimeRepositoryError>;
 }
 
 /**

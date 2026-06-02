@@ -15,6 +15,7 @@ import {
 import {
   ProviderSessionRuntime,
   ProviderSessionRuntimeRepository,
+  PruneStoppedProviderSessionRuntimesInput,
   type ProviderSessionRuntimeRepositoryShape,
 } from "../Services/ProviderSessionRuntime.ts";
 
@@ -131,6 +132,31 @@ const makeProviderSessionRuntimeRepository = Effect.gen(function* () {
       `,
   });
 
+  // Two-query prune: count first so callers can log / observe the work
+  // performed. Both queries use the (status, last_seen_at) prefix of the
+  // existing idx_provider_session_runtime_status index — cheap even on a
+  // large team backend.
+  const countStoppedOlderThan = SqlSchema.findOne({
+    Request: PruneStoppedProviderSessionRuntimesInput,
+    Result: Schema.Struct({ count: Schema.Number }),
+    execute: ({ cutoffIso }) =>
+      sql`
+        SELECT COUNT(*) AS "count"
+        FROM provider_session_runtime
+        WHERE status = 'stopped'
+          AND last_seen_at < ${cutoffIso}
+      `,
+  });
+  const deleteStoppedOlderThan = SqlSchema.void({
+    Request: PruneStoppedProviderSessionRuntimesInput,
+    execute: ({ cutoffIso }) =>
+      sql`
+        DELETE FROM provider_session_runtime
+        WHERE status = 'stopped'
+          AND last_seen_at < ${cutoffIso}
+      `,
+  });
+
   const upsert: ProviderSessionRuntimeRepositoryShape["upsert"] = (runtime) =>
     upsertRuntimeRow(runtime).pipe(
       Effect.mapError(
@@ -194,11 +220,36 @@ const makeProviderSessionRuntimeRepository = Effect.gen(function* () {
       ),
     );
 
+  const pruneStoppedOlderThan: ProviderSessionRuntimeRepositoryShape["pruneStoppedOlderThan"] = (
+    input,
+  ) =>
+    Effect.gen(function* () {
+      const { count } = yield* countStoppedOlderThan(input).pipe(
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "ProviderSessionRuntimeRepository.pruneStoppedOlderThan:count",
+            "ProviderSessionRuntimeRepository.pruneStoppedOlderThan:encodeRequest",
+          ),
+        ),
+      );
+      if (count <= 0) return 0;
+      yield* deleteStoppedOlderThan(input).pipe(
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "ProviderSessionRuntimeRepository.pruneStoppedOlderThan:delete",
+            "ProviderSessionRuntimeRepository.pruneStoppedOlderThan:encodeRequest",
+          ),
+        ),
+      );
+      return count;
+    });
+
   return {
     upsert,
     getByThreadId,
     list,
     deleteByThreadId,
+    pruneStoppedOlderThan,
   } satisfies ProviderSessionRuntimeRepositoryShape;
 });
 

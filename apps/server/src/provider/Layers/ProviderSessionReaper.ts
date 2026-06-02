@@ -1,4 +1,5 @@
 import * as Clock from "effect/Clock";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -15,10 +16,16 @@ import { ProviderService } from "../Services/ProviderService.ts";
 
 const DEFAULT_INACTIVITY_THRESHOLD_MS = 30 * 60 * 1000;
 const DEFAULT_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
+// How long a `stopped` binding row sticks around before the sweep drops it.
+// 7 days is enough to keep recent debugging context (correlate a reaped
+// session with logs) without letting rows accumulate forever (a multi-week
+// uptime had 185 stopped rows lingering for no caller).
+const DEFAULT_STOPPED_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 
 export interface ProviderSessionReaperLiveOptions {
   readonly inactivityThresholdMs?: number;
   readonly sweepIntervalMs?: number;
+  readonly stoppedRetentionMs?: number;
 }
 
 const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =>
@@ -32,10 +39,34 @@ const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =
       options?.inactivityThresholdMs ?? DEFAULT_INACTIVITY_THRESHOLD_MS,
     );
     const sweepIntervalMs = Math.max(1, options?.sweepIntervalMs ?? DEFAULT_SWEEP_INTERVAL_MS);
+    const stoppedRetentionMs = Math.max(
+      1,
+      options?.stoppedRetentionMs ?? DEFAULT_STOPPED_RETENTION_MS,
+    );
 
     const sweep = Effect.gen(function* () {
-      const bindings = yield* directory.listBindings();
       const now = yield* Clock.currentTimeMillis;
+
+      // Prune long-stopped rows so the directory's in-memory view doesn't
+      // grow unbounded with every reaped session. The sweep loop below
+      // already skips `status === "stopped"`, so the only effect of the
+      // delete is freeing rows nobody reads.
+      const pruneCutoffIso = DateTime.formatIso(DateTime.makeUnsafe(now - stoppedRetentionMs));
+      const pruned = yield* directory.pruneStoppedOlderThan(pruneCutoffIso).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("provider.session.reaper.prune-failed", { cause }).pipe(
+            Effect.as(0),
+          ),
+        ),
+      );
+      if (pruned > 0) {
+        yield* Effect.logInfo("provider.session.reaper.pruned-stopped", {
+          count: pruned,
+          cutoffIso: pruneCutoffIso,
+        });
+      }
+
+      const bindings = yield* directory.listBindings();
       let reapedCount = 0;
 
       for (const binding of bindings) {
