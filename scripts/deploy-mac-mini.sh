@@ -73,7 +73,7 @@ sleep 1
 # Maintenance window: the dev runner is down so the SQLite store is uncontended
 # and the runtime log writer has released its handles. Cheap, safe to skip on
 # failure — we never let maintenance block the restart.
-step "Maintenance: rotate logs > 100 MB + PRAGMA optimize on state.sqlite"
+step "Maintenance: rotate logs > 100 MB, drop old archives, PRAGMA optimize"
 ssh "${HOST}" '
   log_dir="$HOME/.t3/dev/logs"
   if [ -d "$log_dir" ]; then
@@ -85,6 +85,24 @@ ssh "${HOST}" '
     else
       echo "    logs dir ${total_kb:-0} KB — no rotation"
     fi
+  fi
+  # Prune old log archives — keep only the 2 most recent so a sequence of
+  # deploys does not fill the disk (one ENOSPC incident already produced a
+  # zombie backend stuck at 99% CPU with no listening sockets).
+  archives=$(ls -1dt "$HOME"/.t3/dev/logs.archive-* 2>/dev/null)
+  if [ -n "$archives" ]; then
+    keep=2
+    pruned=0
+    pruned_kb=0
+    printf "%s\n" "$archives" | tail -n +$((keep + 1)) | while read -r old; do
+      size_kb=$(du -sk "$old" 2>/dev/null | awk "{print \$1}")
+      rm -rf "$old" && echo "    pruned $(basename "$old") (${size_kb:-?} KB)"
+    done
+  fi
+  # Surface low free space as a warning so we can act before ENOSPC.
+  free_mb=$(df -m "$HOME" 2>/dev/null | awk "NR==2 {print \$4}")
+  if [ "${free_mb:-0}" -lt 5120 ]; then
+    echo "    !!! WARNING: only ${free_mb} MB free on $HOME — backend may ENOSPC"
   fi
   db="$HOME/.t3/dev/state.sqlite"
   if [ -s "$db" ] && command -v sqlite3 >/dev/null 2>&1; then
