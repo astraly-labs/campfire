@@ -26,6 +26,7 @@ import { ProviderEventLoggersLive } from "./provider/Layers/ProviderEventLoggers
 import { ProviderServiceLive } from "./provider/Layers/ProviderService.ts";
 import { ProviderLogRetentionLive } from "./provider/Layers/ProviderLogRetention.ts";
 import { ProviderSessionReaperLive } from "./provider/Layers/ProviderSessionReaper.ts";
+import { WorktreeArtifactRetentionLive } from "./worktree/Layers/WorktreeArtifactRetention.ts";
 import { OpenCodeRuntimeLive } from "./provider/opencodeRuntime.ts";
 import { CheckpointDiffQueryLive } from "./checkpointing/Layers/CheckpointDiffQuery.ts";
 import { CheckpointStoreLive } from "./checkpointing/Layers/CheckpointStore.ts";
@@ -245,6 +246,7 @@ const AuthLayerLive = ServerAuthLive.pipe(
 const ProviderRuntimeLayerLive = Layer.mergeAll(
   ProviderSessionReaperLive,
   ProviderLogRetentionLive,
+  WorktreeArtifactRetentionLive,
 ).pipe(Layer.provideMerge(ProviderLayerLive), Layer.provideMerge(OrchestrationLayerLive));
 
 const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(

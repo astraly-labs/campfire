@@ -34,6 +34,7 @@ import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
 import { ServerAuth } from "./auth/Services/ServerAuth.ts";
 import { ProviderLogRetention } from "./provider/Services/ProviderLogRetention.ts";
 import { ProviderSessionReaper } from "./provider/Services/ProviderSessionReaper.ts";
+import { WorktreeArtifactRetention } from "./worktree/Services/WorktreeArtifactRetention.ts";
 import {
   formatHeadlessServeOutput,
   formatHostForUrl,
@@ -285,6 +286,7 @@ export const makeServerRuntimeStartup = Effect.gen(function* () {
   const orchestrationReactor = yield* OrchestrationReactor;
   const providerSessionReaper = yield* ProviderSessionReaper;
   const providerLogRetention = yield* ProviderLogRetention;
+  const worktreeArtifactRetention = yield* WorktreeArtifactRetention;
   const lifecycleEvents = yield* ServerLifecycleEvents;
   const serverSettings = yield* ServerSettingsService;
   const serverEnvironment = yield* ServerEnvironment;
@@ -333,6 +335,7 @@ export const makeServerRuntimeStartup = Effect.gen(function* () {
         yield* orchestrationReactor.start().pipe(Scope.provide(reactorScope));
         yield* providerSessionReaper.start().pipe(Scope.provide(reactorScope));
         yield* providerLogRetention.start().pipe(Scope.provide(reactorScope));
+        yield* worktreeArtifactRetention.start().pipe(Scope.provide(reactorScope));
       }),
     );
 
