@@ -11,6 +11,19 @@ export const WS_RECONNECT_BACKOFF_FACTOR = 2;
 export const WS_RECONNECT_MAX_DELAY_MS = 64_000;
 export const WS_RECONNECT_MAX_RETRIES = 7;
 export const WS_RECONNECT_MAX_ATTEMPTS = WS_RECONNECT_MAX_RETRIES + 1;
+/**
+ * Minimum continuous time spent in the `connected` phase before we treat a
+ * subsequent drop as a fresh failure cycle (reset the reconnect counter).
+ *
+ * Without this guard the counter resets to 0 on every TCP-level WebSocket
+ * open, so a flaky link that gets the socket open for 200ms before another
+ * drop ends up re-attempting at the initial 1 s delay forever — visible to
+ * the user as continuous "Reconnecting…" churn. With a 30 s stability
+ * window, repeated quick drops keep the exponential backoff growing
+ * (1 s → 2 s → 4 s → 8 s …) so the cycle naturally slows down until either
+ * the network actually recovers or the user manually retries.
+ */
+export const WS_RECONNECT_STABILITY_THRESHOLD_MS = 30_000;
 
 export interface WsConnectionStatus {
   readonly attemptCount: number;
@@ -108,7 +121,7 @@ export function recordWsConnectionAttempt(
     connectionLabel: connectionLabel ?? current.connectionLabel,
     nextRetryAt: null,
     phase: "connecting",
-    reconnectAttemptCount: current.phase === "connected" ? 1 : current.reconnectAttemptCount + 1,
+    reconnectAttemptCount: current.reconnectAttemptCount + 1,
     reconnectPhase: "attempting",
     socketUrl,
   }));
@@ -116,6 +129,13 @@ export function recordWsConnectionAttempt(
 
 export function recordWsConnectionOpened(metadata?: WsConnectionMetadata): WsConnectionStatus {
   const connectionLabel = normalizeConnectionLabel(metadata?.connectionLabel);
+  // Note: we intentionally do *not* reset `reconnectAttemptCount` here.
+  // The TCP-level open succeeding doesn't yet prove the link is stable —
+  // a flaky network often surfaces a successful open followed by an
+  // immediate drop. The counter is reset in `applyDisconnectState` only
+  // when the previous "connected" interval lasted at least
+  // `WS_RECONNECT_STABILITY_THRESHOLD_MS`, so brief opens correctly
+  // continue the exponential backoff cycle rather than restarting it.
   return updateWsConnectionStatus((current) => ({
     ...current,
     closeCode: null,
@@ -126,7 +146,6 @@ export function recordWsConnectionOpened(metadata?: WsConnectionMetadata): WsCon
     hasConnected: true,
     nextRetryAt: null,
     phase: "connected",
-    reconnectAttemptCount: 0,
     reconnectPhase: "idle",
   }));
 }
@@ -219,10 +238,28 @@ function applyDisconnectState(
   metadata?: WsConnectionMetadata,
 ): WsConnectionStatus {
   const disconnectedAt = current.disconnectedAt ?? isoNow();
+
+  // Stability check: if the previous `connected` interval lasted at least
+  // the stability threshold, treat this disconnect as the start of a fresh
+  // failure cycle (counter reset to 0). Otherwise the previous open was
+  // unstable — keep the running counter so the next retry delay continues
+  // to grow. This is the difference between a one-off blip after an hour
+  // of productive work (resets) and continuous churn on a flaky link
+  // (keeps slowing down). `connectedAt` is set in
+  // `recordWsConnectionOpened`; missing or unparseable means we don't have
+  // evidence of stability and we preserve the counter to be safe.
+  const connectedAtMs =
+    current.connectedAt !== null ? Date.parse(current.connectedAt) : Number.NaN;
+  const lastConnectedDurationMs = Number.isNaN(connectedAtMs) ? 0 : Date.now() - connectedAtMs;
+  const wasStable =
+    current.phase === "connected" &&
+    lastConnectedDurationMs >= WS_RECONNECT_STABILITY_THRESHOLD_MS;
+  const reconnectAttemptCount = wasStable ? 0 : current.reconnectAttemptCount;
+
   const nextRetryDelayMs =
     current.nextRetryAt !== null || current.reconnectPhase === "exhausted"
       ? null
-      : getWsReconnectDelayMsForRetry(Math.max(0, current.reconnectAttemptCount - 1));
+      : getWsReconnectDelayMsForRetry(Math.max(0, reconnectAttemptCount - 1));
 
   return {
     ...current,
@@ -234,6 +271,7 @@ function applyDisconnectState(
         ? current.nextRetryAt
         : new Date(Date.now() + nextRetryDelayMs).toISOString(),
     phase: "disconnected",
+    reconnectAttemptCount,
     reconnectPhase:
       current.reconnectPhase === "waiting" || current.reconnectPhase === "exhausted"
         ? current.reconnectPhase

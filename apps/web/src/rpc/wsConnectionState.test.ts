@@ -11,6 +11,7 @@ import {
   resetWsConnectionStateForTests,
   setBrowserOnlineStatus,
   WS_RECONNECT_MAX_ATTEMPTS,
+  WS_RECONNECT_STABILITY_THRESHOLD_MS,
 } from "./wsConnectionState";
 
 describe("wsConnectionState", () => {
@@ -102,6 +103,68 @@ describe("wsConnectionState", () => {
       nextRetryAt: null,
       reconnectAttemptCount: WS_RECONNECT_MAX_ATTEMPTS,
       reconnectPhase: "exhausted",
+    });
+  });
+
+  it("keeps the backoff growing when the socket drops within the stability window", () => {
+    // Cycle 1: attempt → connecting → open (brief) → close fast → still bad
+    recordWsConnectionAttempt("ws://localhost:3020/ws");
+    recordWsConnectionOpened();
+    // 200 ms into the "connected" interval — well under the stability threshold
+    vi.advanceTimersByTime(200);
+    recordWsConnectionClosed({ code: 1006, reason: "network blip" });
+
+    const afterFirstCycle = getWsConnectionStatus();
+    const expectedFirstDelay = getWsReconnectDelayMsForRetry(0);
+    expect(afterFirstCycle).toMatchObject({
+      reconnectAttemptCount: 1,
+      reconnectPhase: "waiting",
+    });
+    expect(expectedFirstDelay).not.toBeNull();
+
+    // Cycle 2: simulate the retry firing → attempt → connecting → open → close fast again.
+    // The counter must KEEP growing here — the previous open was unstable.
+    vi.advanceTimersByTime(expectedFirstDelay ?? 0);
+    recordWsConnectionAttempt("ws://localhost:3020/ws");
+    recordWsConnectionOpened();
+    vi.advanceTimersByTime(500);
+    recordWsConnectionClosed({ code: 1006, reason: "network blip" });
+
+    const afterSecondCycle = getWsConnectionStatus();
+    const expectedSecondDelay = getWsReconnectDelayMsForRetry(1);
+    expect(afterSecondCycle.reconnectAttemptCount).toBe(2);
+    expect(afterSecondCycle.nextRetryAt).toBe(
+      new Date(Date.now() + (expectedSecondDelay ?? 0)).toISOString(),
+    );
+    // The second delay should be strictly larger than the first — proof that
+    // the backoff is not collapsing back to 1 s on each transient open.
+    expect(expectedSecondDelay ?? 0).toBeGreaterThan(expectedFirstDelay ?? 0);
+  });
+
+  it("resets the backoff after the connection has been stable for the threshold", () => {
+    // Failed attempt 1: counter goes to 1.
+    recordWsConnectionAttempt("ws://localhost:3020/ws");
+    recordWsConnectionErrored("Unable to connect to the T3 server WebSocket.");
+    expect(getWsConnectionStatus().reconnectAttemptCount).toBe(1);
+
+    // Retry succeeds and stays connected past the stability threshold.
+    vi.advanceTimersByTime(getWsReconnectDelayMsForRetry(0) ?? 0);
+    recordWsConnectionAttempt("ws://localhost:3020/ws");
+    recordWsConnectionOpened();
+    // Important: the counter must not be reset on open — `applyDisconnectState`
+    // is the only place that decides whether the previous interval was stable.
+    expect(getWsConnectionStatus().reconnectAttemptCount).toBe(2);
+
+    // Spend more than the stability threshold in the connected phase.
+    vi.advanceTimersByTime(WS_RECONNECT_STABILITY_THRESHOLD_MS + 1_000);
+    recordWsConnectionClosed({ code: 1006, reason: "later blip" });
+
+    // Counter resets to 0; next delay drops back to the initial value.
+    const afterDrop = getWsConnectionStatus();
+    expect(afterDrop).toMatchObject({
+      reconnectAttemptCount: 0,
+      nextRetryAt: new Date(Date.now() + (getWsReconnectDelayMsForRetry(0) ?? 0)).toISOString(),
+      reconnectPhase: "waiting",
     });
   });
 });

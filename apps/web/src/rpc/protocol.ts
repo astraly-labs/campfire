@@ -13,12 +13,15 @@ import {
   trackRpcRequestSent,
 } from "./requestLatencyState";
 import {
+  getWsConnectionStatus,
   getWsReconnectDelayMsForRetry,
   recordWsConnectionAttempt,
   recordWsConnectionClosed,
   recordWsConnectionErrored,
   recordWsConnectionOpened,
   type WsConnectionMetadata,
+  WS_RECONNECT_INITIAL_DELAY_MS,
+  WS_RECONNECT_MAX_DELAY_MS,
   WS_RECONNECT_MAX_RETRIES,
 } from "./wsConnectionState";
 
@@ -217,8 +220,29 @@ export function createWsRpcProtocolLayer(
   const socketLayer = Socket.layerWebSocket(resolvedUrl).pipe(
     Layer.provide(trackingWebSocketConstructorLayer),
   );
-  const retryPolicy = Schedule.addDelay(Schedule.recurs(WS_RECONNECT_MAX_RETRIES), (retryCount) =>
-    Effect.succeed(Duration.millis(getWsReconnectDelayMsForRetry(retryCount) ?? 0)),
+  // Reconnect delay is sourced from the stability-aware counter held in
+  // `wsConnectionState`, NOT from the Effect Schedule's retry count. Effect's
+  // retry counter restarts at 0 on every successful run (every WS open), so
+  // a flaky link that yields successive short-lived opens would reset to the
+  // initial 1 s delay forever and produce continuous "Reconnecting…" churn.
+  // By reading our state's `reconnectAttemptCount`, which only resets after
+  // a stable connected interval (see `applyDisconnectState`), the delay
+  // grows naturally on repeated quick drops and the reconnect cadence slows
+  // until the network actually recovers. `Schedule.recurs` is kept as the
+  // per-failure-cycle attempt cap so the toast still surfaces a Retry
+  // affordance once Effect itself gives up.
+  const retryPolicy = Schedule.addDelay(Schedule.recurs(WS_RECONNECT_MAX_RETRIES), () =>
+    Effect.sync(() => {
+      const status = getWsConnectionStatus();
+      const retryIndex = Math.min(
+        Math.max(0, status.reconnectAttemptCount - 1),
+        WS_RECONNECT_MAX_RETRIES - 1,
+      );
+      return Duration.millis(
+        getWsReconnectDelayMsForRetry(retryIndex) ??
+          Math.min(WS_RECONNECT_INITIAL_DELAY_MS, WS_RECONNECT_MAX_DELAY_MS),
+      );
+    }),
   );
   const protocolLayer = Layer.effect(
     RpcClient.Protocol,
