@@ -271,10 +271,10 @@ function MessageBubble({
         </div>
       ) : null}
 
-      <div className={cn("flex max-w-[78%] flex-col", isMine ? "items-end" : "items-start")}>
+      <div className={cn("flex min-w-0 max-w-[78%] flex-col", isMine ? "items-end" : "items-start")}>
         <div
           className={cn(
-            "relative rounded-2xl px-3 py-1.5 text-sm leading-relaxed shadow-sm",
+            "relative min-w-0 max-w-full rounded-2xl px-3 py-1.5 text-sm leading-relaxed shadow-sm",
             isMine
               ? "bg-sky-500 text-white dark:bg-sky-600"
               : "bg-muted text-foreground",

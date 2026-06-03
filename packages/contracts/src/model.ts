@@ -137,7 +137,7 @@ export const DEFAULT_GIT_TEXT_GENERATION_MODEL = "gpt-5.4-mini";
 
 export const DEFAULT_MODEL_BY_PROVIDER: Partial<Record<ProviderDriverKind, string>> = {
   [CODEX_DRIVER_KIND]: DEFAULT_MODEL,
-  [CLAUDE_DRIVER_KIND]: "claude-sonnet-4-6",
+  [CLAUDE_DRIVER_KIND]: "claude-opus-4-8",
   [CURSOR_DRIVER_KIND]: "auto",
   [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
 };
@@ -176,7 +176,9 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Partial<
     "gpt-5.3-spark": "gpt-5.3-codex-spark",
   },
   [CLAUDE_DRIVER_KIND]: {
-    opus: "claude-opus-4-7",
+    opus: "claude-opus-4-8",
+    "opus-4.8": "claude-opus-4-8",
+    "claude-opus-4.8": "claude-opus-4-8",
     "opus-4.7": "claude-opus-4-7",
     "claude-opus-4.7": "claude-opus-4-7",
     "opus-4.6": "claude-opus-4-6",
