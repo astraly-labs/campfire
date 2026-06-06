@@ -25,6 +25,39 @@ export const WS_RECONNECT_MAX_ATTEMPTS = WS_RECONNECT_MAX_RETRIES + 1;
  */
 export const WS_RECONNECT_STABILITY_THRESHOLD_MS = 30_000;
 
+/**
+ * Outages shorter than this never raise a toast — the reconnect happens fast
+ * enough that the user wouldn't notice the drop without a notification.
+ *
+ * The reconnect-success toast was firing for every drop, including the
+ * sub-second TCP blips a flaky residential/Tailscale link produces several
+ * times a minute. Each toast lingered for ~8s, so the user effectively saw
+ * uninterrupted "Reconnected to …" notifications even while productively
+ * working through the socket. We swallow those brief drops here; a real
+ * outage (>5 s without a connection) still surfaces normally so a
+ * persistent network issue stays visible.
+ */
+export const WS_BRIEF_OUTAGE_THRESHOLD_MS = 5_000;
+
+/**
+ * Compute whether the most recent reconnect should suppress the success
+ * toast. Returns `true` when the gap between `previousDisconnectedAt` and
+ * `connectedAt` is short enough to qualify as a brief blip (see
+ * {@link WS_BRIEF_OUTAGE_THRESHOLD_MS}). Pure helper so the policy is
+ * exercised in `WebSocketConnectionSurface.logic.test`.
+ */
+export function isBriefWsOutage(
+  previousDisconnectedAt: string | null,
+  connectedAt: string | null,
+): boolean {
+  if (!previousDisconnectedAt || !connectedAt) return false;
+  const disconnectMs = Date.parse(previousDisconnectedAt);
+  const connectMs = Date.parse(connectedAt);
+  if (Number.isNaN(disconnectMs) || Number.isNaN(connectMs)) return false;
+  const outageMs = connectMs - disconnectMs;
+  return outageMs >= 0 && outageMs < WS_BRIEF_OUTAGE_THRESHOLD_MS;
+}
+
 export interface WsConnectionStatus {
   readonly attemptCount: number;
   readonly closeCode: number | null;

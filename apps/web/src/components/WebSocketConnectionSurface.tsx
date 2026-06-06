@@ -4,6 +4,7 @@ import { type SlowRpcAckRequest, useSlowRpcAckRequests } from "../rpc/requestLat
 import {
   getWsConnectionStatus,
   getWsConnectionUiState,
+  isBriefWsOutage,
   setBrowserOnlineStatus,
   type WsConnectionStatus,
   type WsConnectionUiState,
@@ -340,27 +341,39 @@ export function WebSocketConnectionCoordinator() {
       (previousUiState === "offline" || previousUiState === "reconnecting") &&
       previousDisconnectedAt !== null
     ) {
-      const successToast = {
-        description: describeRecoveredToast(previousDisconnectedAt, status.connectedAt),
-        title: buildRecoveredTitle(status),
-        type: "success" as const,
-        timeout: 0,
-        data: {
-          dismissAfterVisibleMs: 8_000,
-          hideCopyButton: true,
-        },
-      };
-
-      if (toastIdRef.current) {
-        toastManager.update(toastIdRef.current, successToast);
+      // A flaky link can produce sub-second TCP blips many times a minute.
+      // Surfacing a "Reconnected to …" notification for each of those is
+      // pure noise — the user did not perceive any outage to begin with.
+      // Swallow the toast for brief drops while still surfacing genuine
+      // outages (see {@link isBriefWsOutage}).
+      if (isBriefWsOutage(previousDisconnectedAt, status.connectedAt)) {
+        if (toastIdRef.current) {
+          toastManager.close(toastIdRef.current);
+          toastIdRef.current = null;
+        }
       } else {
-        toastIdRef.current = toastManager.add(successToast);
-      }
+        const successToast = {
+          description: describeRecoveredToast(previousDisconnectedAt, status.connectedAt),
+          title: buildRecoveredTitle(status),
+          type: "success" as const,
+          timeout: 0,
+          data: {
+            dismissAfterVisibleMs: 8_000,
+            hideCopyButton: true,
+          },
+        };
 
-      toastResetTimerRef.current = window.setTimeout(() => {
-        toastIdRef.current = null;
-        toastResetTimerRef.current = null;
-      }, 8_250);
+        if (toastIdRef.current) {
+          toastManager.update(toastIdRef.current, successToast);
+        } else {
+          toastIdRef.current = toastManager.add(successToast);
+        }
+
+        toastResetTimerRef.current = window.setTimeout(() => {
+          toastIdRef.current = null;
+          toastResetTimerRef.current = null;
+        }, 8_250);
+      }
     }
 
     previousUiStateRef.current = uiState;

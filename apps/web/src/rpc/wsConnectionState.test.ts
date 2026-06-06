@@ -4,12 +4,14 @@ import {
   getWsConnectionStatus,
   getWsReconnectDelayMsForRetry,
   getWsConnectionUiState,
+  isBriefWsOutage,
   recordWsConnectionAttempt,
   recordWsConnectionClosed,
   recordWsConnectionErrored,
   recordWsConnectionOpened,
   resetWsConnectionStateForTests,
   setBrowserOnlineStatus,
+  WS_BRIEF_OUTAGE_THRESHOLD_MS,
   WS_RECONNECT_MAX_ATTEMPTS,
   WS_RECONNECT_STABILITY_THRESHOLD_MS,
 } from "./wsConnectionState";
@@ -139,6 +141,29 @@ describe("wsConnectionState", () => {
     // The second delay should be strictly larger than the first — proof that
     // the backoff is not collapsing back to 1 s on each transient open.
     expect(expectedSecondDelay ?? 0).toBeGreaterThan(expectedFirstDelay ?? 0);
+  });
+
+  it("flags sub-threshold outages as brief and suppresses the success toast", () => {
+    const t0 = "2026-04-03T20:30:00.000Z";
+    const t1s = "2026-04-03T20:30:01.000Z";
+    const t5s = "2026-04-03T20:30:05.000Z";
+    const t6s = "2026-04-03T20:30:06.000Z";
+
+    // 1 s drop → brief, swallowed
+    expect(isBriefWsOutage(t0, t1s)).toBe(true);
+    // Exactly at threshold → not brief (we'd rather surface than miss a real outage)
+    expect(isBriefWsOutage(t0, t5s)).toBe(false);
+    // > threshold → surface the toast
+    expect(isBriefWsOutage(t0, t6s)).toBe(false);
+
+    // Missing endpoints (no prior disconnect snapshot, or no connectedAt) keep
+    // the normal flow — only an explicit short outage flips the gate.
+    expect(isBriefWsOutage(null, t1s)).toBe(false);
+    expect(isBriefWsOutage(t0, null)).toBe(false);
+    // Clock skew producing a negative interval shouldn't be classified brief.
+    expect(isBriefWsOutage(t6s, t0)).toBe(false);
+    // The constant itself should sit at the documented 5 s.
+    expect(WS_BRIEF_OUTAGE_THRESHOLD_MS).toBe(5_000);
   });
 
   it("resets the backoff after the connection has been stable for the threshold", () => {
