@@ -43,6 +43,23 @@ interface RequestOptions {
 const DEFAULT_SUBSCRIPTION_RETRY_DELAY_MS = Duration.millis(250);
 const NOOP: () => void = () => undefined;
 
+/**
+ * Maximum number of attempts for a unary RPC request before we propagate the
+ * transport error to the caller. Picked to be small enough that a permanently
+ * broken link surfaces quickly, large enough that a flaky residential link's
+ * sub-second TCP blips are absorbed without the caller noticing.
+ */
+const REQUEST_MAX_ATTEMPTS = 4;
+
+/**
+ * Delay between retried request attempts when the previous one failed with a
+ * transport-class error. The first retry waits this long; each subsequent
+ * retry doubles the wait, capped at a sensible ceiling so a multi-second
+ * outage still recovers within a typical user-perceptible "loading" window.
+ */
+const REQUEST_RETRY_INITIAL_DELAY_MS = 250;
+const REQUEST_RETRY_MAX_DELAY_MS = 2_000;
+
 interface TransportSession {
   readonly clientPromise: Promise<WsRpcProtocolClient>;
   readonly clientScope: Scope.Closeable;
@@ -92,9 +109,54 @@ export class WsTransport {
       throw new Error("Transport disposed");
     }
 
-    const session = this.session;
-    const client = await session.clientPromise;
-    return await session.runtime.runPromise(Effect.suspend(() => execute(client)));
+    // Mirrors the retry loop in `subscribe`: a transport-class failure (the
+    // WS dropped mid-request, ping timed out, the socket was open then
+    // immediately closed) is treated as a transient blip and re-issued
+    // against whatever session is current, while a domain-level failure
+    // (server-side validation, "thread not found", …) is surfaced
+    // immediately so callers do not see slow, magical recoveries from
+    // genuine errors. Domain errors are detected via the same
+    // `isTransportConnectionErrorMessage` classifier the subscribe loop uses,
+    // which keeps the two paths in sync.
+    let lastError: unknown;
+    for (let attemptIndex = 0; attemptIndex < REQUEST_MAX_ATTEMPTS; attemptIndex += 1) {
+      if (this.disposed) {
+        throw new Error("Transport disposed");
+      }
+      const session = this.session;
+      try {
+        const client = await session.clientPromise;
+        return await session.runtime.runPromise(Effect.suspend(() => execute(client)));
+      } catch (error) {
+        lastError = error;
+        if (this.disposed) throw error;
+        const formattedError = formatErrorMessage(error);
+        const isTransportError = isTransportConnectionErrorMessage(formattedError);
+        const sessionWasRolled = session !== this.session;
+        // Domain errors propagate immediately. A session swap (e.g. an
+        // explicit `reconnect()` call ran between dispatch and the failure)
+        // is treated as transport-class even if the underlying error text
+        // does not match the classifier, since the request never had a
+        // chance to land on the new session.
+        if (!isTransportError && !sessionWasRolled) {
+          throw error;
+        }
+        if (attemptIndex === REQUEST_MAX_ATTEMPTS - 1) {
+          break;
+        }
+        const delayMs = Math.min(
+          REQUEST_RETRY_INITIAL_DELAY_MS * 2 ** attemptIndex,
+          REQUEST_RETRY_MAX_DELAY_MS,
+        );
+        realtimeLog("transport", "request.retry-after-disconnect", {
+          attemptIndex,
+          delayMs,
+          error: formattedError,
+        });
+        await sleep(delayMs);
+      }
+    }
+    throw lastError;
   }
 
   async requestStream<TValue>(
