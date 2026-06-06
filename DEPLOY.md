@@ -75,6 +75,32 @@ Example deploying a feature branch for a smoke test:
 CAMPFIRE_BRANCH=campfire/my-feature bun run deploy:mac-mini
 ```
 
+## Nightly auto-restart (LaunchAgent)
+
+The Effect-runtime backend accumulates RSS over a few days of activity until `fork()` of git subprocesses becomes slow enough to miss WS heartbeats. Symptom for the team: continuous "Reconnecting…" deco/reco even on a healthy network. Until the underlying leak is properly traced, a nightly restart resets the heap and keeps the team experience steady.
+
+The setup lives entirely on the mac mini:
+
+- `~/restart-campfire.sh` — mirrors the kill / maintenance / restart steps from `scripts/deploy-mac-mini.sh` (a copy is committed at [scripts/restart-campfire.sh](./scripts/restart-campfire.sh) for re-bootstrapping).
+- `~/Library/LaunchAgents/com.t3code.restart.plist` — schedules the script daily at **04:00 local time** via `StartCalendarInterval`. `launchd` is preferred over `cron` because cron is no longer wired into `launchd` on recent macOS versions, so a `crontab` entry would silently never fire.
+
+Reinstall after wiping the mac mini (or in case the LaunchAgent gets unloaded):
+
+```bash
+ssh macmini 'install -m 755 ~/agent-host/repos/campfire/scripts/restart-campfire.sh ~/restart-campfire.sh'
+ssh macmini 'launchctl unload ~/Library/LaunchAgents/com.t3code.restart.plist 2>/dev/null; launchctl load -w ~/Library/LaunchAgents/com.t3code.restart.plist'
+ssh macmini 'launchctl list | grep t3code'   # confirm loaded
+```
+
+Verify a previous run after the fact:
+
+```bash
+ssh macmini 'tail -30 /tmp/campfire-cron.log'  # the script appends each run
+ssh macmini 'launchctl print gui/$(id -u jeffbezos)/com.t3code.restart | head'  # next scheduled fire
+```
+
+Downtime per restart is ~10–20 s while WS clients reconnect. Active provider sessions (Claude/Codex/Cursor responding) get interrupted at 04:00 just like a manual `bun run deploy:mac-mini` — the assumption is the team is not actively pairing at that hour.
+
 ## Runtime secrets — `~/.campfire.env`
 
 Secrets that the dev server needs at runtime (e.g. `VITE_GIPHY_API_KEY` for the GIF picker) live in `~/.campfire.env` **on the mac mini** — never in the repo. The deploy script sources this file (if present) before starting the dev server, so anything `KEY=value` declared there is exported into the env that vite/bun inherits.
