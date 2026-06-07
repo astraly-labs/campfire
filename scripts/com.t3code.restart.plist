@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.t3code.restart</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/jeffbezos/restart-campfire.sh</string>
+  </array>
+
+  <!-- Every day at 04:00 local time. launchd is reliable across sleep/wake
+       (it catches up missed runs once the mac is awake again) and does not
+       have the Full Disk Access quirks that disable cron on modern macOS. -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>4</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <false/>
+
+  <!-- CRITICAL: without this, launchd sends SIGTERM/SIGINT to every child
+       in the job's process group when the script exits. The script ends as
+       soon as it confirms the backend is responding, which is moments
+       AFTER it backgrounded `bun run dev` — so the freshly spawned backend
+       gets killed right after startup (exit 130 = SIGINT). AbandonProcessGroup
+       tells launchd to leave detached children alone. -->
+  <key>AbandonProcessGroup</key>
+  <true/>
+
+  <!-- Surface stdout/stderr to the cron log the script itself appends to,
+       so a manual `tail` reveals any plist-level launchd warnings too. -->
+  <key>StandardOutPath</key>
+  <string>/tmp/campfire-cron.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/campfire-cron.log</string>
+</dict>
+</plist>

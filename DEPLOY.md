@@ -79,15 +79,21 @@ CAMPFIRE_BRANCH=campfire/my-feature bun run deploy:mac-mini
 
 The Effect-runtime backend accumulates RSS over a few days of activity until `fork()` of git subprocesses becomes slow enough to miss WS heartbeats. Symptom for the team: continuous "Reconnecting…" deco/reco even on a healthy network. Until the underlying leak is properly traced, a nightly restart resets the heap and keeps the team experience steady.
 
-The setup lives entirely on the mac mini:
+The setup lives entirely on the mac mini, with canonical copies committed under [scripts/](./scripts/) for re-bootstrap:
 
-- `~/restart-campfire.sh` — mirrors the kill / maintenance / restart steps from `scripts/deploy-mac-mini.sh` (a copy is committed at [scripts/restart-campfire.sh](./scripts/restart-campfire.sh) for re-bootstrapping).
-- `~/Library/LaunchAgents/com.t3code.restart.plist` — schedules the script daily at **04:00 local time** via `StartCalendarInterval`. `launchd` is preferred over `cron` because cron is no longer wired into `launchd` on recent macOS versions, so a `crontab` entry would silently never fire.
+- `~/restart-campfire.sh` ↔ [scripts/restart-campfire.sh](./scripts/restart-campfire.sh) — mirrors the kill / maintenance / restart steps from `scripts/deploy-mac-mini.sh`.
+- `~/Library/LaunchAgents/com.t3code.restart.plist` ↔ [scripts/com.t3code.restart.plist](./scripts/com.t3code.restart.plist) — schedules the script daily at **04:00 local time** via `StartCalendarInterval`. `launchd` is preferred over `cron` because cron is no longer wired into `launchd` on recent macOS versions, so a `crontab` entry would silently never fire.
+
+Two non-obvious settings in the plist that are easy to drop on re-bootstrap and produce subtle regressions:
+
+- `AbandonProcessGroup = true` — **load-bearing**. Without it, launchd terminates every child in the job's process group when the restart script exits, which happens moments after the script backgrounds `bun run dev`. The freshly spawned backend then receives SIGINT and dies with exit 130, leaving the mac mini 502ing until someone notices.
+- `RunAtLoad = false` — keep this so reloading the plist (during development) does not unintentionally kick everyone off mid-session.
 
 Reinstall after wiping the mac mini (or in case the LaunchAgent gets unloaded):
 
 ```bash
 ssh macmini 'install -m 755 ~/agent-host/repos/campfire/scripts/restart-campfire.sh ~/restart-campfire.sh'
+ssh macmini 'install -m 644 ~/agent-host/repos/campfire/scripts/com.t3code.restart.plist ~/Library/LaunchAgents/com.t3code.restart.plist'
 ssh macmini 'launchctl unload ~/Library/LaunchAgents/com.t3code.restart.plist 2>/dev/null; launchctl load -w ~/Library/LaunchAgents/com.t3code.restart.plist'
 ssh macmini 'launchctl list | grep t3code'   # confirm loaded
 ```
