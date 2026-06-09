@@ -40,6 +40,22 @@ export const WS_RECONNECT_STABILITY_THRESHOLD_MS = 30_000;
 export const WS_BRIEF_OUTAGE_THRESHOLD_MS = 5_000;
 
 /**
+ * The "Reconnecting…" loading toast is deferred this long after the
+ * disconnect — if the link recovers before the delay elapses, the toast
+ * is never created in the first place. Two reasons:
+ *
+ * 1. UX. Sub-second drops are invisible to the user, so a momentary toast
+ *    flash is pure noise. Deferring removes that flash.
+ * 2. base-ui's `ToastTitle` `useIsoLayoutEffect` (1.4.1) cycles its
+ *    `setTitleId(id)` on every re-render of the toast root because the
+ *    setter from context isn't memoized. Mounting + unmounting toasts in
+ *    rapid succession crashes a flaky session with a React "Maximum update
+ *    depth exceeded" error in `ToastTitle`. Never mounting the toast for
+ *    brief drops dodges the trigger without depending on a library fix.
+ */
+export const WS_RECONNECTING_TOAST_DELAY_MS = 2_000;
+
+/**
  * Compute whether the most recent reconnect should suppress the success
  * toast. Returns `true` when the gap between `previousDisconnectedAt` and
  * `connectedAt` is short enough to qualify as a brief blip (see

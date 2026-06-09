@@ -10,6 +10,7 @@ import {
   type WsConnectionUiState,
   useWsConnectionStatus,
   WS_RECONNECT_MAX_ATTEMPTS,
+  WS_RECONNECTING_TOAST_DELAY_MS,
 } from "../rpc/wsConnectionState";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { getPrimaryEnvironmentConnection } from "../environments/runtime";
@@ -236,6 +237,26 @@ export function WebSocketConnectionCoordinator() {
     };
   }, [status.nextRetryAt, status.reconnectPhase]);
 
+  // Wake the main toast effect exactly at the reconnecting-toast delay
+  // threshold so an outage that spends those first seconds in the
+  // `attempting` phase (where the 1 s `nowMs` interval is idle) still
+  // mounts the toast once the threshold passes. The timer is cleared on
+  // any disconnectedAt change, so a recovery within the delay never wakes
+  // the effect — keeping brief drops fully silent.
+  useEffect(() => {
+    if (status.disconnectedAt === null) return undefined;
+    const disconnectAtMs = Date.parse(status.disconnectedAt);
+    if (Number.isNaN(disconnectAtMs)) return undefined;
+    const remainingMs = disconnectAtMs + WS_RECONNECTING_TOAST_DELAY_MS - Date.now();
+    if (remainingMs <= 0) return undefined;
+    const timer = window.setTimeout(() => {
+      setNowMs(Date.now());
+    }, remainingMs);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [status.disconnectedAt]);
+
   useEffect(() => {
     if (
       status.reconnectPhase !== "waiting" ||
@@ -272,7 +293,21 @@ export function WebSocketConnectionCoordinator() {
     const uiState = getWsConnectionUiState(status);
     const previousUiState = previousUiStateRef.current;
     const previousDisconnectedAt = previousDisconnectedAtRef.current;
-    const shouldShowReconnectToast = status.hasConnected && uiState === "reconnecting";
+    // Defer the "Reconnecting…" toast until the link has been down for at
+    // least WS_RECONNECTING_TOAST_DELAY_MS. A sub-second drop reconnects
+    // before this elapses, so no toast is ever mounted — which both kills
+    // the visible flash *and* sidesteps a base-ui ToastTitle setState-loop
+    // crash triggered by rapid mount/unmount cycles (see the constant docs
+    // for details).
+    const disconnectAtMs = status.disconnectedAt ? Date.parse(status.disconnectedAt) : null;
+    const elapsedSinceDisconnectMs =
+      disconnectAtMs !== null && !Number.isNaN(disconnectAtMs)
+        ? Math.max(0, nowMs - disconnectAtMs)
+        : 0;
+    const shouldShowReconnectToast =
+      status.hasConnected &&
+      uiState === "reconnecting" &&
+      elapsedSinceDisconnectMs >= WS_RECONNECTING_TOAST_DELAY_MS;
     const shouldShowOfflineToast = uiState === "offline" && status.disconnectedAt !== null;
     const shouldShowExhaustedToast = status.hasConnected && status.reconnectPhase === "exhausted";
 
