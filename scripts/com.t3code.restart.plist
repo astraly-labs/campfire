@@ -11,16 +11,42 @@
     <string>/Users/jeffbezos/restart-campfire.sh</string>
   </array>
 
-  <!-- Every day at 04:00 local time. launchd is reliable across sleep/wake
-       (it catches up missed runs once the mac is awake again) and does not
-       have the Full Disk Access quirks that disable cron on modern macOS. -->
+  <!-- 4x per day at 04:00 / 10:00 / 16:00 / 22:00 local time.
+       The backend has been observed to slide into a hard-to-use state within
+       ~13 h of uninterrupted activity (mostly load and event-loop pressure
+       from per-worktree VCS polling on a now ~100-worktree team mac mini),
+       so a nightly restart is no longer enough — 6 h between restarts keeps
+       the heap and fiber counts in their healthy band. Each restart is a
+       ~30 s downtime; the four windows are picked to avoid peak focus hours
+       (the 16:00 slot still hurts mid-day but is the lesser evil vs. running
+       degraded until 22:00). -->
   <key>StartCalendarInterval</key>
-  <dict>
-    <key>Hour</key>
-    <integer>4</integer>
-    <key>Minute</key>
-    <integer>0</integer>
-  </dict>
+  <array>
+    <dict>
+      <key>Hour</key>
+      <integer>4</integer>
+      <key>Minute</key>
+      <integer>0</integer>
+    </dict>
+    <dict>
+      <key>Hour</key>
+      <integer>10</integer>
+      <key>Minute</key>
+      <integer>0</integer>
+    </dict>
+    <dict>
+      <key>Hour</key>
+      <integer>16</integer>
+      <key>Minute</key>
+      <integer>0</integer>
+    </dict>
+    <dict>
+      <key>Hour</key>
+      <integer>22</integer>
+      <key>Minute</key>
+      <integer>0</integer>
+    </dict>
+  </array>
 
   <key>RunAtLoad</key>
   <false/>
@@ -34,8 +60,6 @@
   <key>AbandonProcessGroup</key>
   <true/>
 
-  <!-- Surface stdout/stderr to the cron log the script itself appends to,
-       so a manual `tail` reveals any plist-level launchd warnings too. -->
   <key>StandardOutPath</key>
   <string>/tmp/campfire-cron.log</string>
   <key>StandardErrorPath</key>

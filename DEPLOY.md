@@ -75,9 +75,9 @@ Example deploying a feature branch for a smoke test:
 CAMPFIRE_BRANCH=campfire/my-feature bun run deploy:mac-mini
 ```
 
-## Nightly auto-restart (LaunchAgent)
+## Auto-restart every 6 hours (LaunchAgent)
 
-The Effect-runtime backend accumulates RSS over a few days of activity until `fork()` of git subprocesses becomes slow enough to miss WS heartbeats. Symptom for the team: continuous "Reconnecting…" deco/reco even on a healthy network. Until the underlying leak is properly traced, a nightly restart resets the heap and keeps the team experience steady.
+The Effect-runtime backend accumulates RSS and event-loop pressure over a working day until `fork()` of git subprocesses becomes slow enough to miss WS heartbeats. Symptom for the team: continuous "Reconnecting…" deco/reco even on a healthy network, slow chat actions, and eventually an "unusable" feel. Until the underlying leak is properly traced, the LaunchAgent restarts the backend **four times a day** (04:00 / 10:00 / 16:00 / 22:00) to keep the team experience steady. We started at one nightly restart but the backend was reaching the unusable point in ~13 hours on the now ~100-worktree team mac mini, so 6-hour windows are required.
 
 The setup lives entirely on the mac mini, with canonical copies committed under [scripts/](./scripts/) for re-bootstrap:
 
