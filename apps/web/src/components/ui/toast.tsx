@@ -179,14 +179,30 @@ function ToastDescriptionAndExpandable({
   );
   const [open, setOpen] = useState(false);
 
+  // Render description as a plain `<p>` rather than base-ui's
+  // <Toast.Description>. The library version (1.4.1) has a useIsoLayoutEffect
+  // that calls setDescriptionId on every render of the toast root because the
+  // setter is captured in a useMemo whose deps include the very state the
+  // effect mutates — under a flaky link that adds + closes toasts in rapid
+  // succession this loops and crashes React with "Maximum update depth
+  // exceeded" inside <CatchBoundaryImpl>, which knocks the conversation
+  // detail view (and every other navigable target) out for the rest of the
+  // tab. We give up the slight aria-labelledby wiring base-ui buys for us
+  // in exchange for not crashing the user's session.
   if (!expandableContent) {
-    return <Toast.Description className={descriptionClassName} data-slot="toast-description" />;
+    return (
+      <p className={descriptionClassName} data-slot="toast-description">
+        {toastDescription as ReactNode}
+      </p>
+    );
   }
 
   if (!descriptionTrigger) {
     return (
       <>
-        <Toast.Description className={descriptionClassName} data-slot="toast-description" />
+        <p className={descriptionClassName} data-slot="toast-description">
+          {toastDescription as ReactNode}
+        </p>
         <ToastExpandableSection labels={labels}>{expandableContent}</ToastExpandableSection>
       </>
     );
@@ -219,14 +235,16 @@ function ToastDescriptionAndExpandable({
         title={open ? collapseLabel : expandLabel}
       >
         <div className="min-w-0 flex-1">
-          <Toast.Description
+          <p
             className={cn(
               "min-w-0 select-none wrap-break-word text-muted-foreground",
               errorDescriptionClampClass(toastType, toastDescription),
               "underline-offset-2 decoration-muted-foreground/60 group-hover:underline",
             )}
             data-slot="toast-description"
-          />
+          >
+            {toastDescription as ReactNode}
+          </p>
         </div>
         {open ? (
           <ChevronUpIcon
@@ -295,6 +313,7 @@ interface ToastBodyContentProps extends ToastBodyDescriptor {
   readonly actionProps: { readonly children?: ReactNode } | undefined;
   readonly toastData: ThreadToastData | undefined;
   readonly toastDescription: unknown;
+  readonly toastTitle: unknown;
   readonly toastType: unknown;
 }
 
@@ -308,6 +327,7 @@ function ToastBodyContent({
   hasTrailingControls,
   toastData,
   toastDescription,
+  toastTitle,
   toastType,
 }: ToastBodyContentProps) {
   const secondaryActionProps = toastData?.secondaryActionProps;
@@ -339,7 +359,11 @@ function ToastBodyContent({
             stackedActionLayout && "pr-5",
           )}
         >
-          <Toast.Title className="min-w-0 wrap-break-word font-medium" data-slot="toast-title" />
+          {Boolean(toastTitle) && (
+            <h2 className="min-w-0 wrap-break-word font-medium" data-slot="toast-title">
+              {toastTitle as ReactNode}
+            </h2>
+          )}
           <ToastDescriptionAndExpandable
             toastData={toastData}
             toastDescription={toastDescription}
@@ -654,6 +678,7 @@ function Toasts({ position = "top-right" }: { position: ToastPosition }) {
                   actionProps={toast.actionProps}
                   toastData={toast.data}
                   toastDescription={toast.description}
+                  toastTitle={toast.title}
                   toastType={toast.type}
                 />
               </Toast.Content>
@@ -713,7 +738,9 @@ function AnchoredToasts() {
                 >
                   {tooltipStyle ? (
                     <Toast.Content className="pointer-events-auto px-2 py-1">
-                      <Toast.Title data-slot="toast-title" />
+                      {Boolean(toast.title) && (
+                        <h2 data-slot="toast-title">{toast.title as ReactNode}</h2>
+                      )}
                     </Toast.Content>
                   ) : (
                     <>
@@ -751,6 +778,7 @@ function AnchoredToasts() {
                           actionProps={toast.actionProps}
                           toastData={toast.data}
                           toastDescription={toast.description}
+                          toastTitle={toast.title}
                           toastType={toast.type}
                         />
                       </Toast.Content>
