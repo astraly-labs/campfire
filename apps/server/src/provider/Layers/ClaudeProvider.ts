@@ -50,7 +50,40 @@ const CLAUDE_PRESENTATION = {
 } as const;
 const MINIMUM_CLAUDE_OPUS_4_7_VERSION = "2.1.111";
 const MINIMUM_CLAUDE_OPUS_4_8_VERSION = "2.1.161";
+// Verified working on 2.1.170; older floors are unconfirmed for Fable, so we
+// gate conservatively rather than advertise a model the CLI would reject.
+const MINIMUM_CLAUDE_FABLE_5_VERSION = "2.1.170";
 const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
+  {
+    slug: "claude-fable-5",
+    name: "Claude Fable 5",
+    isCustom: false,
+    capabilities: createModelCapabilities({
+      optionDescriptors: [
+        buildSelectOptionDescriptor({
+          id: "effort",
+          label: "Reasoning",
+          options: [
+            { value: "low", label: "Low" },
+            { value: "medium", label: "Medium" },
+            { value: "high", label: "High" },
+            { value: "xhigh", label: "Extra High", isDefault: true },
+            { value: "max", label: "Max" },
+            { value: "ultrathink", label: "Ultrathink" },
+          ],
+          promptInjectedValues: ["ultrathink"],
+        }),
+        buildSelectOptionDescriptor({
+          id: "contextWindow",
+          label: "Context Window",
+          options: [
+            { value: "200k", label: "200k", isDefault: true },
+            { value: "1m", label: "1M" },
+          ],
+        }),
+      ],
+    }),
+  },
   {
     slug: "claude-opus-4-8",
     name: "Claude Opus 4.8",
@@ -218,10 +251,15 @@ function supportsClaudeOpus48(version: string | null | undefined): boolean {
   return version ? compareSemverVersions(version, MINIMUM_CLAUDE_OPUS_4_8_VERSION) >= 0 : false;
 }
 
+function supportsClaudeFable5(version: string | null | undefined): boolean {
+  return version ? compareSemverVersions(version, MINIMUM_CLAUDE_FABLE_5_VERSION) >= 0 : false;
+}
+
 function getBuiltInClaudeModelsForVersion(
   version: string | null | undefined,
 ): ReadonlyArray<ServerProviderModel> {
   return BUILT_IN_MODELS.filter((model) => {
+    if (model.slug === "claude-fable-5") return supportsClaudeFable5(version);
     if (model.slug === "claude-opus-4-8") return supportsClaudeOpus48(version);
     if (model.slug === "claude-opus-4-7") return supportsClaudeOpus47(version);
     return true;
@@ -669,7 +707,13 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
           "Claude Opus 4.8",
           MINIMUM_CLAUDE_OPUS_4_8_VERSION,
         )
-      : undefined;
+      : !supportsClaudeFable5(parsedVersion)
+        ? formatClaudeOpusUpgradeMessage(
+            parsedVersion,
+            "Claude Fable 5",
+            MINIMUM_CLAUDE_FABLE_5_VERSION,
+          )
+        : undefined;
 
   const capabilities = resolveCapabilities
     ? yield* resolveCapabilities(claudeSettings).pipe(Effect.orElseSucceed(() => undefined))

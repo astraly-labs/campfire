@@ -1484,7 +1484,7 @@ const make = Effect.gen(function* () {
           // and flush at most once per ASSISTANT_STREAM_FLUSH_INTERVAL_MS.
           // Anything still buffered at a turn boundary is drained by the
           // existing pause/finalize flushes, which read the same buffer.
-          const nowMs = Date.now();
+          const nowMs = yield* Clock.currentTimeMillis;
           const lastFlushAtMs = streamingAssistantLastFlushAtByMessageId.get(assistantMessageId);
           if (lastFlushAtMs === undefined) {
             streamingAssistantLastFlushAtByMessageId.set(assistantMessageId, nowMs);
