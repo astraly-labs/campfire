@@ -120,6 +120,14 @@ const HttpServerLive = Layer.unwrap(
       return BunHttpServer.layer({
         port: config.port,
         ...(config.host ? { hostname: config.host } : {}),
+        // Negotiate permessage-deflate with browsers (end-to-end through
+        // tailscale serve). The RPC traffic is JSON — thread snapshots and
+        // streamed deltas deflate 5-10x, and remote teammates are
+        // bandwidth-bound, not CPU-bound. Requires the platform-bun patch
+        // that merges caller websocket options into Bun.serve.
+        websocket: {
+          perMessageDeflate: true,
+        },
       });
     } else {
       const [NodeHttpServer, NodeHttp] = yield* Effect.all([

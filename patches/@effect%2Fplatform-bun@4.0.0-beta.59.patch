@@ -1,0 +1,35 @@
+diff --git a/node_modules/@effect/platform-bun/.bun-tag-dd3a4f3f36a22dae b/.bun-tag-dd3a4f3f36a22dae
+new file mode 100644
+index 0000000000000000000000000000000000000000..e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
+diff --git a/dist/BunHttpServer.d.ts b/dist/BunHttpServer.d.ts
+index 33565aaa3ac82b671ba3ea68094877f7f27c312c..5437674ffc9f4b4ec416db0b65dd6306aa5f3a4b 100644
+--- a/dist/BunHttpServer.d.ts
++++ b/dist/BunHttpServer.d.ts
+@@ -25,6 +25,12 @@ import * as BunServices from "./BunServices.ts";
+  */
+ export type ServeOptions<R extends string> = (Bun.Serve.UnixServeOptions<WebSocketContext> | Bun.Serve.HostnamePortServeOptions<WebSocketContext>) & {
+     readonly routes?: Bun.Serve.Routes<WebSocketContext, R>;
++    /**
++     * Campfire patch: tuning options merged into the Bun.serve websocket
++     * handler (perMessageDeflate, idleTimeout, maxPayloadLength, ...).
++     * Lifecycle callbacks (open/message/close) remain platform-managed.
++     */
++    readonly websocket?: Omit<Bun.WebSocketHandler<WebSocketContext>, "open" | "message" | "close" | "drain" | "ping" | "pong">;
+ };
+ /**
+  * @since 1.0.0
+diff --git a/dist/BunHttpServer.js b/dist/BunHttpServer.js
+index 9ee0685b648829aa40e2cc257f54b9f23a127e2b..559066fbe17f1183d7dc41b99360b431722a03e8 100644
+--- a/dist/BunHttpServer.js
++++ b/dist/BunHttpServer.js
+@@ -43,6 +43,10 @@ export const make = /*#__PURE__*/Effect.fnUntraced(function* (options) {
+     ...options,
+     fetch: handlerStack[0],
+     websocket: {
++      // Campfire patch: merge caller-provided websocket tuning options
++      // (perMessageDeflate, idleTimeout, maxPayloadLength, ...) instead of
++      // discarding them. The lifecycle handlers below stay authoritative.
++      ...options.websocket,
+       open(ws) {
+         Deferred.doneUnsafe(ws.data.deferred, Exit.succeed(ws));
+       },

@@ -36,6 +36,15 @@ import {
   browserApiCorsAllowedMethods,
   browserApiCorsHeaders,
 } from "./httpCors.ts";
+import {
+  clientAcceptsGzip,
+  etagMatches,
+  getOrCompressGzip,
+  isCompressibleContentType,
+  makeStaticEtag,
+  resolveStaticCacheControl,
+  STATIC_COMPRESSION_MIN_BYTES,
+} from "./staticAssets.ts";
 
 const PROJECT_FAVICON_CACHE_CONTROL = "public, max-age=3600";
 const FALLBACK_PROJECT_FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="#6b728080" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-fallback="project-favicon"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8l-2-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2Z"/></svg>`;
@@ -475,20 +484,68 @@ export const staticAndDevRouteLayer = HttpRouter.add(
       .stat(filePath)
       .pipe(Effect.catch(() => Effect.succeed(null)));
     if (!fileInfo || fileInfo.type !== "File") {
+      // SPA fallback: unknown paths serve the app shell so client-side
+      // routes deep-link correctly.
       const indexPath = path.resolve(staticRoot, "index.html");
-      const indexData = yield* fileSystem
-        .readFile(indexPath)
+      const indexInfo = yield* fileSystem
+        .stat(indexPath)
         .pipe(Effect.catch(() => Effect.succeed(null)));
-      if (!indexData) {
+      if (!indexInfo || indexInfo.type !== "File") {
         return HttpServerResponse.text("Not Found", { status: 404 });
       }
-      return HttpServerResponse.uint8Array(indexData, {
-        status: 200,
+      return yield* serveStaticFileWithCaching({
+        cacheControl: "no-cache",
         contentType: "text/html; charset=utf-8",
+        filePath: indexPath,
+        fileInfo: indexInfo,
+        fileSystem,
+        request,
       });
     }
 
-    const contentType = Mime.getType(filePath) ?? "application/octet-stream";
+    return yield* serveStaticFileWithCaching({
+      cacheControl: resolveStaticCacheControl(staticRelativePath),
+      contentType: Mime.getType(filePath) ?? "application/octet-stream",
+      filePath,
+      fileInfo,
+      fileSystem,
+      request,
+    });
+  }),
+);
+
+/**
+ * Serve one static file with the slow-link niceties: weak ETag revalidation
+ * (a reload costs a 304 instead of a re-download), immutable caching for
+ * hashed assets, and cached gzip for compressible payloads when the client
+ * advertises support. Remote teammates load this UI over Tailscale from
+ * far away — bytes on the wire dominate everything else here.
+ */
+function serveStaticFileWithCaching(options: {
+  readonly cacheControl: string;
+  readonly contentType: string;
+  readonly filePath: string;
+  readonly fileInfo: FileSystem.File.Info;
+  readonly fileSystem: FileSystem.FileSystem;
+  readonly request: HttpServerRequest.HttpServerRequest;
+}) {
+  return Effect.gen(function* () {
+    const { cacheControl, contentType, filePath, fileInfo, fileSystem, request } = options;
+    const mtimeMs = Option.match(fileInfo.mtime, {
+      onNone: () => 0,
+      onSome: (mtime) => mtime.getTime(),
+    });
+    const etag = makeStaticEtag(fileInfo.size, mtimeMs);
+    const baseHeaders = {
+      "Cache-Control": cacheControl,
+      ETag: etag,
+      Vary: "Accept-Encoding",
+    };
+
+    if (etagMatches(request.headers["if-none-match"], etag)) {
+      return HttpServerResponse.empty({ status: 304, headers: baseHeaders });
+    }
+
     const data = yield* fileSystem
       .readFile(filePath)
       .pipe(Effect.catch(() => Effect.succeed(null)));
@@ -496,9 +553,26 @@ export const staticAndDevRouteLayer = HttpRouter.add(
       return HttpServerResponse.text("Internal Server Error", { status: 500 });
     }
 
-    return HttpServerResponse.uint8Array(data, {
+    const shouldGzip =
+      data.byteLength >= STATIC_COMPRESSION_MIN_BYTES &&
+      isCompressibleContentType(contentType) &&
+      clientAcceptsGzip(request.headers["accept-encoding"]);
+    if (!shouldGzip) {
+      return HttpServerResponse.uint8Array(data, {
+        status: 200,
+        contentType,
+        headers: baseHeaders,
+      });
+    }
+
+    const compressed = getOrCompressGzip(`${filePath}:${fileInfo.size}:${mtimeMs}`, data);
+    return HttpServerResponse.uint8Array(compressed, {
       status: 200,
       contentType,
+      headers: {
+        ...baseHeaders,
+        "Content-Encoding": "gzip",
+      },
     });
-  }),
-);
+  });
+}
