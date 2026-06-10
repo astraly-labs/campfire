@@ -9,7 +9,6 @@ import {
   type WsConnectionStatus,
   type WsConnectionUiState,
   useWsConnectionStatus,
-  WS_RECONNECT_MAX_ATTEMPTS,
   WS_RECONNECTING_TOAST_DELAY_MS,
 } from "../rpc/wsConnectionState";
 import { stackedThreadToast, toastManager } from "./ui/toast";
@@ -44,15 +43,7 @@ function describeOfflineToast(): string {
 }
 
 function formatReconnectAttemptLabel(status: WsConnectionStatus): string {
-  const reconnectAttempt = Math.max(
-    1,
-    Math.min(status.reconnectAttemptCount, WS_RECONNECT_MAX_ATTEMPTS),
-  );
-  return `Attempt ${reconnectAttempt}/${status.reconnectMaxAttempts}`;
-}
-
-function describeExhaustedToast(): string {
-  return "Retries exhausted trying to reconnect";
+  return `Attempt ${Math.max(1, status.reconnectAttemptCount)}`;
 }
 
 function getConnectionDisplayName(status: WsConnectionStatus): string {
@@ -120,19 +111,10 @@ export function shouldAutoReconnect(
   const uiState = getWsConnectionUiState(status);
 
   if (trigger === "online") {
-    return (
-      uiState === "offline" ||
-      uiState === "reconnecting" ||
-      uiState === "error" ||
-      status.reconnectPhase === "exhausted"
-    );
+    return uiState === "offline" || uiState === "reconnecting" || uiState === "error";
   }
 
-  return (
-    status.online &&
-    status.hasConnected &&
-    (uiState === "reconnecting" || status.reconnectPhase === "exhausted")
-  );
+  return status.online && status.hasConnected && uiState === "reconnecting";
 }
 
 export function shouldRestartStalledReconnect(
@@ -210,15 +192,26 @@ export function WebSocketConnectionCoordinator() {
     const handleFocus = () => {
       triggerAutoReconnect("focus");
     };
+    // Mobile browsers background tabs aggressively and suspend their timers,
+    // so a backgrounded tab can miss its scheduled retry entirely. `focus`
+    // is not reliably fired when a tab is re-shown on iOS Safari / Android
+    // Chrome — `visibilitychange` is the dependable signal there.
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        triggerAutoReconnect("focus");
+      }
+    };
 
     syncBrowserOnlineStatus();
     window.addEventListener("online", handleOnline);
     window.addEventListener("offline", syncBrowserOnlineStatus);
     window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
     return () => {
       window.removeEventListener("online", handleOnline);
       window.removeEventListener("offline", syncBrowserOnlineStatus);
       window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, []);
 
@@ -309,17 +302,16 @@ export function WebSocketConnectionCoordinator() {
       uiState === "reconnecting" &&
       elapsedSinceDisconnectMs >= WS_RECONNECTING_TOAST_DELAY_MS;
     const shouldShowOfflineToast = uiState === "offline" && status.disconnectedAt !== null;
-    const shouldShowExhaustedToast = status.hasConnected && status.reconnectPhase === "exhausted";
 
     if (
       toastResetTimerRef.current !== null &&
-      (shouldShowReconnectToast || shouldShowOfflineToast || shouldShowExhaustedToast)
+      (shouldShowReconnectToast || shouldShowOfflineToast)
     ) {
       window.clearTimeout(toastResetTimerRef.current);
       toastResetTimerRef.current = null;
     }
 
-    if (shouldShowReconnectToast || shouldShowOfflineToast || shouldShowExhaustedToast) {
+    if (shouldShowReconnectToast || shouldShowOfflineToast) {
       const toastPayload = shouldShowOfflineToast
         ? stackedThreadToast({
             data: {
@@ -330,36 +322,22 @@ export function WebSocketConnectionCoordinator() {
             title: "Offline",
             type: "warning",
           })
-        : shouldShowExhaustedToast
-          ? stackedThreadToast({
-              actionProps: {
-                children: "Retry",
-                onClick: triggerManualReconnect,
-              },
-              data: {
-                hideCopyButton: true,
-              },
-              description: describeExhaustedToast(),
-              timeout: 0,
-              title: buildReconnectTitle(status),
-              type: "error",
-            })
-          : stackedThreadToast({
-              actionProps: {
-                children: "Retry now",
-                onClick: triggerManualReconnect,
-              },
-              data: {
-                hideCopyButton: true,
-              },
-              description:
-                status.nextRetryAt === null
-                  ? `Reconnecting... ${formatReconnectAttemptLabel(status)}`
-                  : `Reconnecting in ${formatRetryCountdown(status.nextRetryAt, nowMs)}... ${formatReconnectAttemptLabel(status)}`,
-              timeout: 0,
-              title: buildReconnectTitle(status),
-              type: "loading",
-            });
+        : stackedThreadToast({
+            actionProps: {
+              children: "Retry now",
+              onClick: triggerManualReconnect,
+            },
+            data: {
+              hideCopyButton: true,
+            },
+            description:
+              status.nextRetryAt === null
+                ? `Reconnecting... ${formatReconnectAttemptLabel(status)}`
+                : `Reconnecting in ${formatRetryCountdown(status.nextRetryAt, nowMs)}... ${formatReconnectAttemptLabel(status)}`,
+            timeout: 0,
+            title: buildReconnectTitle(status),
+            type: "loading",
+          });
 
       if (toastIdRef.current) {
         toastManager.update(toastIdRef.current, toastPayload);

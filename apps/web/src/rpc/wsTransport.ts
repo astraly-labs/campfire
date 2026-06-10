@@ -4,7 +4,6 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
-import * as Option from "effect/Option";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { RpcClient } from "effect/unstable/rpc";
@@ -20,6 +19,7 @@ import {
 import { realtimeLog } from "./realtimeLog";
 import { clearAllTrackedRpcRequests } from "./requestLatencyState";
 import { isTransportConnectionErrorMessage } from "./transportError";
+import { getWsConnectionStatus } from "./wsConnectionState";
 
 interface SubscribeOptions {
   readonly retryDelay?: Duration.Input;
@@ -36,29 +36,77 @@ interface SubscribeOptions {
   readonly onError?: (error: unknown) => void;
 }
 
+/**
+ * How a unary request behaves when it fails with a transport-class error
+ * (socket dropped mid-request, ping timeout, open-then-immediate-close):
+ *
+ * - `"wait-for-reconnect"` (default): re-issue the request once the transport
+ *   reports a connected phase again, waiting out the reconnect backoff in
+ *   between. This is what makes "click send during a network blip" simply
+ *   work on flaky links instead of erroring after a few blind retries while
+ *   the reconnect loop is still waiting out an 8 s backoff window.
+ * - `"brief"`: the legacy behavior — a few quick blind retries (~4 s total).
+ *   For non-idempotent, latency-sensitive calls (terminal keystrokes) where
+ *   replaying input long after the user typed it would be worse than
+ *   dropping it.
+ * - `"none"`: a single attempt. For fire-and-forget calls re-issued on a
+ *   timer anyway (presence heartbeats) — queueing those during an outage
+ *   would replay a stale burst at reconnect for zero benefit.
+ */
+export type RequestRetryMode = "brief" | "none" | "wait-for-reconnect";
+
 interface RequestOptions {
-  readonly timeout?: Option.Option<Duration.Input>;
+  readonly retry?: RequestRetryMode;
 }
 
 const DEFAULT_SUBSCRIPTION_RETRY_DELAY_MS = Duration.millis(250);
 const NOOP: () => void = () => undefined;
 
 /**
- * Maximum number of attempts for a unary RPC request before we propagate the
- * transport error to the caller. Picked to be small enough that a permanently
- * broken link surfaces quickly, large enough that a flaky residential link's
- * sub-second TCP blips are absorbed without the caller noticing.
+ * Maximum number of attempts for a `"brief"`-mode unary RPC request before we
+ * propagate the transport error to the caller. Picked to be small enough that
+ * a permanently broken link surfaces quickly, large enough that a flaky
+ * residential link's sub-second TCP blips are absorbed without the caller
+ * noticing.
  */
 const REQUEST_MAX_ATTEMPTS = 4;
 
 /**
- * Delay between retried request attempts when the previous one failed with a
- * transport-class error. The first retry waits this long; each subsequent
- * retry doubles the wait, capped at a sensible ceiling so a multi-second
- * outage still recovers within a typical user-perceptible "loading" window.
+ * Delay between retried `"brief"`-mode attempts when the previous one failed
+ * with a transport-class error. The first retry waits this long; each
+ * subsequent retry doubles the wait, capped at a sensible ceiling so a
+ * multi-second outage still recovers within a typical user-perceptible
+ * "loading" window.
  */
 const REQUEST_RETRY_INITIAL_DELAY_MS = 250;
 const REQUEST_RETRY_MAX_DELAY_MS = 2_000;
+
+/**
+ * Upper bound on how long a `"wait-for-reconnect"` request will wait, across
+ * all reconnect cycles, before surfacing the transport error. Generous on
+ * purpose: while the request waits, the reconnect toast is already telling
+ * the user what is happening, and a queued command landing after a 60 s
+ * outage is far better than a lost one. Bounded so a genuinely dead server
+ * does not hold UI promises open forever.
+ */
+const REQUEST_WAIT_FOR_RECONNECT_DEADLINE_MS = 90_000;
+
+/**
+ * Attempt cap for `"wait-for-reconnect"` mode. Each attempt normally costs a
+ * full reconnect cycle, so this mostly guards against a pathological server
+ * that accepts sockets and instantly drops every request.
+ */
+const REQUEST_WAIT_FOR_RECONNECT_MAX_ATTEMPTS = 12;
+
+/** Poll cadence while waiting for the transport to report `connected`. */
+const REQUEST_WAIT_POLL_INTERVAL_MS = 250;
+
+/**
+ * Small settle delay after the transport reports `connected` before the
+ * request is re-issued, so the RPC handshake has a moment to finish and the
+ * retry does not race the socket open.
+ */
+const REQUEST_WAIT_RECONNECT_SETTLE_MS = 250;
 
 interface TransportSession {
   readonly clientPromise: Promise<WsRpcProtocolClient>;
@@ -103,11 +151,23 @@ export class WsTransport {
 
   async request<TSuccess>(
     execute: (client: WsRpcProtocolClient) => Effect.Effect<TSuccess, Error, never>,
-    _options?: RequestOptions,
+    options?: RequestOptions,
   ): Promise<TSuccess> {
     if (this.disposed) {
       throw new Error("Transport disposed");
     }
+
+    const retryMode = options?.retry ?? "wait-for-reconnect";
+    const maxAttempts =
+      retryMode === "none"
+        ? 1
+        : retryMode === "brief"
+          ? REQUEST_MAX_ATTEMPTS
+          : REQUEST_WAIT_FOR_RECONNECT_MAX_ATTEMPTS;
+    const deadlineAtMs =
+      retryMode === "wait-for-reconnect"
+        ? Date.now() + REQUEST_WAIT_FOR_RECONNECT_DEADLINE_MS
+        : Number.POSITIVE_INFINITY;
 
     // Mirrors the retry loop in `subscribe`: a transport-class failure (the
     // WS dropped mid-request, ping timed out, the socket was open then
@@ -119,7 +179,7 @@ export class WsTransport {
     // `isTransportConnectionErrorMessage` classifier the subscribe loop uses,
     // which keeps the two paths in sync.
     let lastError: unknown;
-    for (let attemptIndex = 0; attemptIndex < REQUEST_MAX_ATTEMPTS; attemptIndex += 1) {
+    for (let attemptIndex = 0; attemptIndex < maxAttempts; attemptIndex += 1) {
       if (this.disposed) {
         throw new Error("Transport disposed");
       }
@@ -141,8 +201,19 @@ export class WsTransport {
         if (!isTransportError && !sessionWasRolled) {
           throw error;
         }
-        if (attemptIndex === REQUEST_MAX_ATTEMPTS - 1) {
+        if (attemptIndex === maxAttempts - 1) {
           break;
+        }
+        if (retryMode === "wait-for-reconnect") {
+          realtimeLog("transport", "request.wait-for-reconnect", {
+            attemptIndex,
+            error: formattedError,
+          });
+          const reconnected = await this.waitUntilConnected(deadlineAtMs);
+          if (!reconnected) {
+            break;
+          }
+          continue;
         }
         const delayMs = Math.min(
           REQUEST_RETRY_INITIAL_DELAY_MS * 2 ** attemptIndex,
@@ -157,6 +228,30 @@ export class WsTransport {
       }
     }
     throw lastError;
+  }
+
+  /**
+   * Resolve `true` once the connection state reports a `connected` phase
+   * (plus a short settle delay), or `false` when the deadline passes, the
+   * transport is disposed, or the link is in its initial never-connected
+   * failure state (a cold connect to a dead server should fail fast rather
+   * than hold every startup request open for the full deadline).
+   */
+  private async waitUntilConnected(deadlineAtMs: number): Promise<boolean> {
+    for (;;) {
+      if (this.disposed || Date.now() >= deadlineAtMs) {
+        return false;
+      }
+      const status = getWsConnectionStatus();
+      if (status.phase === "connected") {
+        await sleep(REQUEST_WAIT_RECONNECT_SETTLE_MS);
+        return true;
+      }
+      if (!status.hasConnected && status.phase === "disconnected") {
+        return false;
+      }
+      await sleep(REQUEST_WAIT_POLL_INTERVAL_MS);
+    }
   }
 
   async requestStream<TValue>(

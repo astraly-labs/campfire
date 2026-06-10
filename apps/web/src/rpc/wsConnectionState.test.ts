@@ -12,7 +12,7 @@ import {
   resetWsConnectionStateForTests,
   setBrowserOnlineStatus,
   WS_BRIEF_OUTAGE_THRESHOLD_MS,
-  WS_RECONNECT_MAX_ATTEMPTS,
+  WS_RECONNECT_MAX_DELAY_MS,
   WS_RECONNECT_STABILITY_THRESHOLD_MS,
 } from "./wsConnectionState";
 
@@ -95,17 +95,22 @@ describe("wsConnectionState", () => {
     });
   });
 
-  it("marks the reconnect cycle as exhausted after the final attempt fails", () => {
-    for (let attempt = 0; attempt < WS_RECONNECT_MAX_ATTEMPTS; attempt += 1) {
+  it("keeps scheduling retries forever, plateauing at the max delay", () => {
+    // Far past the old 8-attempt cap — the reconnect loop must never park
+    // itself in a terminal state; it keeps waiting at the delay ceiling.
+    for (let attempt = 0; attempt < 30; attempt += 1) {
       recordWsConnectionAttempt("ws://localhost:3020/ws");
       recordWsConnectionErrored("Unable to connect to the T3 server WebSocket.");
+      // Let the scheduled window elapse so the next cycle re-arms nextRetryAt.
+      vi.advanceTimersByTime(WS_RECONNECT_MAX_DELAY_MS);
     }
 
     expect(getWsConnectionStatus()).toMatchObject({
-      nextRetryAt: null,
-      reconnectAttemptCount: WS_RECONNECT_MAX_ATTEMPTS,
-      reconnectPhase: "exhausted",
+      reconnectAttemptCount: 30,
+      reconnectPhase: "waiting",
     });
+    expect(getWsConnectionStatus().nextRetryAt).not.toBeNull();
+    expect(getWsReconnectDelayMsForRetry(29)).toBe(WS_RECONNECT_MAX_DELAY_MS);
   });
 
   it("keeps the backoff growing when the socket drops within the stability window", () => {

@@ -1,4 +1,5 @@
 import { DEFAULT_SERVER_SETTINGS, ServerSettings, WS_METHODS } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -115,6 +116,11 @@ function createTransport(...args: ConstructorParameters<typeof WsTransport>): Ws
   const transport = new WsTransport(...args);
   transports.push(transport);
   return transport;
+}
+
+/** Tagged so the Effect failure channel keeps a named error type in tests. */
+class TestRequestError extends Error {
+  readonly _tag = "TestRequestError";
 }
 
 beforeEach(() => {
@@ -1231,6 +1237,85 @@ describe("WsTransport", () => {
     );
 
     await expect(requestPromise).resolves.toEqual(DEFAULT_SERVER_SETTINGS);
+    await transport.dispose();
+  });
+
+  it("holds a unary request across a disconnect window and re-issues it once reconnected", async () => {
+    const transport = createTransport("ws://localhost:3020");
+
+    await waitFor(() => {
+      expect(sockets).toHaveLength(1);
+    });
+    getSocket().open();
+    await waitFor(() => {
+      expect(getWsConnectionStatus().phase).toBe("connected");
+    });
+
+    let attempts = 0;
+    let settled = false;
+    const requestPromise = transport.request<string>(() =>
+      Effect.suspend(() => {
+        attempts += 1;
+        if (attempts === 1) {
+          // Simulate the socket dying mid-request: the protocol observes the
+          // close (and schedules its own reconnect) while the request fails
+          // with a transport-class error.
+          getSocket().close(1006, "connection reset");
+          return Effect.fail(new TestRequestError("SocketCloseError: connection reset"));
+        }
+        return Effect.succeed("delivered");
+      }),
+    );
+    requestPromise.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      },
+    );
+
+    // Well past the old blind-retry cadence (250 ms first retry): the request
+    // must still be pending because the transport is disconnected, not
+    // burning attempts into a dead socket.
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    expect(settled).toBe(false);
+    expect(attempts).toBe(1);
+
+    // The protocol's reconnect schedule opens a fresh socket (~1 s backoff).
+    await waitFor(() => {
+      expect(sockets.length).toBeGreaterThanOrEqual(2);
+    }, 5_000);
+    getSocket().open();
+    await waitFor(() => {
+      expect(getWsConnectionStatus().phase).toBe("connected");
+    });
+
+    await expect(requestPromise).resolves.toBe("delivered");
+    expect(attempts).toBe(2);
+
+    await transport.dispose();
+  }, 10_000);
+
+  it("propagates domain errors immediately without retrying the request", async () => {
+    const transport = createTransport("ws://localhost:3020");
+
+    await waitFor(() => {
+      expect(sockets).toHaveLength(1);
+    });
+    getSocket().open();
+
+    let attempts = 0;
+    await expect(
+      transport.request<string>(() =>
+        Effect.suspend(() => {
+          attempts += 1;
+          return Effect.fail(new TestRequestError("Thread thread_123 was not found"));
+        }),
+      ),
+    ).rejects.toThrow("Thread thread_123 was not found");
+    expect(attempts).toBe(1);
+
     await transport.dispose();
   });
 });

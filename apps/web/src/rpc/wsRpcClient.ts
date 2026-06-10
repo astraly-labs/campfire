@@ -211,8 +211,18 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
     isHeartbeatFresh: () => transport.isHeartbeatFresh(),
     terminal: {
       open: (input) => transport.request((client) => client[WS_METHODS.terminalOpen](input)),
-      write: (input) => transport.request((client) => client[WS_METHODS.terminalWrite](input)),
-      resize: (input) => transport.request((client) => client[WS_METHODS.terminalResize](input)),
+      // Keystrokes and resizes are non-idempotent and only meaningful in the
+      // moment: replaying a 30 s old burst of input into a shell after a
+      // reconnect would be worse than dropping it, so these stay on the
+      // brief blind-retry path instead of waiting for reconnection.
+      write: (input) =>
+        transport.request((client) => client[WS_METHODS.terminalWrite](input), {
+          retry: "brief",
+        }),
+      resize: (input) =>
+        transport.request((client) => client[WS_METHODS.terminalResize](input), {
+          retry: "brief",
+        }),
       clear: (input) => transport.request((client) => client[WS_METHODS.terminalClear](input)),
       restart: (input) => transport.request((client) => client[WS_METHODS.terminalRestart](input)),
       close: (input) => transport.request((client) => client[WS_METHODS.terminalClose](input)),
@@ -417,8 +427,13 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
       directory: () => transport.request((client) => client[USERS_WS_METHODS.directory]({})),
     },
     presence: {
+      // Heartbeats are re-issued every few seconds by the presence loop, so
+      // queueing them while the link is down would only replay a stale burst
+      // at reconnect. Single attempt; the next tick is the retry.
       heartbeat: (input) =>
-        transport.request((client) => client[PRESENCE_WS_METHODS.heartbeat](input)),
+        transport.request((client) => client[PRESENCE_WS_METHODS.heartbeat](input), {
+          retry: "none",
+        }),
       subscribe: (listener, options) =>
         transport.subscribe((client) => client[PRESENCE_WS_METHODS.subscribe]({}), listener, {
           ...options,

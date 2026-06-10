@@ -4,13 +4,21 @@ import { Atom } from "effect/unstable/reactivity";
 import { appAtomRegistry } from "./atomRegistry";
 
 export type WsConnectionUiState = "connected" | "connecting" | "error" | "offline" | "reconnecting";
-export type WsReconnectPhase = "attempting" | "exhausted" | "idle" | "waiting";
+export type WsReconnectPhase = "attempting" | "idle" | "waiting";
 
 export const WS_RECONNECT_INITIAL_DELAY_MS = 1_000;
 export const WS_RECONNECT_BACKOFF_FACTOR = 2;
-export const WS_RECONNECT_MAX_DELAY_MS = 64_000;
-export const WS_RECONNECT_MAX_RETRIES = 7;
-export const WS_RECONNECT_MAX_ATTEMPTS = WS_RECONNECT_MAX_RETRIES + 1;
+/**
+ * Ceiling for the reconnect backoff. Deliberately low: a reconnect attempt
+ * costs one WebSocket handshake, while every second spent waiting is a
+ * second of visible downtime once the network has actually recovered. The
+ * team uses Campfire over high-latency / flaky links (remote Mac mini), and
+ * browsers only fire `online` for interface-level changes — a link that
+ * degrades and recovers without an interface flap gives us no signal, so
+ * the periodic retry IS the recovery path and must stay frequent. Retries
+ * continue at this cadence forever; there is no terminal "exhausted" state.
+ */
+export const WS_RECONNECT_MAX_DELAY_MS = 15_000;
 /**
  * Minimum continuous time spent in the `connected` phase before we treat a
  * subsequent drop as a fresh failure cycle (reset the reconnect counter).
@@ -18,12 +26,14 @@ export const WS_RECONNECT_MAX_ATTEMPTS = WS_RECONNECT_MAX_RETRIES + 1;
  * Without this guard the counter resets to 0 on every TCP-level WebSocket
  * open, so a flaky link that gets the socket open for 200ms before another
  * drop ends up re-attempting at the initial 1 s delay forever — visible to
- * the user as continuous "Reconnecting…" churn. With a 30 s stability
- * window, repeated quick drops keep the exponential backoff growing
+ * the user as continuous "Reconnecting…" churn. With the stability window,
+ * repeated quick drops keep the exponential backoff growing
  * (1 s → 2 s → 4 s → 8 s …) so the cycle naturally slows down until either
- * the network actually recovers or the user manually retries.
+ * the network actually recovers or the user manually retries. Sized to the
+ * backoff ceiling: a link that stays up longer than the worst-case retry
+ * wait has proven it can outlive a full backoff cycle.
  */
-export const WS_RECONNECT_STABILITY_THRESHOLD_MS = 30_000;
+export const WS_RECONNECT_STABILITY_THRESHOLD_MS = 15_000;
 
 /**
  * Outages shorter than this never raise a toast — the reconnect happens fast
@@ -88,7 +98,6 @@ export interface WsConnectionStatus {
   readonly online: boolean;
   readonly phase: "idle" | "connecting" | "connected" | "disconnected";
   readonly reconnectAttemptCount: number;
-  readonly reconnectMaxAttempts: number;
   readonly reconnectPhase: WsReconnectPhase;
   readonly socketUrl: string | null;
 }
@@ -107,7 +116,6 @@ const INITIAL_WS_CONNECTION_STATUS = Object.freeze<WsConnectionStatus>({
   online: typeof navigator === "undefined" ? true : navigator.onLine !== false,
   phase: "idle",
   reconnectAttemptCount: 0,
-  reconnectMaxAttempts: WS_RECONNECT_MAX_ATTEMPTS,
   reconnectPhase: "idle",
   socketUrl: null,
 });
@@ -269,10 +277,13 @@ export function useWsConnectionStatus(): WsConnectionStatus {
 }
 
 export function getWsReconnectDelayMsForRetry(retryIndex: number): number | null {
-  if (!Number.isInteger(retryIndex) || retryIndex < 0 || retryIndex >= WS_RECONNECT_MAX_RETRIES) {
+  if (!Number.isInteger(retryIndex) || retryIndex < 0) {
     return null;
   }
 
+  // Exponential up to the ceiling, then flat forever — reconnect attempts
+  // never stop. `2 ** retryIndex` overflows to Infinity for large indexes,
+  // which Math.min safely clamps back to the ceiling.
   return Math.min(
     Math.round(WS_RECONNECT_INITIAL_DELAY_MS * WS_RECONNECT_BACKOFF_FACTOR ** retryIndex),
     WS_RECONNECT_MAX_DELAY_MS,
@@ -306,7 +317,7 @@ function applyDisconnectState(
   const reconnectAttemptCount = wasStable ? 0 : current.reconnectAttemptCount;
 
   const nextRetryDelayMs =
-    current.nextRetryAt !== null || current.reconnectPhase === "exhausted"
+    current.nextRetryAt !== null
       ? null
       : getWsReconnectDelayMsForRetry(Math.max(0, reconnectAttemptCount - 1));
 
@@ -321,11 +332,6 @@ function applyDisconnectState(
         : new Date(Date.now() + nextRetryDelayMs).toISOString(),
     phase: "disconnected",
     reconnectAttemptCount,
-    reconnectPhase:
-      current.reconnectPhase === "waiting" || current.reconnectPhase === "exhausted"
-        ? current.reconnectPhase
-        : nextRetryDelayMs === null
-          ? "exhausted"
-          : "waiting",
+    reconnectPhase: "waiting",
   };
 }

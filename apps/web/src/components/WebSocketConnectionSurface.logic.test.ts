@@ -18,7 +18,6 @@ function makeStatus(overrides: Partial<WsConnectionStatus> = {}): WsConnectionSt
     online: true,
     phase: "idle",
     reconnectAttemptCount: 0,
-    reconnectMaxAttempts: 8,
     reconnectPhase: "idle",
     socketUrl: null,
     ...overrides,
@@ -67,15 +66,15 @@ describe("WebSocketConnectionSurface.logic", () => {
     ).toBe(false);
   });
 
-  it("forces reconnect on focus for exhausted reconnect loops", () => {
+  it("forces reconnect on focus even deep into a long retry cycle", () => {
     expect(
       shouldAutoReconnect(
         makeStatus({
           hasConnected: true,
           online: true,
           phase: "disconnected",
-          reconnectAttemptCount: 8,
-          reconnectPhase: "exhausted",
+          reconnectAttemptCount: 40,
+          reconnectPhase: "waiting",
         }),
         "focus",
       ),

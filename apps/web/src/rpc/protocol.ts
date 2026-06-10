@@ -21,8 +21,6 @@ import {
   recordWsConnectionOpened,
   type WsConnectionMetadata,
   WS_RECONNECT_INITIAL_DELAY_MS,
-  WS_RECONNECT_MAX_DELAY_MS,
-  WS_RECONNECT_MAX_RETRIES,
 } from "./wsConnectionState";
 
 export interface WsProtocolCloseContext {
@@ -227,20 +225,18 @@ export function createWsRpcProtocolLayer(
   // initial 1 s delay forever and produce continuous "Reconnecting…" churn.
   // By reading our state's `reconnectAttemptCount`, which only resets after
   // a stable connected interval (see `applyDisconnectState`), the delay
-  // grows naturally on repeated quick drops and the reconnect cadence slows
-  // until the network actually recovers. `Schedule.recurs` is kept as the
-  // per-failure-cycle attempt cap so the toast still surfaces a Retry
-  // affordance once Effect itself gives up.
-  const retryPolicy = Schedule.addDelay(Schedule.recurs(WS_RECONNECT_MAX_RETRIES), () =>
+  // grows naturally on repeated quick drops up to the ceiling. The schedule
+  // is unbounded on purpose: parking the client in a terminal "gave up"
+  // state turned every >2-minute outage (laptop sleep, ISP blip, server
+  // restart) into a dead UI until the user noticed and clicked Retry —
+  // browsers give no reliable event when a degraded-but-up link recovers,
+  // so periodic retry is the only dependable recovery path.
+  const retryPolicy = Schedule.addDelay(Schedule.forever, () =>
     Effect.sync(() => {
       const status = getWsConnectionStatus();
-      const retryIndex = Math.min(
-        Math.max(0, status.reconnectAttemptCount - 1),
-        WS_RECONNECT_MAX_RETRIES - 1,
-      );
+      const retryIndex = Math.max(0, status.reconnectAttemptCount - 1);
       return Duration.millis(
-        getWsReconnectDelayMsForRetry(retryIndex) ??
-          Math.min(WS_RECONNECT_INITIAL_DELAY_MS, WS_RECONNECT_MAX_DELAY_MS),
+        getWsReconnectDelayMsForRetry(retryIndex) ?? WS_RECONNECT_INITIAL_DELAY_MS,
       );
     }),
   );
