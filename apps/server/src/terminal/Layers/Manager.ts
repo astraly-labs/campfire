@@ -50,6 +50,13 @@ const DEFAULT_PROCESS_KILL_GRACE_MS = 1_000;
 const DEFAULT_MAX_RETAINED_INACTIVE_SESSIONS = 128;
 const DEFAULT_OPEN_COLS = 120;
 const DEFAULT_OPEN_ROWS = 30;
+/**
+ * Upper bound for one coalesced terminal output event. Big enough to merge
+ * a heavy burst (build logs) into few WebSocket frames, small enough that a
+ * single frame never monopolizes the connection — the RPC channel is shared
+ * with chat and presence traffic.
+ */
+const TERMINAL_OUTPUT_COALESCE_MAX_CHARS = 32_768;
 const TERMINAL_ENV_BLOCKLIST = new Set(["PORT", "ELECTRON_RENDERER_PORT", "ELECTRON_RUN_AS_NODE"]);
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
@@ -1218,6 +1225,27 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
           }
 
           session.pendingProcessEventIndex += 1;
+
+          // Coalesce a run of queued output chunks into one event. Under
+          // heavy output (builds, log tails) the PTY enqueues faster than
+          // the drain loop publishes, so the queue holds several chunks —
+          // merging them collapses dozens of WebSocket frames per drain
+          // pass into one, which matters a lot for remote subscribers on
+          // slow links. Interactive typing (one pending chunk at a time)
+          // is published immediately, exactly as before.
+          let outputData = nextEvent.type === "output" ? nextEvent.data : "";
+          if (nextEvent.type === "output") {
+            while (outputData.length < TERMINAL_OUTPUT_COALESCE_MAX_CHARS) {
+              const followingEvent =
+                session.pendingProcessEvents[session.pendingProcessEventIndex];
+              if (!followingEvent || followingEvent.type !== "output") {
+                break;
+              }
+              outputData += followingEvent.data;
+              session.pendingProcessEventIndex += 1;
+            }
+          }
+
           if (session.pendingProcessEventIndex >= session.pendingProcessEvents.length) {
             session.pendingProcessEvents = [];
             session.pendingProcessEventIndex = 0;
@@ -1226,7 +1254,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
           if (nextEvent.type === "output") {
             const sanitized = sanitizeTerminalHistoryChunk(
               session.pendingHistoryControlSequence,
-              nextEvent.data,
+              outputData,
             );
             session.pendingHistoryControlSequence = sanitized.pendingControlSequence;
             if (sanitized.visibleText.length > 0) {
@@ -1242,7 +1270,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
               threadId: session.threadId,
               terminalId: session.terminalId,
               history: sanitized.visibleText.length > 0 ? session.history : null,
-              data: nextEvent.data,
+              data: outputData,
             } as const;
           }
 

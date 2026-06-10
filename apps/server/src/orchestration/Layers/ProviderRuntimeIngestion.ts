@@ -57,6 +57,16 @@ const BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_TTL = Duration.minutes(120);
 const BUFFERED_PROPOSED_PLAN_BY_ID_CACHE_CAPACITY = 10_000;
 const BUFFERED_PROPOSED_PLAN_BY_ID_TTL = Duration.minutes(120);
 const MAX_BUFFERED_ASSISTANT_CHARS = 24_000;
+/**
+ * Streaming mode coalescing window. Providers emit deltas per token (often
+ * 30-100/s) and each one used to become its own orchestration command and
+ * WebSocket frame to every subscriber — a flood that saturates slow remote
+ * links for zero perceptible benefit. The first delta of a segment is
+ * dispatched immediately (the message bubble appears instantly); subsequent
+ * deltas accumulate and flush at most once per window, with the existing
+ * pause/finalize paths draining any remainder at turn boundaries.
+ */
+const ASSISTANT_STREAM_FLUSH_INTERVAL_MS = 150;
 const STRICT_PROVIDER_LIFECYCLE_GUARD = process.env.T3CODE_STRICT_PROVIDER_LIFECYCLE_GUARD !== "0";
 
 const TURN_LIFECYCLE_LOG_TAG = "[🚨 TurnLifecycle]";
@@ -855,8 +865,16 @@ const make = Effect.gen(function* () {
   const clearBufferedProposedPlan = (planId: string) =>
     Cache.invalidate(bufferedProposedPlanById, planId);
 
+  // Wall-clock of the last dispatched streaming flush per assistant message.
+  // Plain Map on purpose: only touched from the event-processing fiber, and
+  // entries are dropped in `clearAssistantMessageState`.
+  const streamingAssistantLastFlushAtByMessageId = new Map<MessageId, number>();
+
   const clearAssistantMessageState = (messageId: MessageId) =>
-    clearBufferedAssistantText(messageId);
+    Effect.suspend(() => {
+      streamingAssistantLastFlushAtByMessageId.delete(messageId);
+      return clearBufferedAssistantText(messageId);
+    });
 
   const flushBufferedAssistantMessage = (input: {
     event: ProviderRuntimeEvent;
@@ -1459,15 +1477,58 @@ const make = Effect.gen(function* () {
             });
           }
         } else {
-          yield* orchestrationEngine.dispatch({
-            type: "thread.message.assistant.delta",
-            commandId: providerCommandId(event, "assistant-delta"),
-            threadId: thread.id,
-            messageId: assistantMessageId,
-            delta: assistantDelta,
-            ...(turnId ? { turnId } : {}),
-            createdAt: now,
-          });
+          // Streaming mode, coalesced: dispatching one orchestration command
+          // and one WS frame per provider token floods slow links. The first
+          // delta of a segment goes out immediately so the message appears
+          // without delay; afterwards deltas accumulate in the shared buffer
+          // and flush at most once per ASSISTANT_STREAM_FLUSH_INTERVAL_MS.
+          // Anything still buffered at a turn boundary is drained by the
+          // existing pause/finalize flushes, which read the same buffer.
+          const nowMs = Date.now();
+          const lastFlushAtMs = streamingAssistantLastFlushAtByMessageId.get(assistantMessageId);
+          if (lastFlushAtMs === undefined) {
+            streamingAssistantLastFlushAtByMessageId.set(assistantMessageId, nowMs);
+            yield* orchestrationEngine.dispatch({
+              type: "thread.message.assistant.delta",
+              commandId: providerCommandId(event, "assistant-delta"),
+              threadId: thread.id,
+              messageId: assistantMessageId,
+              delta: assistantDelta,
+              ...(turnId ? { turnId } : {}),
+              createdAt: now,
+            });
+          } else {
+            const spillChunk = yield* appendBufferedAssistantText(
+              assistantMessageId,
+              assistantDelta,
+            );
+            if (spillChunk.length > 0) {
+              streamingAssistantLastFlushAtByMessageId.set(assistantMessageId, nowMs);
+              yield* orchestrationEngine.dispatch({
+                type: "thread.message.assistant.delta",
+                commandId: providerCommandId(event, "assistant-delta-buffer-spill"),
+                threadId: thread.id,
+                messageId: assistantMessageId,
+                delta: spillChunk,
+                ...(turnId ? { turnId } : {}),
+                createdAt: now,
+              });
+            } else if (nowMs - lastFlushAtMs >= ASSISTANT_STREAM_FLUSH_INTERVAL_MS) {
+              const pendingText = yield* takeBufferedAssistantText(assistantMessageId);
+              if (pendingText.length > 0) {
+                streamingAssistantLastFlushAtByMessageId.set(assistantMessageId, nowMs);
+                yield* orchestrationEngine.dispatch({
+                  type: "thread.message.assistant.delta",
+                  commandId: providerCommandId(event, "assistant-delta"),
+                  threadId: thread.id,
+                  messageId: assistantMessageId,
+                  delta: pendingText,
+                  ...(turnId ? { turnId } : {}),
+                  createdAt: now,
+                });
+              }
+            }
+          }
         }
       }
 
