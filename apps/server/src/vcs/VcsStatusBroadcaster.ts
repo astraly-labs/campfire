@@ -22,6 +22,7 @@ import type {
 import { mergeGitStatusParts } from "@t3tools/shared/git";
 
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
+import { isPathResponsive } from "./FrozenPathGuard.ts";
 
 const DEFAULT_VCS_STATUS_REFRESH_INTERVAL = Duration.seconds(30);
 const VCS_STATUS_REFRESH_FAILURE_BASE_DELAY = Duration.seconds(30);
@@ -89,10 +90,21 @@ function fingerprintStatusPart(status: unknown): string {
 }
 
 const normalizeCwd = (cwd: string) =>
-  Effect.service(FileSystem.FileSystem).pipe(
-    Effect.flatMap((fs) => fs.realPath(cwd)),
-    Effect.orElseSucceed(() => cwd),
-  );
+  Effect.gen(function* () {
+    // A cwd on a frozen filesystem (signed-out iCloud Drive, dead mount)
+    // turns this realPath into a ~10s uncancelable syscall on the blocking
+    // I/O pool — and this helper runs on every status poll. Skip the
+    // canonicalization entirely while the path is marked frozen; the git
+    // commands that follow fail fast through the VcsProcess breaker.
+    const responsive = yield* isPathResponsive(cwd);
+    if (!responsive) {
+      return cwd;
+    }
+    return yield* Effect.service(FileSystem.FileSystem).pipe(
+      Effect.flatMap((fs) => fs.realPath(cwd)),
+      Effect.orElseSucceed(() => cwd),
+    );
+  });
 
 export const layer = Layer.effect(
   VcsStatusBroadcaster,

@@ -7,6 +7,7 @@ import {
   ProjectFaviconResolver,
   type ProjectFaviconResolverShape,
 } from "../Services/ProjectFaviconResolver.ts";
+import { isPathResponsive } from "../../vcs/FrozenPathGuard.ts";
 
 // Well-known favicon paths checked in order.
 const FAVICON_CANDIDATES = [
@@ -93,6 +94,13 @@ export const makeProjectFaviconResolver = Effect.gen(function* () {
   const resolvePath: ProjectFaviconResolverShape["resolvePath"] = Effect.fn(
     "ProjectFaviconResolver.resolvePath",
   )(function* (cwd: string): Effect.fn.Return<string | null> {
+    // Every candidate below is a blocking stat/read on the project root.
+    // On a frozen filesystem (signed-out iCloud Drive) each one pins an
+    // I/O pool thread for ~10s, and the sidebar requests a favicon for
+    // every project — skip straight to the fallback icon instead.
+    if (!(yield* isPathResponsive(cwd))) {
+      return null;
+    }
     for (const candidate of FAVICON_CANDIDATES) {
       const resolved = path.join(cwd, candidate);
       const existing = yield* findExistingFile(cwd, [resolved]);
