@@ -135,4 +135,51 @@ describe("VcsProcess.run", () => {
       expect(error).toBeInstanceOf(VcsProcessTimeoutError);
     }).pipe(provideLive),
   );
+
+  it.effect("fails fast on a cwd that recently timed out, then reprobes after the window", () =>
+    Effect.gen(function* () {
+      const slowCommand = {
+        operation: "test.breaker",
+        command: "node",
+        args: ["-e", "setTimeout(() => {}, 5000)"],
+        cwd: process.cwd(),
+        timeoutMs: 50,
+      } as const;
+
+      // First call: real timeout trips the breaker for this cwd.
+      const tripFiber = yield* run(slowCommand).pipe(Effect.flip, Effect.forkScoped);
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust(Duration.millis(50));
+      expect(yield* Fiber.join(tripFiber)).toBeInstanceOf(VcsProcessTimeoutError);
+
+      // Second call: must fail without any TestClock advance — if the
+      // breaker were not tripping, this un-forked run would wait on the
+      // (test) clock forever and the test itself would hang. The frozen-
+      // filesystem case must not hold a worker for another timeout.
+      const fastError = yield* run({ ...slowCommand, operation: "test.breaker-fast" }).pipe(
+        Effect.flip,
+      );
+      expect(fastError).toBeInstanceOf(VcsProcessTimeoutError);
+
+      // After the retry window, one probe is allowed through again — it
+      // spawns for real and needs the clock to advance to time out.
+      yield* TestClock.adjust(Duration.minutes(6));
+      const reprobeFiber = yield* run({ ...slowCommand, operation: "test.breaker-reprobe" }).pipe(
+        Effect.flip,
+        Effect.forkScoped,
+      );
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust(Duration.millis(50));
+      expect(yield* Fiber.join(reprobeFiber)).toBeInstanceOf(VcsProcessTimeoutError);
+
+      // A healthy cwd is unaffected even while another cwd is tripped.
+      const healthy = yield* run({
+        operation: "test.breaker-healthy",
+        command: "node",
+        args: ["-e", "process.stdout.write('ok')"],
+        cwd: `${process.cwd()}/src`,
+      });
+      expect(healthy.stdout).toBe("ok");
+    }).pipe(provideLive),
+  );
 });

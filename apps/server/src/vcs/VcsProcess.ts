@@ -1,3 +1,4 @@
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -46,6 +47,19 @@ export class VcsProcess extends Context.Service<VcsProcess, VcsProcessShape>()(
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
 const OUTPUT_TRUNCATED_MARKER = "\n\n[truncated]";
+/**
+ * Circuit breaker for working directories whose process invocations time
+ * out. A frozen filesystem (a dataless iCloud Drive folder after sign-out,
+ * a dead network mount, an ejected disk) makes EVERY command on that cwd
+ * hang until the timeout — and the periodic VCS pollers and checkpoint
+ * probes retry in a loop, so one poisoned project keeps a serial worker
+ * busy ~100% of the time and starves unrelated work (observed: shell
+ * snapshots taking 44s on the team server because one project lived in a
+ * signed-out iCloud Documents folder). After a timeout, further commands
+ * on that cwd fail fast for this long before one probe is allowed through
+ * again.
+ */
+const UNHEALTHY_CWD_RETRY_AFTER_MS = 5 * 60_000;
 
 function commandLabel(command: string, args: ReadonlyArray<string>): string {
   return [command, ...args].join(" ");
@@ -53,6 +67,7 @@ function commandLabel(command: string, args: ReadonlyArray<string>): string {
 
 export const make = Effect.fn("makeVcsProcess")(function* () {
   const processRunner = yield* ProcessRunner;
+  const unhealthyCwds = new Map<string, { retryAtMs: number; timeoutMs: number }>();
 
   const run = Effect.fn("VcsProcess.run")(function* (input: VcsProcessInput) {
     const label = commandLabel(input.command, input.args);
@@ -61,6 +76,20 @@ export const make = Effect.fn("makeVcsProcess")(function* () {
       command: label,
       cwd: input.cwd,
     };
+
+    const nowMs = yield* Clock.currentTimeMillis;
+    const unhealthy = unhealthyCwds.get(input.cwd);
+    if (unhealthy !== undefined) {
+      if (nowMs < unhealthy.retryAtMs) {
+        return yield* new VcsProcessTimeoutError({
+          ...baseError,
+          timeoutMs: unhealthy.timeoutMs,
+        });
+      }
+      // Window elapsed: let this single probe through; it re-arms the
+      // breaker if the cwd is still frozen, or clears it on success.
+      unhealthyCwds.delete(input.cwd);
+    }
 
     const result = yield* processRunner
       .run({
@@ -89,6 +118,23 @@ export const make = Effect.fn("makeVcsProcess")(function* () {
               VcsOutputDecodeError.fromProcessStdinError(baseError, error),
             ProcessReadError: (error) =>
               VcsOutputDecodeError.fromProcessReadError(baseError, error),
+          }),
+        ),
+        Effect.tapError((error) =>
+          Effect.gen(function* () {
+            if (error._tag !== "VcsProcessTimeoutError") {
+              return;
+            }
+            const tripAtMs = yield* Clock.currentTimeMillis;
+            unhealthyCwds.set(input.cwd, {
+              retryAtMs: tripAtMs + UNHEALTHY_CWD_RETRY_AFTER_MS,
+              timeoutMs: error.timeoutMs,
+            });
+            yield* Effect.logWarning("[🩺 VcsBreaker] cwd marked unhealthy after timeout", {
+              cwd: input.cwd,
+              operation: input.operation,
+              retryAfterMs: UNHEALTHY_CWD_RETRY_AFTER_MS,
+            });
           }),
         ),
       );
