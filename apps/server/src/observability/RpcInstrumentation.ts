@@ -86,12 +86,40 @@ const recordRpcStreamMetrics = <E>(
     );
   });
 
+/**
+ * Handlers slower than this get a warning log. RPC spans are disabled on
+ * the websocket server (`disableTracing: true`), so without this the only
+ * symptom of a slow handler is a user staring at a spinner.
+ */
+const SLOW_RPC_WARN_MS = 10_000;
+
+const withSlowRpcWarning = <A, E, R>(
+  method: string,
+  effect: Effect.Effect<A, E, R>,
+): Effect.Effect<A, E, R> =>
+  Effect.gen(function* () {
+    const startedAtMs = yield* Clock.currentTimeMillis;
+    return yield* effect.pipe(
+      Effect.ensuring(
+        Effect.gen(function* () {
+          const elapsedMs = (yield* Clock.currentTimeMillis) - startedAtMs;
+          if (elapsedMs >= SLOW_RPC_WARN_MS) {
+            yield* Effect.logWarning("[🐢 SlowRpc] handler exceeded threshold", {
+              method,
+              elapsedMs: Math.round(elapsedMs),
+            });
+          }
+        }),
+      ),
+    );
+  });
+
 export const observeRpcEffect = <A, E, R>(
   method: string,
   effect: Effect.Effect<A, E, R>,
   traceAttributes?: Readonly<Record<string, unknown>>,
 ): Effect.Effect<A, E, R> => {
-  const instrumented = effect.pipe(
+  const instrumented = withSlowRpcWarning(method, effect).pipe(
     withMetrics({
       counter: rpcRequestsTotal,
       timer: rpcRequestDuration,
