@@ -14,6 +14,7 @@ import {
   RepositoryIdentityResolver,
   type RepositoryIdentityResolverShape,
 } from "../Services/RepositoryIdentityResolver.ts";
+import { isPathResponsive } from "../../vcs/FrozenPathGuard.ts";
 
 function parseRemoteFetchUrls(stdout: string): Map<string, string> {
   const remotes = new Map<string, string>();
@@ -155,6 +156,16 @@ export const makeRepositoryIdentityResolver = Effect.fn("makeRepositoryIdentityR
     const resolve: RepositoryIdentityResolverShape["resolve"] = Effect.fn(
       "RepositoryIdentityResolver.resolve",
     )(function* (cwd) {
+      // This resolver spawns two git commands against the workspace root
+      // and is called for EVERY project on EVERY shell snapshot. On a
+      // frozen filesystem (signed-out iCloud Drive, dead mount) each git
+      // call eats a full subprocess timeout, which multiplied across
+      // poisoned projects held shell snapshots for 40+ seconds — the
+      // sidebar rendered "No projects yet" meanwhile. Skip straight to
+      // "identity unknown" while the root is marked frozen.
+      if (!(yield* isPathResponsive(cwd))) {
+        return null;
+      }
       const cacheKey = yield* resolveRepositoryIdentityCacheKey(cwd).pipe(
         Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
       );
