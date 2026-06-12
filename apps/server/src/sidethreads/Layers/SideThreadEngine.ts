@@ -38,6 +38,7 @@ import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
+import { withNamedTransaction } from "../../persistence/instrumentedTransaction.ts";
 
 import { ServerConfig } from "../../config.ts";
 import { toPersistenceSqlError } from "../../persistence/Errors.ts";
@@ -131,21 +132,22 @@ const makeSideThreadEngine = Effect.gen(function* () {
         });
         const actorUserId = actorOf(planned);
 
-        const savedEvent = yield* sql
-          .withTransaction(
-            Effect.gen(function* () {
-              const saved = yield* eventStore.append(planned, actorUserId);
-              yield* projectionPipeline.projectEvent(saved);
-              return saved;
-            }),
-          )
-          .pipe(
-            Effect.catchTag("SqlError", (sqlError) =>
-              Effect.fail(
-                toPersistenceSqlError("SideThreadEngine.processEnvelope:transaction")(sqlError),
-              ),
+        const savedEvent = yield* withNamedTransaction(
+          sql,
+          "SideThreadEngine.dispatch",
+        )(
+          Effect.gen(function* () {
+            const saved = yield* eventStore.append(planned, actorUserId);
+            yield* projectionPipeline.projectEvent(saved);
+            return saved;
+          }),
+        ).pipe(
+          Effect.catchTag("SqlError", (sqlError) =>
+            Effect.fail(
+              toPersistenceSqlError("SideThreadEngine.processEnvelope:transaction")(sqlError),
             ),
-          );
+          ),
+        );
 
         commandReadModel = projectSideThreadEvent(commandReadModel, savedEvent);
         yield* PubSub.publish(eventPubSub, savedEvent);

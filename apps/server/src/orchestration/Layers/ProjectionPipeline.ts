@@ -11,6 +11,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
+import { withNamedTransaction } from "../../persistence/instrumentedTransaction.ts";
 
 import { toPersistenceSqlError, type ProjectionRepositoryError } from "../../persistence/Errors.ts";
 import { OrchestrationEventStore } from "../../persistence/Services/OrchestrationEventStore.ts";
@@ -1415,7 +1416,10 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         prunedThreadRelativePaths: new Map<string, Set<string>>(),
       };
 
-      yield* sql.withTransaction(
+      yield* withNamedTransaction(
+        sql,
+        "ProjectionPipeline.projectEvent",
+      )(
         projector.apply(event, attachmentSideEffects).pipe(
           Effect.flatMap(() =>
             projectionStateRepository.upsert({

@@ -1,5 +1,6 @@
 import { OrchestrationCheckpointFile } from "@t3tools/contracts";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
+import { withNamedTransaction } from "../instrumentedTransaction.ts";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -149,7 +150,10 @@ const makeProjectionCheckpointRepository = Effect.gen(function* () {
   });
 
   const upsertCheckpointRow = (row: Schema.Schema.Type<typeof ProjectionCheckpointDbRowSchema>) =>
-    sql.withTransaction(
+    withNamedTransaction(
+      sql,
+      "ProjectionCheckpoints.upsertCheckpointRow",
+    )(
       clearCheckpointConflict({
         threadId: row.threadId,
         checkpointTurnCount: row.checkpointTurnCount,

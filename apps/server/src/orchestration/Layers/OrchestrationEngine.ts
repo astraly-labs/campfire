@@ -20,6 +20,7 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
+import { withNamedTransaction } from "../../persistence/instrumentedTransaction.ts";
 
 import {
   metricAttributes,
@@ -153,51 +154,52 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           readModel: commandReadModel,
         });
         const eventBases = Array.isArray(eventBase) ? eventBase : [eventBase];
-        const committedCommand = yield* sql
-          .withTransaction(
-            Effect.gen(function* () {
-              const committedEvents: OrchestrationEvent[] = [];
-              let nextCommandReadModel = commandReadModel;
+        const committedCommand = yield* withNamedTransaction(
+          sql,
+          "OrchestrationEngine.dispatch",
+        )(
+          Effect.gen(function* () {
+            const committedEvents: OrchestrationEvent[] = [];
+            let nextCommandReadModel = commandReadModel;
 
-              for (const nextEvent of eventBases) {
-                const savedEvent = yield* eventStore.append(nextEvent);
-                nextCommandReadModel = yield* projectEvent(nextCommandReadModel, savedEvent);
-                yield* projectionPipeline.projectEvent(savedEvent);
-                committedEvents.push(savedEvent);
-              }
+            for (const nextEvent of eventBases) {
+              const savedEvent = yield* eventStore.append(nextEvent);
+              nextCommandReadModel = yield* projectEvent(nextCommandReadModel, savedEvent);
+              yield* projectionPipeline.projectEvent(savedEvent);
+              committedEvents.push(savedEvent);
+            }
 
-              const lastSavedEvent = committedEvents.at(-1) ?? null;
-              if (lastSavedEvent === null) {
-                return yield* new OrchestrationCommandInvariantError({
-                  commandType: envelope.command.type,
-                  detail: "Command produced no events.",
-                });
-              }
-
-              yield* commandReceiptRepository.upsert({
-                commandId: envelope.command.commandId,
-                aggregateKind: lastSavedEvent.aggregateKind,
-                aggregateId: lastSavedEvent.aggregateId,
-                acceptedAt: lastSavedEvent.occurredAt,
-                resultSequence: lastSavedEvent.sequence,
-                status: "accepted",
-                error: null,
+            const lastSavedEvent = committedEvents.at(-1) ?? null;
+            if (lastSavedEvent === null) {
+              return yield* new OrchestrationCommandInvariantError({
+                commandType: envelope.command.type,
+                detail: "Command produced no events.",
               });
+            }
 
-              return {
-                committedEvents,
-                lastSequence: lastSavedEvent.sequence,
-                nextCommandReadModel,
-              } as const;
-            }),
-          )
-          .pipe(
-            Effect.catchTag("SqlError", (sqlError) =>
-              Effect.fail(
-                toPersistenceSqlError("OrchestrationEngine.processEnvelope:transaction")(sqlError),
-              ),
+            yield* commandReceiptRepository.upsert({
+              commandId: envelope.command.commandId,
+              aggregateKind: lastSavedEvent.aggregateKind,
+              aggregateId: lastSavedEvent.aggregateId,
+              acceptedAt: lastSavedEvent.occurredAt,
+              resultSequence: lastSavedEvent.sequence,
+              status: "accepted",
+              error: null,
+            });
+
+            return {
+              committedEvents,
+              lastSequence: lastSavedEvent.sequence,
+              nextCommandReadModel,
+            } as const;
+          }),
+        ).pipe(
+          Effect.catchTag("SqlError", (sqlError) =>
+            Effect.fail(
+              toPersistenceSqlError("OrchestrationEngine.processEnvelope:transaction")(sqlError),
             ),
-          );
+          ),
+        );
 
         commandReadModel = committedCommand.nextCommandReadModel;
         for (const [index, event] of committedCommand.committedEvents.entries()) {
