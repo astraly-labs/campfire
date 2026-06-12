@@ -32,6 +32,15 @@ export interface WsProtocolLifecycleHandlers {
   readonly getVersionMismatchHint?: () => string | null;
   readonly isCloseIntentional?: () => boolean;
   readonly isActive?: () => boolean;
+  /**
+   * When `false`, this transport does not write into the global
+   * `wsConnectionState` atom nor the request-latency tracker. Secondary
+   * transports (e.g. the dedicated terminal socket) must stay silent:
+   * the connection toast, the reconnect coordinator and the slow-RPC
+   * toast all reason about the PRIMARY transport, and a second reporter
+   * would make the UI flap between two sockets' states. Defaults to true.
+   */
+  readonly reportConnectionStatus?: boolean;
   readonly onAttempt?: (socketUrl: string) => void;
   readonly onOpen?: () => void;
   readonly onHeartbeatPing?: () => void;
@@ -97,6 +106,15 @@ type ComposedWsProtocolLifecycleHandlers = Required<
 function defaultLifecycleHandlers(
   handlers?: WsProtocolLifecycleHandlers,
 ): ComposedWsProtocolLifecycleHandlers {
+  if (handlers?.reportConnectionStatus === false) {
+    return {
+      isActive: () => true,
+      onAttempt: () => undefined,
+      onOpen: () => undefined,
+      onError: () => undefined,
+      onClose: () => undefined,
+    };
+  }
   return {
     isActive: () => true,
     onAttempt: (socketUrl) => {
@@ -163,6 +181,7 @@ export function createWsRpcProtocolLayer(
   handlers?: WsProtocolLifecycleHandlers,
 ) {
   const lifecycle = composeLifecycleHandlers(handlers);
+  const reportsConnectionStatus = handlers?.reportConnectionStatus !== false;
   const resolvedUrl =
     typeof url === "function"
       ? Effect.promise(() => url()).pipe(
@@ -251,7 +270,10 @@ export function createWsRpcProtocolLayer(
         ...protocol,
         run: (clientId, writeResponse) =>
           protocol.run(clientId, (response) => {
-            if (response._tag === "ClientProtocolError" || response._tag === "Defect") {
+            if (
+              reportsConnectionStatus &&
+              (response._tag === "ClientProtocolError" || response._tag === "Defect")
+            ) {
               clearAllTrackedRpcRequests();
             }
             return writeResponse(response);
@@ -272,7 +294,9 @@ export function createWsRpcProtocolLayer(
             tag: info.tag,
             stream: info.stream,
           });
-          trackRpcRequestSent(String(info.id), info.tag);
+          if (reportsConnectionStatus) {
+            trackRpcRequestSent(String(info.id), info.tag);
+          }
         }),
       onRequestChunk: (info) =>
         Effect.sync(() => {
@@ -284,7 +308,9 @@ export function createWsRpcProtocolLayer(
             tag: info.tag,
             chunkCount: info.chunkCount,
           });
-          acknowledgeRpcRequest(String(info.id));
+          if (reportsConnectionStatus) {
+            acknowledgeRpcRequest(String(info.id));
+          }
         }),
       onRequestExit: (info) =>
         Effect.sync(() => {
@@ -296,7 +322,9 @@ export function createWsRpcProtocolLayer(
             tag: info.tag,
             stream: info.stream,
           });
-          acknowledgeRpcRequest(String(info.id));
+          if (reportsConnectionStatus) {
+            acknowledgeRpcRequest(String(info.id));
+          }
         }),
       onRequestInterrupt: (info) =>
         Effect.sync(() => {
@@ -307,7 +335,9 @@ export function createWsRpcProtocolLayer(
             id: String(info.id),
             ...(info.tag === undefined ? {} : { tag: info.tag }),
           });
-          acknowledgeRpcRequest(String(info.id));
+          if (reportsConnectionStatus) {
+            acknowledgeRpcRequest(String(info.id));
+          }
         }),
     }),
   );
@@ -329,11 +359,13 @@ export function createWsRpcProtocolLayer(
       onPingTimeout: Effect.sync(() => {
         if (lifecycle.isActive()) {
           realtimeLog("transport", "heartbeat.timeout");
-          clearAllTrackedRpcRequests();
-          recordWsConnectionErrored(
-            "WebSocket heartbeat timed out.",
-            resolveConnectionMetadata(handlers),
-          );
+          if (reportsConnectionStatus) {
+            clearAllTrackedRpcRequests();
+            recordWsConnectionErrored(
+              "WebSocket heartbeat timed out.",
+              resolveConnectionMetadata(handlers),
+            );
+          }
           handlers?.onHeartbeatTimeout?.();
         }
       }),

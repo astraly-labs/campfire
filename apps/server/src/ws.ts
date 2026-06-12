@@ -144,6 +144,15 @@ function isThreadDetailEvent(event: OrchestrationEvent): event is Extract<
 }
 
 const PROVIDER_STATUS_DEBOUNCE_MS = 200;
+/**
+ * Per-subscriber buffer for terminal event streams. With output coalescing
+ * each event carries up to 32KB, so this bounds a slow consumer's queue at
+ * ~8MB worst case before the stream is shed (the client resubscribes and
+ * redraws from history). Generous enough that a healthy client never hits
+ * it: it only fills when the socket drains slower than the PTY produces
+ * for a sustained stretch.
+ */
+const TERMINAL_SUBSCRIBER_BUFFER_EVENTS = 256;
 
 function toAuthAccessStreamEvent(
   change: BootstrapCredentialChange | SessionCredentialChange,
@@ -1890,11 +1899,27 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId, initialIdentity: Resolv
         [WS_METHODS.subscribeTerminalEvents]: (_input) =>
           observeRpcStream(
             WS_METHODS.subscribeTerminalEvents,
-            Stream.callback<TerminalEvent>((queue) =>
-              Effect.acquireRelease(
-                terminalManager.subscribe((event) => Queue.offer(queue, event)),
-                (unsubscribe) => Effect.sync(unsubscribe),
-              ),
+            // Bounded per-subscriber buffer: a slow consumer (saturated
+            // remote link) must not grow server memory without limit while
+            // PTY output floods in. On overflow we END the stream instead
+            // of dropping events silently — truncated ANSI output would
+            // corrupt the client's terminal. The client auto-resubscribes
+            // and re-fetches the session snapshot, redrawing from history;
+            // a persistently slow client therefore degrades to periodic
+            // history redraws instead of an unbounded server-side queue.
+            Stream.callback<TerminalEvent>(
+              (queue) =>
+                Effect.acquireRelease(
+                  terminalManager.subscribe((event) =>
+                    Effect.sync(() => {
+                      if (!Queue.offerUnsafe(queue, event)) {
+                        Queue.endUnsafe(queue);
+                      }
+                    }),
+                  ),
+                  (unsubscribe) => Effect.sync(unsubscribe),
+                ),
+              { bufferSize: TERMINAL_SUBSCRIBER_BUFFER_EVENTS },
             ),
             { "rpc.aggregate": "terminal" },
           ),

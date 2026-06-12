@@ -1138,6 +1138,9 @@ function createEnvironmentConnectionHandlers() {
       }
       useTerminalStateStore.getState().applyTerminalEvent(threadRef, event);
     },
+    onTerminalStreamResubscribed: () => {
+      useTerminalStateStore.getState().noteTerminalStreamRecovered();
+    },
   };
 }
 
@@ -1158,6 +1161,18 @@ function createPrimaryEnvironmentClient(
       getVersionMismatchHint: () =>
         resolveServerConfigVersionMismatch(getServerConfig())?.hint ?? null,
     }),
+    {
+      // Dedicated socket so keystrokes never queue behind multi-megabyte
+      // chat snapshots or diffs on the shared connection. Created lazily on
+      // first terminal use; silent towards the global connection surface —
+      // the toast / reconnect coordinator reason about the primary
+      // transport only.
+      createTerminalTransport: () =>
+        new WsTransport(wsBaseUrl, {
+          getConnectionLabel: () => connectionLabel,
+          reportConnectionStatus: false,
+        }),
+    },
   );
 }
 
@@ -1167,25 +1182,27 @@ function createSavedEnvironmentClient(
 ): WsRpcClient {
   useSavedEnvironmentRuntimeStore.getState().ensure(environmentId);
 
+  const resolveSocketUrl = async () => {
+    const record = getSavedEnvironmentRecord(environmentId);
+    if (!record) {
+      throw new Error(`Saved environment ${environmentId} not found.`);
+    }
+    return record.desktopSsh
+      ? await resolveDesktopSshWebSocketConnectionUrl(
+          record.wsBaseUrl,
+          record.httpBaseUrl,
+          bearerToken,
+        )
+      : await resolveRemoteWebSocketConnectionUrl({
+          wsBaseUrl: record.wsBaseUrl,
+          httpBaseUrl: record.httpBaseUrl,
+          bearerToken,
+        });
+  };
+
   return createWsRpcClient(
     new WsTransport(
-      async () => {
-        const record = getSavedEnvironmentRecord(environmentId);
-        if (!record) {
-          throw new Error(`Saved environment ${environmentId} not found.`);
-        }
-        return record.desktopSsh
-          ? await resolveDesktopSshWebSocketConnectionUrl(
-              record.wsBaseUrl,
-              record.httpBaseUrl,
-              bearerToken,
-            )
-          : await resolveRemoteWebSocketConnectionUrl({
-              wsBaseUrl: record.wsBaseUrl,
-              httpBaseUrl: record.httpBaseUrl,
-              bearerToken,
-            });
-      },
+      resolveSocketUrl,
       {
         getConnectionLabel: () => getSavedEnvironmentRecord(environmentId)?.label ?? null,
         getVersionMismatchHint: () =>
@@ -1227,6 +1244,16 @@ function createSavedEnvironmentClient(
         },
       },
     ),
+    {
+      // Same head-of-line-blocking isolation as the primary environment:
+      // terminal I/O rides its own lazily-created connection, silent towards
+      // both the global connection atom and this environment's runtime store.
+      createTerminalTransport: () =>
+        new WsTransport(resolveSocketUrl, {
+          getConnectionLabel: () => getSavedEnvironmentRecord(environmentId)?.label ?? null,
+          reportConnectionStatus: false,
+        }),
+    },
   );
 }
 

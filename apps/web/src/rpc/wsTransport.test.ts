@@ -1297,6 +1297,29 @@ describe("WsTransport", () => {
     await transport.dispose();
   }, 10_000);
 
+  it("keeps a status-silent transport out of the global connection state", async () => {
+    const transport = createTransport("ws://localhost:3020", {
+      reportConnectionStatus: false,
+    });
+
+    await waitFor(() => {
+      expect(sockets).toHaveLength(1);
+    });
+    getSocket().open();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    // The dedicated terminal socket must not move the primary connection
+    // surface: no attempt recorded, phase untouched.
+    expect(getWsConnectionStatus().phase).toBe("idle");
+    expect(getWsConnectionStatus().attemptCount).toBe(0);
+
+    getSocket().close(1006, "blip");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(getWsConnectionStatus().phase).toBe("idle");
+    expect(getWsConnectionStatus().disconnectedAt).toBeNull();
+
+    await transport.dispose();
+  });
+
   it("propagates domain errors immediately without retrying the request", async () => {
     const transport = createTransport("ws://localhost:3020");
 

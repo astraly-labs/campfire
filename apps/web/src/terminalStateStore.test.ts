@@ -427,4 +427,13 @@ describe("terminalStateStore actions", () => {
 
     expect(useTerminalStateStore.getState()).toBe(before);
   });
+
+  it("bumps the stream epoch each time the terminal stream recovers", () => {
+    const initialEpoch = useTerminalStateStore.getState().terminalStreamEpoch;
+
+    useTerminalStateStore.getState().noteTerminalStreamRecovered();
+    useTerminalStateStore.getState().noteTerminalStreamRecovered();
+
+    expect(useTerminalStateStore.getState().terminalStreamEpoch).toBe(initialEpoch + 2);
+  });
 });

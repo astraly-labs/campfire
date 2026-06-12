@@ -293,6 +293,7 @@ export function TerminalViewport({
   const keybindingsRef = useRef(keybindings);
   const lastAppliedTerminalEventIdRef = useRef(0);
   const terminalHydratedRef = useRef(false);
+  const reopenTerminalRef = useRef<(() => void) | null>(null);
   const handleSessionExited = useEffectEvent(() => {
     onSessionExited();
   });
@@ -729,9 +730,18 @@ export function TerminalViewport({
         .catch(() => undefined);
     }, 30);
     void openTerminal();
+    // The terminal stream lost events (reconnect / server load-shedding):
+    // re-run the open flow so xterm redraws from server-side history.
+    // De-hydrating first routes events arriving mid-reopen through the same
+    // replay-after-snapshot path the initial mount uses.
+    reopenTerminalRef.current = () => {
+      terminalHydratedRef.current = false;
+      void openTerminal();
+    };
 
     return () => {
       disposed = true;
+      reopenTerminalRef.current = null;
       terminalHydratedRef.current = false;
       lastAppliedTerminalEventIdRef.current = 0;
       unsubscribeTerminalEvents();
@@ -765,6 +775,19 @@ export function TerminalViewport({
       window.cancelAnimationFrame(frame);
     };
   }, [autoFocus, focusRequestId]);
+
+  const terminalStreamEpoch = useTerminalStateStore((state) => state.terminalStreamEpoch);
+  // Initialized to the mount-time epoch so a recovery that happened before
+  // this drawer existed doesn't trigger a redundant re-open; the mount flow
+  // already fetched a fresh snapshot.
+  const seenStreamEpochRef = useRef(terminalStreamEpoch);
+  useEffect(() => {
+    if (terminalStreamEpoch === seenStreamEpochRef.current) {
+      return;
+    }
+    seenStreamEpochRef.current = terminalStreamEpoch;
+    reopenTerminalRef.current?.();
+  }, [terminalStreamEpoch]);
 
   useEffect(() => {
     const api = readEnvironmentApi(environmentId);

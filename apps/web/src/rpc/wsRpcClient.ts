@@ -201,36 +201,83 @@ export interface WsRpcClient {
   };
 }
 
-export function createWsRpcClient(transport: WsTransport): WsRpcClient {
+export interface CreateWsRpcClientOptions {
+  /**
+   * Optional factory for a dedicated transport for the terminal namespace.
+   * The terminal is the latency-sensitive interactive channel: on a single
+   * shared socket, a multi-megabyte thread snapshot or diff response blocks
+   * keystroke echo behind it (WebSocket messages cannot interleave). Riding
+   * terminal I/O on its own TCP connection makes it immune to that
+   * head-of-line blocking.
+   *
+   * A factory rather than an instance on purpose: a `WsTransport` starts
+   * dialing as soon as it is constructed, and most clients never open a
+   * terminal — the second socket is only worth paying for on first terminal
+   * use. When omitted, the terminal shares the primary transport.
+   */
+  readonly createTerminalTransport?: () => WsTransport;
+}
+
+export function createWsRpcClient(
+  transport: WsTransport,
+  clientOptions?: CreateWsRpcClientOptions,
+): WsRpcClient {
+  let lazyTerminalTransport: WsTransport | null = null;
+  const terminalTransport = () => {
+    const factory = clientOptions?.createTerminalTransport;
+    if (!factory) {
+      return transport;
+    }
+    if (!lazyTerminalTransport) {
+      lazyTerminalTransport = factory();
+    }
+    return lazyTerminalTransport;
+  };
   return {
-    dispose: () => transport.dispose(),
+    dispose: async () => {
+      await Promise.all([
+        transport.dispose(),
+        lazyTerminalTransport ? lazyTerminalTransport.dispose() : Promise.resolve(),
+      ]);
+    },
     reconnect: async () => {
       resetWsReconnectBackoff();
-      await transport.reconnect();
+      await Promise.all([
+        transport.reconnect(),
+        lazyTerminalTransport ? lazyTerminalTransport.reconnect() : Promise.resolve(),
+      ]);
     },
     isHeartbeatFresh: () => transport.isHeartbeatFresh(),
     terminal: {
-      open: (input) => transport.request((client) => client[WS_METHODS.terminalOpen](input)),
+      open: (input) =>
+        terminalTransport().request((client) => client[WS_METHODS.terminalOpen](input)),
       // Keystrokes and resizes are non-idempotent and only meaningful in the
       // moment: replaying a 30 s old burst of input into a shell after a
       // reconnect would be worse than dropping it, so these stay on the
       // brief blind-retry path instead of waiting for reconnection.
       write: (input) =>
-        transport.request((client) => client[WS_METHODS.terminalWrite](input), {
+        terminalTransport().request((client) => client[WS_METHODS.terminalWrite](input), {
           retry: "brief",
         }),
       resize: (input) =>
-        transport.request((client) => client[WS_METHODS.terminalResize](input), {
+        terminalTransport().request((client) => client[WS_METHODS.terminalResize](input), {
           retry: "brief",
         }),
-      clear: (input) => transport.request((client) => client[WS_METHODS.terminalClear](input)),
-      restart: (input) => transport.request((client) => client[WS_METHODS.terminalRestart](input)),
-      close: (input) => transport.request((client) => client[WS_METHODS.terminalClose](input)),
+      clear: (input) =>
+        terminalTransport().request((client) => client[WS_METHODS.terminalClear](input)),
+      restart: (input) =>
+        terminalTransport().request((client) => client[WS_METHODS.terminalRestart](input)),
+      close: (input) =>
+        terminalTransport().request((client) => client[WS_METHODS.terminalClose](input)),
       onEvent: (listener, options) =>
-        transport.subscribe((client) => client[WS_METHODS.subscribeTerminalEvents]({}), listener, {
-          ...options,
-          tag: WS_METHODS.subscribeTerminalEvents,
-        }),
+        terminalTransport().subscribe(
+          (client) => client[WS_METHODS.subscribeTerminalEvents]({}),
+          listener,
+          {
+            ...options,
+            tag: WS_METHODS.subscribeTerminalEvents,
+          },
+        ),
     },
     projects: {
       searchEntries: (input) =>

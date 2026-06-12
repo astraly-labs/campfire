@@ -385,7 +385,9 @@ export class WsTransport {
       }
 
       realtimeLog("transport", "reconnect.begin");
-      clearAllTrackedRpcRequests();
+      if (this.lifecycleHandlers?.reportConnectionStatus !== false) {
+        clearAllTrackedRpcRequests();
+      }
       this.lastHeartbeatPongAt = 0;
       const previousSession = this.session;
       this.session = this.createSession();

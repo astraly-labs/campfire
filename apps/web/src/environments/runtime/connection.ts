@@ -31,6 +31,13 @@ interface OrchestrationHandlers {
     environmentId: EnvironmentId,
   ) => void;
   readonly applyTerminalEvent: (event: TerminalEvent, environmentId: EnvironmentId) => void;
+  /**
+   * Fired when the terminal event stream re-attaches after a drop (socket
+   * blip or server-side backpressure shedding). Output emitted during the
+   * gap is lost, so open terminal views must re-fetch their snapshot to
+   * redraw from history.
+   */
+  readonly onTerminalStreamResubscribed?: (environmentId: EnvironmentId) => void;
 }
 
 interface EnvironmentConnectionInput extends OrchestrationHandlers {
@@ -149,6 +156,14 @@ export function createEnvironmentConnection(
   const unsubTerminalEvent = input.client.terminal.onEvent(
     (event: Parameters<Parameters<WsRpcClient["terminal"]["onEvent"]>[0]>[0]) => {
       input.applyTerminalEvent(event, environmentId);
+    },
+    {
+      onResubscribe: () => {
+        if (disposed) {
+          return;
+        }
+        input.onTerminalStreamResubscribed?.(environmentId);
+      },
     },
   );
 

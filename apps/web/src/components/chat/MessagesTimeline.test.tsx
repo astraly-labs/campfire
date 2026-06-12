@@ -118,7 +118,13 @@ function buildUserTimelineEntry(text: string) {
   };
 }
 
-describe("MessagesTimeline", () => {
+// The first test to run pays the on-demand transform + evaluation of the
+// whole MessagesTimeline import graph (effectively most of the chat app).
+// That cold import sits at several seconds and scales with how many files
+// of the graph changed since the last cache, so the default 5s per-test
+// budget flakes on it. Give the suite headroom: the time is module loading,
+// not the assertions under test.
+describe("MessagesTimeline", { timeout: 20_000 }, () => {
   it("renders collapse controls for long user messages", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(

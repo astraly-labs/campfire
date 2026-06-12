@@ -611,6 +611,14 @@ interface TerminalStateStoreState {
   ) => void;
   recordTerminalEvent: (threadRef: ScopedThreadRef, event: TerminalEvent) => void;
   applyTerminalEvent: (threadRef: ScopedThreadRef, event: TerminalEvent) => void;
+  /**
+   * Monotonic counter bumped when the terminal event stream re-attaches
+   * after a drop. Output between the drop and the resubscribe is lost, so
+   * mounted terminal views watch this and re-fetch their snapshot to redraw
+   * from server-side history. Transient (not persisted).
+   */
+  terminalStreamEpoch: number;
+  noteTerminalStreamRecovered: () => void;
   clearTerminalState: (threadRef: ScopedThreadRef) => void;
   removeTerminalState: (threadRef: ScopedThreadRef) => void;
   removeOrphanedTerminalStates: (activeThreadKeys: Set<string>) => void;
@@ -643,6 +651,9 @@ export const useTerminalStateStore = create<TerminalStateStoreState>()(
         terminalLaunchContextByThreadKey: {},
         terminalEventEntriesByKey: {},
         nextTerminalEventId: 1,
+        terminalStreamEpoch: 0,
+        noteTerminalStreamRecovered: () =>
+          set((state) => ({ terminalStreamEpoch: state.terminalStreamEpoch + 1 })),
         setTerminalOpen: (threadRef, open) =>
           updateTerminal(threadRef, (state) => setThreadTerminalOpen(state, open)),
         setTerminalHeight: (threadRef, height) =>
