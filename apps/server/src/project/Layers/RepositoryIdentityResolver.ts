@@ -88,8 +88,14 @@ const DEFAULT_NEGATIVE_CACHE_TTL = Duration.minutes(1);
  * (the interruption closes the process scope and kills the lingering git),
  * and a timeout trips the slow-cwd breaker below so subsequent snapshots
  * skip the probe entirely.
+ *
+ * Kept comfortably below the snapshot-level aggregate deadline (~2s) so a
+ * frozen probe trips THIS breaker before the outer deadline interrupts it —
+ * otherwise the breaker never arms and every snapshot pays the full
+ * aggregate cost. A healthy `git rev-parse` + `remote -v` is single-digit
+ * milliseconds, so 1s leaves enormous headroom for legitimately slow disks.
  */
-const DEFAULT_PROBE_TIMEOUT = Duration.seconds(3);
+const DEFAULT_PROBE_TIMEOUT = Duration.seconds(1);
 const DEFAULT_SLOW_CWD_RETRY_AFTER = Duration.minutes(5);
 
 interface RepositoryIdentityResolverOptions {

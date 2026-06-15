@@ -276,7 +276,13 @@ function toPersistenceSqlOrDecodeError(sqlOperation: string, decodeOperation: st
 const makeProjectionSnapshotQuery = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const repositoryIdentityResolver = yield* RepositoryIdentityResolver;
-  const repositoryIdentityResolutionConcurrency = 4;
+  // Wide fan-out on purpose: identity resolution spawns a git child per root,
+  // which on a frozen filesystem hangs in its own process (not on our I/O
+  // pool) until the resolver's 1s probe deadline kills it. Probing all roots
+  // in one wave lets the resolver's per-cwd breaker arm for every frozen
+  // path within a single snapshot, so the NEXT snapshot resolves them as
+  // instant cached-null instead of paying the aggregate deadline again.
+  const repositoryIdentityResolutionConcurrency = 24;
   /**
    * Hard ceiling on how long a shell snapshot may spend resolving repository
    * identities. Identity is best-effort enrichment (a provider icon, PR
