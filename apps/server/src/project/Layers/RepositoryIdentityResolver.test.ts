@@ -2,9 +2,11 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
 import { TestClock } from "effect/testing";
 
 import * as ProcessRunner from "../../processRunner.ts";
@@ -195,6 +197,62 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
           ),
         ),
       ),
+  );
+
+  it.effect(
+    "trips a breaker on a hanging git probe and fast-fails until the retry window elapses",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        // A responsive cwd (real temp dir) so isPathResponsive passes — the
+        // hang is in the git probe, mirroring a frozen worktree whose own
+        // directory stats fine.
+        const cwd = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-repository-identity-frozen-probe-",
+        });
+        const probeCalls = yield* Ref.make(0);
+
+        // Mock ProcessRunner whose git invocation never returns, simulating
+        // a probe blocked on a frozen filesystem.
+        const hangingProcessRunner = Layer.succeed(ProcessRunner.ProcessRunner)(
+          ProcessRunner.ProcessRunner.of({
+            run: () =>
+              Ref.update(probeCalls, (count) => count + 1).pipe(Effect.andThen(Effect.never)),
+          }),
+        );
+
+        const resolverLayer = Layer.effect(
+          RepositoryIdentityResolver,
+          makeRepositoryIdentityResolver({
+            cacheCapacity: 16,
+            probeTimeout: Duration.millis(100),
+            slowCwdRetryAfter: Duration.minutes(5),
+          }),
+        ).pipe(Layer.provide(hangingProcessRunner));
+
+        yield* Effect.gen(function* () {
+          const resolver = yield* RepositoryIdentityResolver;
+
+          // First resolve: probe hangs, the deadline trips → null, breaker armed.
+          const firstFiber = yield* resolver.resolve(cwd).pipe(Effect.forkScoped);
+          yield* Effect.yieldNow;
+          yield* TestClock.adjust(Duration.millis(100));
+          expect(yield* Fiber.join(firstFiber)).toBeNull();
+          expect(yield* Ref.get(probeCalls)).toBe(1);
+
+          // Second resolve within the window: fast-fail, no probe spawned.
+          expect(yield* resolver.resolve(cwd)).toBeNull();
+          expect(yield* Ref.get(probeCalls)).toBe(1);
+
+          // After the retry window, one probe is allowed through again.
+          yield* TestClock.adjust(Duration.minutes(6));
+          const reprobeFiber = yield* resolver.resolve(cwd).pipe(Effect.forkScoped);
+          yield* Effect.yieldNow;
+          yield* TestClock.adjust(Duration.millis(100));
+          expect(yield* Fiber.join(reprobeFiber)).toBeNull();
+          expect(yield* Ref.get(probeCalls)).toBe(2);
+        }).pipe(Effect.provide(resolverLayer));
+      }).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect("refreshes cached identities after the positive TTL when a remote changes", () =>

@@ -1,9 +1,11 @@
 import type { RepositoryIdentity } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
+import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import {
   detectSourceControlProviderFromGitRemoteUrl,
   normalizeGitRemoteUrl,
@@ -77,11 +79,25 @@ function buildRepositoryIdentity(input: {
 const DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY = 512;
 const DEFAULT_POSITIVE_CACHE_TTL = Duration.minutes(1);
 const DEFAULT_NEGATIVE_CACHE_TTL = Duration.minutes(1);
+/**
+ * Per-call ceiling on the two git probes. A git *worktree* of a repo whose
+ * main checkout is on a frozen filesystem (signed-out iCloud Drive) stats
+ * fine on its own dir — so {@link isPathResponsive} can't catch it — but
+ * `git -C <worktree> rev-parse` then hangs reading the worktree's `.git`
+ * pointer back into the dead main repo. This deadline interrupts that hang
+ * (the interruption closes the process scope and kills the lingering git),
+ * and a timeout trips the slow-cwd breaker below so subsequent snapshots
+ * skip the probe entirely.
+ */
+const DEFAULT_PROBE_TIMEOUT = Duration.seconds(3);
+const DEFAULT_SLOW_CWD_RETRY_AFTER = Duration.minutes(5);
 
 interface RepositoryIdentityResolverOptions {
   readonly cacheCapacity?: number;
   readonly positiveCacheTtl?: Duration.Input;
   readonly negativeCacheTtl?: Duration.Input;
+  readonly probeTimeout?: Duration.Input;
+  readonly slowCwdRetryAfter?: Duration.Input;
 }
 
 const resolveRepositoryIdentityCacheKey = Effect.fn("resolveRepositoryIdentityCacheKey")(function* (
@@ -153,6 +169,15 @@ export const makeRepositoryIdentityResolver = Effect.fn("makeRepositoryIdentityR
       },
     );
 
+    const probeTimeout = Duration.fromInputUnsafe(options.probeTimeout ?? DEFAULT_PROBE_TIMEOUT);
+    const slowCwdRetryAfter = Duration.toMillis(
+      Duration.fromInputUnsafe(options.slowCwdRetryAfter ?? DEFAULT_SLOW_CWD_RETRY_AFTER),
+    );
+    // Breaker for cwds whose git probes time out (frozen worktrees). Keyed on
+    // the original cwd, not the resolved toplevel, because the toplevel probe
+    // is itself what hangs.
+    const slowCwdRetryAtMs = new Map<string, number>();
+
     const resolve: RepositoryIdentityResolverShape["resolve"] = Effect.fn(
       "RepositoryIdentityResolver.resolve",
     )(function* (cwd) {
@@ -166,10 +191,35 @@ export const makeRepositoryIdentityResolver = Effect.fn("makeRepositoryIdentityR
       if (!(yield* isPathResponsive(cwd))) {
         return null;
       }
-      const cacheKey = yield* resolveRepositoryIdentityCacheKey(cwd).pipe(
-        Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
-      );
-      return yield* Cache.get(repositoryIdentityCache, cacheKey);
+
+      const nowMs = yield* Clock.currentTimeMillis;
+      const retryAtMs = slowCwdRetryAtMs.get(cwd);
+      if (retryAtMs !== undefined) {
+        if (nowMs < retryAtMs) {
+          return null;
+        }
+        slowCwdRetryAtMs.delete(cwd);
+      }
+
+      const resolved = yield* Effect.gen(function* () {
+        const cacheKey = yield* resolveRepositoryIdentityCacheKey(cwd).pipe(
+          Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
+        );
+        return yield* Cache.get(repositoryIdentityCache, cacheKey);
+      }).pipe(Effect.timeoutOption(probeTimeout));
+
+      if (Option.isNone(resolved)) {
+        const trippedAtMs = yield* Clock.currentTimeMillis;
+        slowCwdRetryAtMs.set(cwd, trippedAtMs + slowCwdRetryAfter);
+        yield* Effect.logWarning("[🩺 VcsBreaker] repository-identity probe timed out", {
+          cwd,
+          probeTimeoutMs: Duration.toMillis(probeTimeout),
+          retryAfterMs: slowCwdRetryAfter,
+        });
+        return null;
+      }
+
+      return resolved.value;
     });
 
     return {
