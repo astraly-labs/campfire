@@ -277,6 +277,22 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const repositoryIdentityResolver = yield* RepositoryIdentityResolver;
   const repositoryIdentityResolutionConcurrency = 4;
+  /**
+   * Hard ceiling on how long a shell snapshot may spend resolving repository
+   * identities. Identity is best-effort enrichment (a provider icon, PR
+   * back-links) — it must never block "show me my projects". Resolution
+   * spawns git per workspace root, and on a frozen filesystem (signed-out
+   * iCloud Drive, dead mount) each probe pins an uncancelable syscall for
+   * ~10s; one dead repo poisons its main root AND every git worktree that
+   * points back into it, so a handful of dead projects used to hold the
+   * snapshot for 40s+ and the sidebar rendered "No projects yet".
+   *
+   * With this deadline the snapshot returns within ~2s no matter how many
+   * roots are frozen — identities that resolved in time are included, the
+   * rest come back null and fill in on a later snapshot once the per-path
+   * breakers (see FrozenPathGuard / VcsProcess) have armed.
+   */
+  const REPOSITORY_IDENTITY_RESOLUTION_DEADLINE_MS = 2_000;
   const resolveRepositoryIdentitiesForProjects = Effect.fn(
     "ProjectionSnapshotQuery.resolveRepositoryIdentitiesForProjects",
   )(function* (
@@ -290,16 +306,18 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         ? projectRows
         : projectRows.filter((row) => row.deletedAt === null);
     const uniqueWorkspaceRoots = [...new Set(filteredProjectRows.map((row) => row.workspaceRoot))];
-    const repositoryIdentityByWorkspaceRoot = new Map(
-      yield* Effect.forEach(
-        uniqueWorkspaceRoots,
-        (workspaceRoot) =>
-          repositoryIdentityResolver
-            .resolve(workspaceRoot)
-            .pipe(Effect.map((identity) => [workspaceRoot, identity] as const)),
-        { concurrency: repositoryIdentityResolutionConcurrency },
-      ),
+    const resolvedEntries = yield* Effect.forEach(
+      uniqueWorkspaceRoots,
+      (workspaceRoot) =>
+        repositoryIdentityResolver
+          .resolve(workspaceRoot)
+          .pipe(Effect.map((identity) => [workspaceRoot, identity] as const)),
+      { concurrency: repositoryIdentityResolutionConcurrency },
+    ).pipe(
+      Effect.timeoutOption(REPOSITORY_IDENTITY_RESOLUTION_DEADLINE_MS),
+      Effect.map(Option.getOrElse(() => [])),
     );
+    const repositoryIdentityByWorkspaceRoot = new Map(resolvedEntries);
 
     return new Map(
       filteredProjectRows.map((row) => [
