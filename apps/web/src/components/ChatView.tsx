@@ -103,6 +103,7 @@ import {
   isLatestTurnSettled,
 } from "../session-logic";
 import { type LegendListRef } from "@legendapp/list/react";
+import { SideThreadDrawer } from "../sidethread/SideThreadDrawer";
 import {
   CHAT_TIMELINE_ANCHOR_OFFSET,
   getAnchoredTurnMetrics,
@@ -1302,11 +1303,15 @@ function ChatViewContent(props: ChatViewProps) {
   const threadDetailLoading = threadSyncPhase === "loading";
   const handleNewThread = useNewThreadHandler();
   const { settleThread, pinThread, confirmAndUnpinThread } = useThreadActions();
+  const [sideThreadAnchorMessageId, setSideThreadAnchorMessageId] = useState<MessageId | null>(
+    null,
+  );
   const routeThreadRef = useMemo(
     () => scopeThreadRef(environmentId, threadId),
     [environmentId, threadId],
   );
   const routeThreadKey = useMemo(() => scopedThreadKey(routeThreadRef), [routeThreadRef]);
+  useEffect(() => setSideThreadAnchorMessageId(null), [routeThreadKey]);
   const updateProject = useAtomCommand(projectEnvironment.update, { reportFailure: false });
   const upsertKeybinding = useAtomCommand(serverEnvironment.upsertKeybinding, {
     reportFailure: false,
@@ -7239,6 +7244,7 @@ function ChatViewContent(props: ChatViewProps) {
                 revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
                 onRevertUserMessage={onRevertUserMessage}
                 onUseArtifactTemplate={useArtifactTemplate}
+                onOpenSideThread={setSideThreadAnchorMessageId}
                 isRevertingCheckpoint={isRevertingCheckpoint}
                 onImageExpand={onExpandTimelineImage}
                 onFileOpen={openFileAttachment}
@@ -7628,6 +7634,15 @@ function ChatViewContent(props: ChatViewProps) {
           onClose={closeExpandedImage}
         />
       )}
+      {isServerThread ? (
+        <SideThreadDrawer
+          environmentId={activeThread.environmentId}
+          threadId={activeThread.id}
+          thread={activeThread}
+          anchorMessageId={sideThreadAnchorMessageId}
+          onClose={() => setSideThreadAnchorMessageId(null)}
+        />
+      ) : null}
     </div>
   );
 }

@@ -134,7 +134,7 @@ Next:
 
 ### H4: Google OIDC plus Tailscale reduces onboarding risk without coupling agent lifetime to login
 
-Status: running
+Status: confirmed
 
 Google OIDC can replace shared pairing credentials while preserving long-lived, revocable server sessions. Tailscale remains the network gate; OIDC authenticates the human at the application layer; neither browser token refresh nor browser disconnect owns Codex process lifetime.
 
@@ -413,3 +413,40 @@ Decision:
 Next:
 
 - Rebuild SideThreads on the already bounded durable orchestration command/event path instead of restoring the archived standalone queues and replay loop.
+
+### H12: SideThreads can reuse the durable orchestration aggregate without a second runtime
+
+Status: running
+
+A side conversation anchored to an agent message can be modeled as commands and events on its parent orchestration thread. Reusing the existing bounded command mailbox, SQLite event log, projection pipeline, detail snapshots, and fail-and-resume stream should make collaboration durable without restoring v0's independent unbounded queues, full-log bootstrap, or client-authored identity.
+
+Expected signal:
+
+- Creating, posting, and archiving a SideThread produces ordered parent-thread events and survives a projection rebuild/reconnect.
+- The event author comes from authenticated event metadata; SideThread commands contain no author field.
+- Existing detailed-thread snapshot fallback and 512-frame live buffer apply unchanged under slow subscribers.
+- The UI can open a message-anchored drawer and exchange human messages without sending anything to Codex.
+
+Validation:
+
+- Command/query: decider/projector/reducer fixtures, real authenticated WebSocket dispatch/replay, and focused UI state/presentation tests.
+- Dataset/window: duplicate IDs, missing anchors, archived conversations, reconnect from a prior sequence, and concurrent messages serialized through one parent-thread lane.
+- Control/baseline: archived `campfire/v0` standalone SideThread event store, projection tables, unbounded command queue, and unbounded subscription PubSubs.
+
+Result:
+
+- Added schema-only SideThread commands/events and kept them on the parent thread aggregate. Create, post, and archive therefore inherit the existing durable command receipt, per-thread serial scheduler, ordered SQLite event log, 512-frame live buffer, cursor replay, and detail-snapshot fallback without adding a queue, provider session, or runtime.
+- The client command schemas contain no identity fields. The decider requires a verified client actor, records the server-derived Google subject/display name, rejects missing anchors, duplicate IDs, archived posts, and missing actors, and bounds each parent to 256 SideThreads and each SideThread to 500 messages.
+- Added a SQLite `side_threads_json` read projection with an idempotent migration defaulting existing rows to `[]`. A projection bootstrap from six durable events reconstructed the created conversation, Google authors, message, timestamps, and archive state; the snapshot query then decoded the same typed structure for clients. Restarting the isolated development server applied migration 34 successfully.
+- Added the message-anchored web drawer, durable composer, archive control, and typing-presence integration. Opening or posting never invokes Codex; commands use the existing serial parent-thread lane and optimistic identity is never accepted.
+- A real Google OIDC WebSocket fixture sent a forged `createdBy` field and proved it was stripped before dispatch while the verified `google:alice-stable-subject` actor remained attached to the envelope.
+- Validation passed all 180 server test files (1,590 tests, seven skipped), including migration, projection rebuild/snapshot, decider/projector, authenticated WebSocket, restart/replay, and bounded transport coverage. Focused web and client-runtime SideThread tests passed, repository-wide lint had zero errors, and all package typechecks passed apart from pre-existing Effect suggestions.
+- Browser-driven visual QA could not run because the in-app browser runtime exposed no browser instance in this session; deterministic component state/presentation coverage passed and this does not affect the durable path proof.
+
+Decision:
+
+- Keep SideThreads as parent-thread orchestration data and delete the architectural need for v0's standalone runtime. The durable event log remains the source of truth; SQL JSON is only a rebuildable read projection.
+
+Next:
+
+- Exercise the complete system with five authenticated concurrent clients, independent worktree threads, slow/reconnecting consumers, and zero-browser agent continuation under measurable latency/resource thresholds.

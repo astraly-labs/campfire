@@ -164,6 +164,7 @@ interface TimelineRowSharedState {
   activeThreadEnvironmentId: EnvironmentId;
   onRevertUserMessage: (messageId: MessageId) => void;
   onUseArtifactTemplate: (template: CodexArtifactTemplate) => void;
+  onOpenSideThread: (messageId: MessageId) => void;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onFileOpen: (attachment: ChatFileAttachment) => void;
   openingVideoAttachmentId: string | null;
@@ -224,6 +225,7 @@ const TIMELINE_MAINTAIN_SCROLL_AT_END = {
     layout: true,
   },
 } as const;
+const IGNORE_SIDE_THREAD_OPEN = (_messageId: MessageId) => {};
 
 // ---------------------------------------------------------------------------
 // Props (public API)
@@ -245,6 +247,7 @@ interface MessagesTimelineProps {
   revertTurnCountByUserMessageId: Map<MessageId, number>;
   onRevertUserMessage: (messageId: MessageId) => void;
   onUseArtifactTemplate?: (template: CodexArtifactTemplate) => void;
+  onOpenSideThread?: (messageId: MessageId) => void;
   isRevertingCheckpoint: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onFileOpen?: (attachment: ChatFileAttachment) => void;
@@ -293,6 +296,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   revertTurnCountByUserMessageId,
   onRevertUserMessage,
   onUseArtifactTemplate = NOOP_USE_ARTIFACT_TEMPLATE,
+  onOpenSideThread = IGNORE_SIDE_THREAD_OPEN,
   isRevertingCheckpoint,
   onImageExpand,
   onFileOpen = NOOP_OPEN_ATTACHMENT,
@@ -558,6 +562,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       activeThreadEnvironmentId,
       onRevertUserMessage,
       onUseArtifactTemplate,
+      onOpenSideThread,
       onImageExpand,
       onFileOpen,
       openingVideoAttachmentId,
@@ -577,6 +582,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       activeThreadEnvironmentId,
       onRevertUserMessage,
       onUseArtifactTemplate,
+      onOpenSideThread,
       onImageExpand,
       onFileOpen,
       openingVideoAttachmentId,
@@ -1197,6 +1203,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             </TooltipPopup>
           </Tooltip>
           <div className="flex items-center gap-0.5">
+            <SideThreadButton messageId={row.message.id} />
             {canRevertAgentWork && <RevertUserMessageButton messageId={row.message.id} />}
             {displayedUserMessage.copyText && (
               <MessageCopyButton text={displayedUserMessage.copyText} variant="ghost" />
@@ -1205,6 +1212,28 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         </div>
       </div>
     </div>
+  );
+}
+
+function SideThreadButton({ messageId }: { messageId: MessageId }) {
+  const ctx = use(TimelineRowCtx);
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            type="button"
+            size="xs"
+            variant="ghost"
+            onClick={() => ctx.onOpenSideThread(messageId)}
+            aria-label="Open team discussion"
+          />
+        }
+      >
+        <MessageCircleIcon className="size-3" />
+      </TooltipTrigger>
+      <TooltipPopup side="top">Discuss with the team</TooltipPopup>
+    </Tooltip>
   );
 }
 
@@ -1278,6 +1307,7 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
         />
         {row.showAssistantMeta ? (
           <div className="mt-1.5 flex items-center gap-2 text-xs tabular-nums opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover/assistant:opacity-100">
+            <SideThreadButton messageId={row.message.id} />
             <AssistantCopyButton row={row} />
             {!row.message.streaming && (
               <Tooltip>

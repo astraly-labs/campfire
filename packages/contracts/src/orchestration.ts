@@ -316,6 +316,37 @@ export const OrchestrationMessage = Schema.Struct({
 });
 export type OrchestrationMessage = typeof OrchestrationMessage.Type;
 
+export const SideThreadId = TrimmedNonEmptyString.pipe(Schema.brand("SideThreadId"));
+export type SideThreadId = typeof SideThreadId.Type;
+export const SideThreadMessageId = TrimmedNonEmptyString.pipe(Schema.brand("SideThreadMessageId"));
+export type SideThreadMessageId = typeof SideThreadMessageId.Type;
+
+export const SideThreadAuthor = Schema.Struct({
+  subject: TrimmedNonEmptyString,
+  displayName: TrimmedNonEmptyString,
+  networkLogin: Schema.optional(TrimmedNonEmptyString),
+});
+export type SideThreadAuthor = typeof SideThreadAuthor.Type;
+
+export const SideThreadMessage = Schema.Struct({
+  id: SideThreadMessageId,
+  author: SideThreadAuthor,
+  text: TrimmedNonEmptyString.check(Schema.isMaxLength(20_000)),
+  createdAt: IsoDateTime,
+});
+export type SideThreadMessage = typeof SideThreadMessage.Type;
+
+export const SideThread = Schema.Struct({
+  id: SideThreadId,
+  anchorMessageId: MessageId,
+  createdBy: SideThreadAuthor,
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+  archivedAt: Schema.NullOr(IsoDateTime),
+  messages: Schema.Array(SideThreadMessage),
+});
+export type SideThread = typeof SideThread.Type;
+
 export const OrchestrationProposedPlanId = TrimmedNonEmptyString;
 export type OrchestrationProposedPlanId = typeof OrchestrationProposedPlanId.Type;
 
@@ -479,6 +510,7 @@ export const OrchestrationThread = Schema.Struct({
   titleRegeneration: Schema.optional(Schema.NullOr(ThreadTitleRegeneration)),
   deletedAt: Schema.NullOr(IsoDateTime),
   messages: Schema.Array(OrchestrationMessage),
+  sideThreads: Schema.optional(Schema.Array(SideThread)),
   proposedPlans: Schema.Array(OrchestrationProposedPlan).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
@@ -986,6 +1018,33 @@ const ThreadSessionStopCommand = Schema.Struct({
   onlyIfSettled: Schema.optional(Schema.Boolean),
 });
 
+const SideThreadCreateCommand = Schema.Struct({
+  type: Schema.Literal("sidethread.create"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  sideThreadId: SideThreadId,
+  anchorMessageId: MessageId,
+  createdAt: IsoDateTime,
+});
+
+const SideThreadMessagePostCommand = Schema.Struct({
+  type: Schema.Literal("sidethread.message.post"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  sideThreadId: SideThreadId,
+  messageId: SideThreadMessageId,
+  text: TrimmedNonEmptyString.check(Schema.isMaxLength(20_000)),
+  createdAt: IsoDateTime,
+});
+
+const SideThreadArchiveCommand = Schema.Struct({
+  type: Schema.Literal("sidethread.archive"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  sideThreadId: SideThreadId,
+  createdAt: IsoDateTime,
+});
+
 const DispatchableClientOrchestrationCommand = Schema.Union([
   ProjectCreateCommand,
   ProjectMetaUpdateCommand,
@@ -1010,6 +1069,9 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadUserInputRespondCommand,
   ThreadCheckpointRevertCommand,
   ThreadSessionStopCommand,
+  SideThreadCreateCommand,
+  SideThreadMessagePostCommand,
+  SideThreadArchiveCommand,
 ]);
 export type DispatchableClientOrchestrationCommand =
   typeof DispatchableClientOrchestrationCommand.Type;
@@ -1038,6 +1100,9 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadUserInputRespondCommand,
   ThreadCheckpointRevertCommand,
   ThreadSessionStopCommand,
+  SideThreadCreateCommand,
+  SideThreadMessagePostCommand,
+  SideThreadArchiveCommand,
 ]);
 export type ClientOrchestrationCommand = typeof ClientOrchestrationCommand.Type;
 
@@ -1163,6 +1228,9 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.proposed-plan-upserted",
   "thread.turn-diff-completed",
   "thread.activity-appended",
+  "sidethread.created",
+  "sidethread.message-posted",
+  "sidethread.archived",
 ]);
 export type OrchestrationEventType = typeof OrchestrationEventType.Type;
 
@@ -1420,6 +1488,29 @@ export const OrchestrationClientOrigin = Schema.Struct({
 });
 export type OrchestrationClientOrigin = typeof OrchestrationClientOrigin.Type;
 
+export const SideThreadCreatedPayload = Schema.Struct({
+  threadId: ThreadId,
+  sideThreadId: SideThreadId,
+  anchorMessageId: MessageId,
+  createdBy: SideThreadAuthor,
+  createdAt: IsoDateTime,
+});
+
+export const SideThreadMessagePostedPayload = Schema.Struct({
+  threadId: ThreadId,
+  sideThreadId: SideThreadId,
+  messageId: SideThreadMessageId,
+  author: SideThreadAuthor,
+  text: TrimmedNonEmptyString.check(Schema.isMaxLength(20_000)),
+  createdAt: IsoDateTime,
+});
+
+export const SideThreadArchivedPayload = Schema.Struct({
+  threadId: ThreadId,
+  sideThreadId: SideThreadId,
+  archivedAt: IsoDateTime,
+});
+
 export const OrchestrationEventMetadata = Schema.Struct({
   actor: Schema.optional(OrchestrationEventActor),
   providerTurnId: Schema.optional(TrimmedNonEmptyString),
@@ -1588,6 +1679,21 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.activity-appended"),
     payload: ThreadActivityAppendedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("sidethread.created"),
+    payload: SideThreadCreatedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("sidethread.message-posted"),
+    payload: SideThreadMessagePostedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("sidethread.archived"),
+    payload: SideThreadArchivedPayload,
   }),
 ]);
 export type OrchestrationEvent = typeof OrchestrationEvent.Type;
