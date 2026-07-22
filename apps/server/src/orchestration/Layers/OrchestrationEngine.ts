@@ -16,7 +16,6 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
-import * as PubSub from "effect/PubSub";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -28,8 +27,12 @@ import {
   orchestrationCommandQueueRejectionsTotal,
   orchestrationCommandsTotal,
   orchestrationCommandDuration,
+  orchestrationEventFeedReadRetriesTotal,
 } from "../../observability/Metrics.ts";
-import { toPersistenceSqlError } from "../../persistence/Errors.ts";
+import {
+  type OrchestrationEventStoreError,
+  toPersistenceSqlError,
+} from "../../persistence/Errors.ts";
 import { OrchestrationEventStore } from "../../persistence/Services/OrchestrationEventStore.ts";
 import { OrchestrationCommandReceiptRepository } from "../../persistence/Services/OrchestrationCommandReceipts.ts";
 import {
@@ -41,6 +44,7 @@ import {
 } from "../Errors.ts";
 import { decideOrchestrationCommand } from "../decider.ts";
 import { makeCommandMailbox } from "../commandMailbox.ts";
+import { makeDurableEventFeed } from "../durableEventFeed.ts";
 import { createEmptyReadModel, projectEvent } from "../projector.ts";
 import { OrchestrationProjectionPipeline } from "../Services/ProjectionPipeline.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
@@ -106,7 +110,18 @@ const makeOrchestrationEngine = Effect.gen(function* () {
         timeoutMs: Duration.toMillis(COMMAND_QUEUE_OFFER_TIMEOUT),
       }),
   });
-  const eventPubSub = yield* PubSub.unbounded<OrchestrationEvent>();
+  const eventFeed = yield* makeDurableEventFeed<OrchestrationEvent, OrchestrationEventStoreError>({
+    currentSequence: Effect.sync(() => commandReadModel.snapshotSequence),
+    read: eventStore.readFromSequence,
+    sequence: (event) => event.sequence,
+    retryDelay: "100 millis",
+    onReadError: (error) =>
+      Metric.update(orchestrationEventFeedReadRetriesTotal, 1).pipe(
+        Effect.andThen(
+          Effect.logWarning("orchestration durable event feed read failed; retrying", { error }),
+        ),
+      ),
+  });
 
   const projectEventsOntoReadModel = (
     baseReadModel: OrchestrationReadModel,
@@ -139,7 +154,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
       commandReadModel = yield* projectEventsOntoReadModel(commandReadModel, persistedEvents);
 
       for (const persistedEvent of persistedEvents) {
-        yield* PubSub.publish(eventPubSub, persistedEvent);
+        yield* eventFeed.notify(persistedEvent.sequence);
       }
     });
 
@@ -232,7 +247,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
 
         commandReadModel = committedCommand.nextCommandReadModel;
         for (const [index, event] of committedCommand.committedEvents.entries()) {
-          yield* PubSub.publish(eventPubSub, event);
+          yield* eventFeed.notify(event.sequence);
           if (index === 0) {
             yield* Metric.update(
               Metric.withAttributes(
@@ -357,7 +372,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
     // consumers (wsServer, ProviderRuntimeIngestion, CheckpointReactor, etc.)
     // each independently receive all domain events.
     get streamDomainEvents(): OrchestrationEngineShape["streamDomainEvents"] {
-      return Stream.fromPubSub(eventPubSub);
+      return eventFeed.stream;
     },
     // The command read model's snapshotSequence tracks the latest committed
     // event sequence (updated on the worker fiber). A plain property read is a

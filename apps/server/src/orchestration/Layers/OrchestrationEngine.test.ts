@@ -10,7 +10,9 @@ import {
   ProviderInstanceId,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Metric from "effect/Metric";
@@ -479,6 +481,99 @@ describe("OrchestrationEngine", () => {
     );
 
     expect(eventTypes).toEqual(["thread.created", "thread.meta-updated"]);
+    await system.dispose();
+  });
+
+  it("lets a blocked subscriber catch up durably without delaying a fast subscriber", async () => {
+    const system = await createOrchestrationSystem();
+    const { engine } = system;
+    const createdAt = now();
+    const projectId = asProjectId("project-durable-feed");
+    const threadId = ThreadId.make("thread-durable-feed");
+
+    await system.run(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("cmd-durable-feed-project"),
+        projectId,
+        title: "Durable Feed Project",
+        workspaceRoot: "/tmp/project-durable-feed",
+        defaultModelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-durable-feed-thread"),
+        threadId,
+        projectId,
+        title: "Durable Feed Thread",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        branch: null,
+        worktreePath: null,
+        createdAt,
+      }),
+    );
+
+    const slowSequences: number[] = [];
+    const fastSequences: number[] = [];
+    const eventCount = 20;
+    await system.run(
+      Effect.gen(function* () {
+        const firstSlowEvent = yield* Deferred.make<void>();
+        const releaseSlowSubscriber = yield* Deferred.make<void>();
+        const slowFiber = yield* engine.streamDomainEvents.pipe(
+          Stream.take(eventCount),
+          Stream.runForEach((event) =>
+            Effect.gen(function* () {
+              slowSequences.push(event.sequence);
+              if (slowSequences.length === 1) {
+                yield* Deferred.succeed(firstSlowEvent, undefined);
+                yield* Deferred.await(releaseSlowSubscriber);
+              }
+            }),
+          ),
+          Effect.forkChild({ startImmediately: true }),
+        );
+        const fastFiber = yield* engine.streamDomainEvents.pipe(
+          Stream.take(eventCount),
+          Stream.runForEach((event) => Effect.sync(() => fastSequences.push(event.sequence))),
+          Effect.forkChild({ startImmediately: true }),
+        );
+
+        for (let index = 0; index < eventCount; index += 1) {
+          yield* engine.dispatch({
+            type: "thread.meta.update",
+            commandId: CommandId.make(`cmd-durable-feed-update-${index}`),
+            threadId,
+            title: `Durable Feed Thread ${index}`,
+          });
+          if (index === 0) {
+            yield* Deferred.await(firstSlowEvent);
+          }
+        }
+
+        yield* Fiber.join(fastFiber);
+        yield* Deferred.succeed(releaseSlowSubscriber, undefined);
+        yield* Fiber.join(slowFiber);
+      }).pipe(Effect.timeout("5 seconds")),
+    );
+
+    expect(fastSequences).toHaveLength(eventCount);
+    expect(slowSequences).toEqual(fastSequences);
+    expect(
+      fastSequences.every((sequence, index) => index === 0 || sequence > fastSequences[index - 1]!),
+    ).toBe(true);
+
     await system.dispose();
   });
 
