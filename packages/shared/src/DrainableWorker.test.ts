@@ -2,6 +2,7 @@ import { it } from "@effect/vitest";
 import { describe, expect } from "vite-plus/test";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 
 import { makeDrainableWorker } from "./DrainableWorker.ts";
 
@@ -51,6 +52,46 @@ describe("makeDrainableWorker", () => {
         yield* Deferred.await(drained);
 
         expect(processed).toEqual(["first", "second"]);
+      }),
+    ),
+  );
+
+  it.live("backpressures producers at capacity without losing FIFO work", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const processed: string[] = [];
+        const firstStarted = yield* Deferred.make<void>();
+        const releaseFirst = yield* Deferred.make<void>();
+        const thirdAdmitted = yield* Deferred.make<void>();
+        const worker = yield* makeDrainableWorker(
+          (item: string) =>
+            Effect.gen(function* () {
+              if (item === "first") {
+                yield* Deferred.succeed(firstStarted, undefined);
+                yield* Deferred.await(releaseFirst);
+              }
+              processed.push(item);
+            }),
+          { capacity: 1 },
+        );
+
+        yield* worker.enqueue("first");
+        yield* Deferred.await(firstStarted);
+        yield* worker.enqueue("second");
+        const thirdOffer = yield* worker.enqueue("third").pipe(
+          Effect.tap(() => Deferred.succeed(thirdAdmitted, undefined)),
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* Effect.yieldNow;
+
+        expect(yield* Deferred.isDone(thirdAdmitted)).toBe(false);
+
+        yield* Deferred.succeed(releaseFirst, undefined);
+        yield* Deferred.await(thirdAdmitted);
+        yield* Fiber.join(thirdOffer);
+        yield* worker.drain;
+
+        expect(processed).toEqual(["first", "second", "third"]);
       }),
     ),
   );

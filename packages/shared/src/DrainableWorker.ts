@@ -1,7 +1,7 @@
 /**
  * DrainableWorker - A queue-based worker that exposes a `drain()` effect.
  *
- * Wraps the common `Queue.unbounded` + `Effect.forever` pattern and adds
+ * Wraps a bounded queue + `Effect.forever` pattern and adds
  * a signal that resolves when the queue is empty **and** the current item
  * has finished processing. This lets tests replace timing-sensitive
  * `Effect.sleep` calls with deterministic `drain()`.
@@ -28,8 +28,14 @@ export interface DrainableWorker<A> {
   readonly drain: Effect.Effect<void>;
 }
 
+export interface DrainableWorkerOptions {
+  readonly capacity?: number;
+}
+
+const DEFAULT_DRAINABLE_WORKER_CAPACITY = 1_024;
+
 /**
- * Create a drainable worker that processes items from an unbounded queue.
+ * Create a drainable worker that processes items from a bounded queue.
  *
  * The worker is forked into the current scope and will be interrupted when
  * the scope closes. A finalizer shuts down the queue.
@@ -39,9 +45,11 @@ export interface DrainableWorker<A> {
  */
 export const makeDrainableWorker = <A, E, R>(
   process: (item: A) => Effect.Effect<void, E, R>,
+  options: DrainableWorkerOptions = {},
 ): Effect.Effect<DrainableWorker<A>, never, Scope.Scope | R> =>
   Effect.gen(function* () {
-    const queue = yield* Effect.acquireRelease(TxQueue.unbounded<A>(), TxQueue.shutdown);
+    const capacity = Math.max(1, Math.floor(options.capacity ?? DEFAULT_DRAINABLE_WORKER_CAPACITY));
+    const queue = yield* Effect.acquireRelease(TxQueue.bounded<A>(capacity), TxQueue.shutdown);
     const outstanding = yield* TxRef.make(0);
 
     yield* TxQueue.take(queue).pipe(
@@ -60,10 +68,11 @@ export const makeDrainableWorker = <A, E, R>(
       Effect.tx,
     );
 
-    const enqueue = (element: A): Effect.Effect<boolean, never, never> =>
+    const enqueue = (element: A): Effect.Effect<void, never, never> =>
       TxQueue.offer(queue, element).pipe(
         Effect.tap(() => TxRef.update(outstanding, (n) => n + 1)),
         Effect.tx,
+        Effect.asVoid,
       );
 
     return { enqueue, drain } satisfies DrainableWorker<A>;
