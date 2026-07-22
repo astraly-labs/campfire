@@ -74,6 +74,13 @@ describe("applyThreadDetailEvent", () => {
     it("creates a fresh thread", () => {
       const result = applyThreadDetailEvent(baseThread, {
         ...baseEventFields,
+        metadata: {
+          actor: {
+            kind: "client",
+            subject: "google:alice-sub",
+            displayName: "Alice",
+          },
+        },
         sequence: 1,
         occurredAt: "2026-04-01T01:00:00.000Z",
         aggregateKind: "thread",
@@ -98,6 +105,10 @@ describe("applyThreadDetailEvent", () => {
         expect(result.thread.id).toBe("thread-2");
         expect(result.thread.title).toBe("New Thread");
         expect(result.thread.branch).toBe("main");
+        expect(result.thread.createdBy).toEqual({
+          subject: "google:alice-sub",
+          displayName: "Alice",
+        });
         expect(result.thread.messages).toEqual([]);
         expect(result.thread.session).toBeNull();
       }
@@ -253,6 +264,13 @@ describe("applyThreadDetailEvent", () => {
     it("appends a new message", () => {
       const result = applyThreadDetailEvent(baseThread, {
         ...baseEventFields,
+        metadata: {
+          actor: {
+            kind: "client",
+            subject: "google:alice-sub",
+            displayName: "Alice",
+          },
+        },
         sequence: 6,
         occurredAt: "2026-04-01T06:00:00.000Z",
         aggregateKind: "thread",
@@ -274,6 +292,10 @@ describe("applyThreadDetailEvent", () => {
       if (result.kind === "updated") {
         expect(result.thread.messages).toHaveLength(1);
         expect(result.thread.messages[0]?.text).toBe("Hello, world!");
+        expect(result.thread.messages[0]?.author).toEqual({
+          subject: "google:alice-sub",
+          displayName: "Alice",
+        });
       }
     });
 

@@ -2,6 +2,7 @@ import { pipe } from "effect/Function";
 import * as Arr from "effect/Array";
 import * as O from "effect/Order";
 import type {
+  CollaborationUser,
   MessageId,
   OrchestrationCheckpointSummary,
   OrchestrationEvent,
@@ -12,6 +13,15 @@ import type {
   OrchestrationThreadActivity,
   TurnId,
 } from "@t3tools/contracts";
+
+function googleUserFromEvent(event: OrchestrationEvent): CollaborationUser | null {
+  const actor = event.metadata.actor;
+  if (actor?.kind !== "client" || !actor.subject?.startsWith("google:")) return null;
+  return {
+    subject: actor.subject,
+    displayName: actor.displayName ?? actor.subject,
+  };
+}
 
 export type ThreadDetailReducerResult =
   | { readonly kind: "updated"; readonly thread: OrchestrationThread }
@@ -68,6 +78,7 @@ export function applyThreadDetailEvent(
           interactionMode: event.payload.interactionMode,
           branch: event.payload.branch,
           worktreePath: event.payload.worktreePath,
+          createdBy: googleUserFromEvent(event),
           latestTurn: null,
           createdAt: event.payload.createdAt,
           updatedAt: event.payload.updatedAt,
@@ -235,6 +246,7 @@ export function applyThreadDetailEvent(
           ? { attachments: event.payload.attachments }
           : {}),
         turnId: event.payload.turnId,
+        author: googleUserFromEvent(event),
         streaming: event.payload.streaming,
         createdAt: event.payload.createdAt,
         updatedAt: event.payload.updatedAt,
@@ -257,6 +269,9 @@ export function applyThreadDetailEvent(
                   ...(message.streaming ? {} : { updatedAt: message.updatedAt }),
                   ...(message.attachments !== undefined
                     ? { attachments: message.attachments }
+                    : {}),
+                  ...(entry.author == null && message.author != null
+                    ? { author: message.author }
                     : {}),
                 },
           )
@@ -528,7 +543,9 @@ export function applyThreadDetailEvent(
             ...(thread.sideThreads ?? []),
             {
               id: event.payload.sideThreadId,
-              anchorMessageId: event.payload.anchorMessageId,
+              ...(event.payload.anchorMessageId !== undefined
+                ? { anchorMessageId: event.payload.anchorMessageId }
+                : {}),
               createdBy: event.payload.createdBy,
               createdAt: event.payload.createdAt,
               updatedAt: event.payload.createdAt,
@@ -555,6 +572,12 @@ export function applyThreadDetailEvent(
                       id: event.payload.messageId,
                       author: event.payload.author,
                       text: event.payload.text,
+                      ...(event.payload.mentions !== undefined
+                        ? { mentions: event.payload.mentions }
+                        : {}),
+                      ...(event.payload.quotedMessageId !== undefined
+                        ? { quotedMessageId: event.payload.quotedMessageId }
+                        : {}),
                       createdAt: event.payload.createdAt,
                     },
                   ],

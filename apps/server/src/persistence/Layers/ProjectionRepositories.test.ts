@@ -37,6 +37,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         createdAt: "2026-03-24T00:00:00.000Z",
         updatedAt: "2026-03-24T00:00:00.000Z",
         deletedAt: null,
+        createdBy: null,
       });
 
       const rows = yield* sql<{
@@ -100,6 +101,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         pendingUserInputCount: 0,
         hasActionableProposedPlan: 0,
         deletedAt: null,
+        createdBy: null,
       });
 
       const rows = yield* sql<{
@@ -162,6 +164,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         pendingUserInputCount: 0,
         hasActionableProposedPlan: 0,
         deletedAt: null,
+        createdBy: null,
       });
 
       const persisted = yield* threads.getById({

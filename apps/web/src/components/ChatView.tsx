@@ -39,6 +39,7 @@ import {
 } from "@t3tools/shared/model";
 import { CHAT_LIST_ANCHOR_OFFSET } from "@t3tools/shared/chatList";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
+import { sideThreadIdForThread } from "@t3tools/shared/sideThread";
 import { truncate } from "@t3tools/shared/String";
 import { nextTerminalId, resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
 import { Debouncer } from "@tanstack/react-pacer";
@@ -88,6 +89,7 @@ import {
 } from "../session-logic";
 import { type LegendListRef } from "@legendapp/list/react";
 import { SideThreadDrawer } from "../sidethread/SideThreadDrawer";
+import { useGoogleTeam } from "../collaboration/googleTeam";
 import { getAnchoredTurnMetrics, type TimelineScrollMode } from "./chat/timelineScrollAnchoring";
 import {
   buildPendingUserInputAnswers,
@@ -1142,6 +1144,8 @@ function ChatViewContent(props: ChatViewProps) {
   const threadSyncPhase = routeKind === "server" ? (props.threadSyncPhase ?? null) : null;
   const threadDetailLoading = threadSyncPhase === "loading";
   const handleNewThread = useNewThreadHandler();
+  const googleTeam = useGoogleTeam(environmentId);
+  const [sideThreadOpen, setSideThreadOpen] = useState(false);
   const [sideThreadAnchorMessageId, setSideThreadAnchorMessageId] = useState<MessageId | null>(
     null,
   );
@@ -1150,7 +1154,14 @@ function ChatViewContent(props: ChatViewProps) {
     [environmentId, threadId],
   );
   const routeThreadKey = useMemo(() => scopedThreadKey(routeThreadRef), [routeThreadRef]);
-  useEffect(() => setSideThreadAnchorMessageId(null), [routeThreadKey]);
+  useEffect(() => {
+    setSideThreadOpen(false);
+    setSideThreadAnchorMessageId(null);
+  }, [routeThreadKey]);
+  const openSideThread = useCallback((messageId?: MessageId) => {
+    setSideThreadAnchorMessageId(messageId ?? null);
+    setSideThreadOpen(true);
+  }, []);
   const updateProject = useAtomCommand(projectEnvironment.update, { reportFailure: false });
   const upsertKeybinding = useAtomCommand(serverEnvironment.upsertKeybinding, {
     reportFailure: false,
@@ -5702,6 +5713,19 @@ function ChatViewContent(props: ChatViewProps) {
             keybindings={keybindings}
             availableEditors={availableEditors}
             rightPanelOpen={rightPanelOpen}
+            sideThreadOpen={sideThreadOpen}
+            sideThreadMessageCount={
+              activeThread.sideThreads?.find(
+                (sideThread) => sideThread.id === sideThreadIdForThread(activeThread.id),
+              )?.messages.length ?? 0
+            }
+            onToggleSideThread={() => {
+              if (sideThreadOpen) {
+                setSideThreadOpen(false);
+                return;
+              }
+              openSideThread();
+            }}
             gitCwd={gitCwd}
             onNewThreadInProject={handleNewThreadInActiveProject}
             onRunProjectScript={runProjectScript}
@@ -5748,7 +5772,9 @@ function ChatViewContent(props: ChatViewProps) {
                 onOpenTurnDiff={onOpenTurnDiff}
                 revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
                 onRevertUserMessage={onRevertUserMessage}
-                onOpenSideThread={setSideThreadAnchorMessageId}
+                onOpenSideThread={openSideThread}
+                googleTeam={googleTeam.members}
+                currentGoogleSubject={googleTeam.current?.subject ?? null}
                 isRevertingCheckpoint={isRevertingCheckpoint}
                 onImageExpand={onExpandTimelineImage}
                 markdownCwd={gitCwd ?? undefined}
@@ -6115,8 +6141,12 @@ function ChatViewContent(props: ChatViewProps) {
           environmentId={activeThread.environmentId}
           threadId={activeThread.id}
           thread={activeThread}
-          anchorMessageId={sideThreadAnchorMessageId}
-          onClose={() => setSideThreadAnchorMessageId(null)}
+          open={sideThreadOpen}
+          contextMessageId={sideThreadAnchorMessageId}
+          onClose={() => {
+            setSideThreadOpen(false);
+            setSideThreadAnchorMessageId(null);
+          }}
         />
       ) : null}
     </div>

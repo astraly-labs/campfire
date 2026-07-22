@@ -5233,7 +5233,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
   );
 
-  it.effect("uses trusted Tailscale Serve identity for websocket attribution", () =>
+  it.effect("never uses Tailscale headers as websocket identity", () =>
     Effect.gen(function* () {
       let observedActor: OrchestrationEventActor | undefined;
       yield* buildAppUnderTest({
@@ -5276,9 +5276,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       assert.deepEqual(observedActor, {
         kind: "client",
-        subject: "tailscale:alice@example.com",
-        displayName: "Alice Example",
-        networkLogin: "alice@example.com",
+        subject: "desktop-bootstrap",
+        displayName: "desktop-bootstrap",
         sessionId: observedActor?.sessionId,
       });
       assert.isString(observedActor?.sessionId);

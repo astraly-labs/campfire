@@ -1,4 +1,9 @@
-import type { OrchestrationEvent, OrchestrationReadModel, ThreadId } from "@t3tools/contracts";
+import type {
+  CollaborationUser,
+  OrchestrationEvent,
+  OrchestrationReadModel,
+  ThreadId,
+} from "@t3tools/contracts";
 import {
   OrchestrationCheckpointSummary,
   OrchestrationMessage,
@@ -38,6 +43,15 @@ import {
 type ThreadPatch = Partial<Omit<OrchestrationThread, "id" | "projectId">>;
 const MAX_THREAD_MESSAGES = 2_000;
 const MAX_THREAD_CHECKPOINTS = 500;
+
+function googleUserFromEvent(event: OrchestrationEvent): CollaborationUser | null {
+  const actor = event.metadata.actor;
+  if (actor?.kind !== "client" || !actor.subject?.startsWith("google:")) return null;
+  return {
+    subject: actor.subject,
+    displayName: actor.displayName ?? actor.subject,
+  };
+}
 
 function checkpointStatusToLatestTurnState(status: "ready" | "missing" | "error") {
   if (status === "error") return "error" as const;
@@ -218,6 +232,7 @@ export function projectEvent(
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,
             deletedAt: null,
+            createdBy: googleUserFromEvent(event),
           };
 
           return {
@@ -303,6 +318,7 @@ export function projectEvent(
             activities: [],
             checkpoints: [],
             session: null,
+            createdBy: googleUserFromEvent(event),
           },
           event.type,
           "thread",
@@ -464,6 +480,7 @@ export function projectEvent(
             streaming: payload.streaming,
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,
+            author: googleUserFromEvent(event),
           },
           event.type,
           "message",
@@ -764,7 +781,9 @@ export function projectEvent(
                 ...(thread.sideThreads ?? []),
                 {
                   id: payload.sideThreadId,
-                  anchorMessageId: payload.anchorMessageId,
+                  ...(payload.anchorMessageId !== undefined
+                    ? { anchorMessageId: payload.anchorMessageId }
+                    : {}),
                   createdBy: payload.createdBy,
                   createdAt: payload.createdAt,
                   updatedAt: payload.createdAt,
@@ -801,6 +820,10 @@ export function projectEvent(
                           id: payload.messageId,
                           author: payload.author,
                           text: payload.text,
+                          ...(payload.mentions !== undefined ? { mentions: payload.mentions } : {}),
+                          ...(payload.quotedMessageId !== undefined
+                            ? { quotedMessageId: payload.quotedMessageId }
+                            : {}),
                           createdAt: payload.createdAt,
                         },
                       ],

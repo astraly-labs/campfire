@@ -6,6 +6,7 @@ import {
   type OrchestrationReadModel,
   type SideThreadAuthor,
 } from "@t3tools/contracts";
+import { isSideThreadIdForThread } from "@t3tools/shared/sideThread";
 import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -184,17 +185,20 @@ function requireSideThreadAuthor(
   actor: OrchestrationEventActor | undefined,
   commandType: OrchestrationCommand["type"],
 ): Effect.Effect<SideThreadAuthor, OrchestrationCommandInvariantError> {
-  if (actor?.kind === "client" && actor.subject !== undefined) {
+  if (
+    actor?.kind === "client" &&
+    actor.subject !== undefined &&
+    actor.subject.startsWith("google:")
+  ) {
     return Effect.succeed({
       subject: actor.subject,
       displayName: actor.displayName ?? actor.subject,
-      ...(actor.networkLogin !== undefined ? { networkLogin: actor.networkLogin } : {}),
     });
   }
   return Effect.fail(
     new OrchestrationCommandInvariantError({
       commandType,
-      detail: "SideThread commands require an authenticated client actor.",
+      detail: "SideThread commands require an authenticated Google account.",
     }),
   );
 }
@@ -256,22 +260,25 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           detail: `Thread '${command.threadId}' cannot accept a side conversation.`,
         });
       }
-      if (!thread.messages.some((message) => message.id === command.anchorMessageId)) {
+      if (!isSideThreadIdForThread(command.sideThreadId, command.threadId)) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `SideThread '${command.sideThreadId}' is not the canonical discussion for thread '${command.threadId}'.`,
+        });
+      }
+      if (
+        command.anchorMessageId !== undefined &&
+        !thread.messages.some((message) => message.id === command.anchorMessageId)
+      ) {
         return yield* new OrchestrationCommandInvariantError({
           commandType: command.type,
           detail: `Anchor message '${command.anchorMessageId}' does not exist.`,
         });
       }
-      if ((thread.sideThreads ?? []).some((sideThread) => sideThread.id === command.sideThreadId)) {
+      if ((thread.sideThreads?.length ?? 0) > 0) {
         return yield* new OrchestrationCommandInvariantError({
           commandType: command.type,
-          detail: `SideThread '${command.sideThreadId}' already exists.`,
-        });
-      }
-      if ((thread.sideThreads?.length ?? 0) >= 256) {
-        return yield* new OrchestrationCommandInvariantError({
-          commandType: command.type,
-          detail: `Thread '${command.threadId}' reached the 256 SideThread limit.`,
+          detail: `Thread '${command.threadId}' already has its team discussion.`,
         });
       }
       return {
@@ -285,7 +292,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           sideThreadId: command.sideThreadId,
-          anchorMessageId: command.anchorMessageId,
+          ...(command.anchorMessageId !== undefined
+            ? { anchorMessageId: command.anchorMessageId }
+            : {}),
           createdBy,
           createdAt: command.createdAt,
         },
@@ -322,6 +331,24 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           detail: `SideThread '${command.sideThreadId}' reached the 500 message limit.`,
         });
       }
+      const mentions = [
+        ...new Map((command.mentions ?? []).map((user) => [user.subject, user])).values(),
+      ];
+      if (mentions.length > 20) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "A SideThread message cannot mention more than 20 teammates.",
+        });
+      }
+      if (
+        command.quotedMessageId !== undefined &&
+        !thread.messages.some((message) => message.id === command.quotedMessageId)
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Quoted message '${command.quotedMessageId}' does not exist.`,
+        });
+      }
       return {
         ...(yield* withEventBase({
           aggregateKind: "thread",
@@ -336,6 +363,10 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           messageId: command.messageId,
           author,
           text: command.text,
+          ...(mentions.length > 0 ? { mentions } : {}),
+          ...(command.quotedMessageId !== undefined
+            ? { quotedMessageId: command.quotedMessageId }
+            : {}),
           createdAt: command.createdAt,
         },
       };

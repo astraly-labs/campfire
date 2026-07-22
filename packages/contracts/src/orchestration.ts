@@ -209,6 +209,13 @@ export const ProjectScript = Schema.Struct({
 });
 export type ProjectScript = typeof ProjectScript.Type;
 
+/** Stable authenticated account attached to collaborative Campfire content. */
+export const CollaborationUser = Schema.Struct({
+  subject: TrimmedNonEmptyString,
+  displayName: TrimmedNonEmptyString,
+});
+export type CollaborationUser = typeof CollaborationUser.Type;
+
 export const OrchestrationProject = Schema.Struct({
   id: ProjectId,
   title: TrimmedNonEmptyString,
@@ -219,6 +226,7 @@ export const OrchestrationProject = Schema.Struct({
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   deletedAt: Schema.NullOr(IsoDateTime),
+  createdBy: Schema.optionalKey(Schema.NullOr(CollaborationUser)),
 });
 export type OrchestrationProject = typeof OrchestrationProject.Type;
 
@@ -234,6 +242,7 @@ export const OrchestrationMessage = Schema.Struct({
   streaming: Schema.Boolean,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
+  author: Schema.optionalKey(Schema.NullOr(CollaborationUser)),
 });
 export type OrchestrationMessage = typeof OrchestrationMessage.Type;
 
@@ -242,24 +251,22 @@ export type SideThreadId = typeof SideThreadId.Type;
 export const SideThreadMessageId = TrimmedNonEmptyString.pipe(Schema.brand("SideThreadMessageId"));
 export type SideThreadMessageId = typeof SideThreadMessageId.Type;
 
-export const SideThreadAuthor = Schema.Struct({
-  subject: TrimmedNonEmptyString,
-  displayName: TrimmedNonEmptyString,
-  networkLogin: Schema.optional(TrimmedNonEmptyString),
-});
+export const SideThreadAuthor = CollaborationUser;
 export type SideThreadAuthor = typeof SideThreadAuthor.Type;
 
 export const SideThreadMessage = Schema.Struct({
   id: SideThreadMessageId,
   author: SideThreadAuthor,
   text: TrimmedNonEmptyString.check(Schema.isMaxLength(20_000)),
+  mentions: Schema.optional(Schema.Array(SideThreadAuthor)),
+  quotedMessageId: Schema.optional(MessageId),
   createdAt: IsoDateTime,
 });
 export type SideThreadMessage = typeof SideThreadMessage.Type;
 
 export const SideThread = Schema.Struct({
   id: SideThreadId,
-  anchorMessageId: MessageId,
+  anchorMessageId: Schema.optional(MessageId),
   createdBy: SideThreadAuthor,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -407,6 +414,7 @@ export const OrchestrationThread = Schema.Struct({
   activities: Schema.Array(OrchestrationThreadActivity),
   checkpoints: Schema.Array(OrchestrationCheckpointSummary),
   session: Schema.NullOr(OrchestrationSession),
+  createdBy: Schema.optionalKey(Schema.NullOr(CollaborationUser)),
 });
 export type OrchestrationThread = typeof OrchestrationThread.Type;
 
@@ -427,6 +435,7 @@ export const OrchestrationProjectShell = Schema.Struct({
   scripts: Schema.Array(ProjectScript),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
+  createdBy: Schema.optionalKey(Schema.NullOr(CollaborationUser)),
 });
 export type OrchestrationProjectShell = typeof OrchestrationProjectShell.Type;
 
@@ -456,6 +465,7 @@ export const OrchestrationThreadShell = Schema.Struct({
   hasPendingApprovals: Schema.Boolean,
   hasPendingUserInput: Schema.Boolean,
   hasActionableProposedPlan: Schema.Boolean,
+  createdBy: Schema.optionalKey(Schema.NullOr(CollaborationUser)),
 });
 export type OrchestrationThreadShell = typeof OrchestrationThreadShell.Type;
 
@@ -783,7 +793,7 @@ const SideThreadCreateCommand = Schema.Struct({
   commandId: CommandId,
   threadId: ThreadId,
   sideThreadId: SideThreadId,
-  anchorMessageId: MessageId,
+  anchorMessageId: Schema.optional(MessageId),
   createdAt: IsoDateTime,
 });
 
@@ -794,6 +804,8 @@ const SideThreadMessagePostCommand = Schema.Struct({
   sideThreadId: SideThreadId,
   messageId: SideThreadMessageId,
   text: TrimmedNonEmptyString.check(Schema.isMaxLength(20_000)),
+  mentions: Schema.optional(Schema.Array(SideThreadAuthor)),
+  quotedMessageId: Schema.optional(MessageId),
   createdAt: IsoDateTime,
 });
 
@@ -1188,7 +1200,7 @@ export const ThreadActivityAppendedPayload = Schema.Struct({
 export const SideThreadCreatedPayload = Schema.Struct({
   threadId: ThreadId,
   sideThreadId: SideThreadId,
-  anchorMessageId: MessageId,
+  anchorMessageId: Schema.optional(MessageId),
   createdBy: SideThreadAuthor,
   createdAt: IsoDateTime,
 });
@@ -1199,6 +1211,8 @@ export const SideThreadMessagePostedPayload = Schema.Struct({
   messageId: SideThreadMessageId,
   author: SideThreadAuthor,
   text: TrimmedNonEmptyString.check(Schema.isMaxLength(20_000)),
+  mentions: Schema.optional(Schema.Array(SideThreadAuthor)),
+  quotedMessageId: Schema.optional(MessageId),
   createdAt: IsoDateTime,
 });
 

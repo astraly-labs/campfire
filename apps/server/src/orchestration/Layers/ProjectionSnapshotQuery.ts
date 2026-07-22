@@ -1,6 +1,7 @@
 import {
   ChatAttachment,
   CheckpointRef,
+  CollaborationUser,
   IsoDateTime,
   MessageId,
   NonNegativeInt,
@@ -67,12 +68,14 @@ const ProjectionProjectDbRowSchema = ProjectionProject.mapFields(
   Struct.assign({
     defaultModelSelection: Schema.NullOr(Schema.fromJsonString(ModelSelection)),
     scripts: Schema.fromJsonString(Schema.Array(ProjectScript)),
+    createdBy: Schema.NullOr(Schema.fromJsonString(CollaborationUser)),
   }),
 );
 const ProjectionThreadMessageDbRowSchema = ProjectionThreadMessage.mapFields(
   Struct.assign({
     isStreaming: Schema.Number,
     attachments: Schema.NullOr(Schema.fromJsonString(Schema.Array(ChatAttachment))),
+    author: Schema.NullOr(Schema.fromJsonString(CollaborationUser)),
   }),
 );
 const ProjectionThreadProposedPlanDbRowSchema = ProjectionThreadProposedPlan;
@@ -80,6 +83,7 @@ const ProjectionThreadDbRowSchema = ProjectionThread.mapFields(
   Struct.assign({
     modelSelection: Schema.fromJsonString(ModelSelection),
     sideThreads: Schema.fromJsonString(Schema.Array(SideThread)),
+    createdBy: Schema.NullOr(Schema.fromJsonString(CollaborationUser)),
   }),
 );
 const ProjectionThreadActivityDbRowSchema = ProjectionThreadActivity.mapFields(
@@ -239,6 +243,7 @@ function mapProjectShellRow(
     scripts: row.scripts,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
+    createdBy: row.createdBy,
   };
 }
 
@@ -312,7 +317,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           scripts_json AS "scripts",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
-          deleted_at AS "deletedAt"
+          deleted_at AS "deletedAt",
+          created_by_json AS "createdBy"
         FROM projection_projects
         ORDER BY created_at ASC, project_id ASC
       `,
@@ -345,7 +351,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
           side_threads_json AS "sideThreads",
-          deleted_at AS "deletedAt"
+          deleted_at AS "deletedAt",
+          created_by_json AS "createdBy"
         FROM projection_threads
         ORDER BY created_at ASC, thread_id ASC
       `,
@@ -378,7 +385,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
           side_threads_json AS "sideThreads",
-          deleted_at AS "deletedAt"
+          deleted_at AS "deletedAt",
+          created_by_json AS "createdBy"
         FROM projection_threads
         WHERE deleted_at IS NULL
           AND archived_at IS NULL
@@ -413,7 +421,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
           side_threads_json AS "sideThreads",
-          deleted_at AS "deletedAt"
+          deleted_at AS "deletedAt",
+          created_by_json AS "createdBy"
         FROM projection_threads
         WHERE deleted_at IS NULL
           AND archived_at IS NOT NULL
@@ -435,7 +444,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           attachments_json AS "attachments",
           is_streaming AS "isStreaming",
           created_at AS "createdAt",
-          updated_at AS "updatedAt"
+          updated_at AS "updatedAt",
+          author_json AS "author"
         FROM projection_thread_messages
         ORDER BY thread_id ASC, created_at ASC, message_id ASC
       `,
@@ -688,7 +698,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           scripts_json AS "scripts",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
-          deleted_at AS "deletedAt"
+          deleted_at AS "deletedAt",
+          created_by_json AS "createdBy"
         FROM projection_projects
         WHERE workspace_root = ${workspaceRoot}
           AND deleted_at IS NULL
@@ -710,7 +721,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           scripts_json AS "scripts",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
-          deleted_at AS "deletedAt"
+          deleted_at AS "deletedAt",
+          created_by_json AS "createdBy"
         FROM projection_projects
         WHERE project_id = ${projectId}
           AND deleted_at IS NULL
@@ -780,7 +792,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
           side_threads_json AS "sideThreads",
-          deleted_at AS "deletedAt"
+          deleted_at AS "deletedAt",
+          created_by_json AS "createdBy"
         FROM projection_threads
         WHERE thread_id = ${threadId}
           AND deleted_at IS NULL
@@ -803,7 +816,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           attachments_json AS "attachments",
           is_streaming AS "isStreaming",
           created_at AS "createdAt",
-          updated_at AS "updatedAt"
+          updated_at AS "updatedAt",
+          author_json AS "author"
         FROM projection_thread_messages
         WHERE thread_id = ${threadId}
         ORDER BY created_at ASC, message_id ASC
@@ -1076,6 +1090,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   streaming: row.isStreaming === 1,
                   createdAt: row.createdAt,
                   updatedAt: row.updatedAt,
+                  author: row.author,
                 });
                 messagesByThread.set(row.threadId, threadMessages);
               }
@@ -1193,6 +1208,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 createdAt: row.createdAt,
                 updatedAt: row.updatedAt,
                 deletedAt: row.deletedAt,
+                createdBy: row.createdBy,
               }));
 
               const threads: ReadonlyArray<OrchestrationThread> = threadRows.map((row) => ({
@@ -1219,6 +1235,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 activities: activitiesByThread.get(row.threadId) ?? [],
                 checkpoints: checkpointsByThread.get(row.threadId) ?? [],
                 session: sessionsByThread.get(row.threadId) ?? null,
+                createdBy: row.createdBy,
               }));
 
               const snapshot = {
@@ -1554,6 +1571,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                       hasPendingApprovals: row.pendingApprovalCount > 0,
                       hasPendingUserInput: row.pendingUserInputCount > 0,
                       hasActionableProposedPlan: row.hasActionableProposedPlan > 0,
+                      createdBy: row.createdBy,
                     } satisfies OrchestrationThreadShell)
                   : Result.failVoid,
               ),
@@ -1692,6 +1710,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   hasPendingApprovals: row.pendingApprovalCount > 0,
                   hasPendingUserInput: row.pendingUserInputCount > 0,
                   hasActionableProposedPlan: row.hasActionableProposedPlan > 0,
+                  createdBy: row.createdBy,
                 }),
               ),
               updatedAt: updatedAt ?? "1970-01-01T00:00:00.000Z",
@@ -1769,6 +1788,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                     createdAt: option.value.createdAt,
                     updatedAt: option.value.updatedAt,
                     deletedAt: option.value.deletedAt,
+                    createdBy: option.value.createdBy,
                   } satisfies OrchestrationProject),
                 ),
               ),
@@ -1936,6 +1956,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         hasPendingApprovals: threadRow.value.pendingApprovalCount > 0,
         hasPendingUserInput: threadRow.value.pendingUserInputCount > 0,
         hasActionableProposedPlan: threadRow.value.hasActionableProposedPlan > 0,
+        createdBy: threadRow.value.createdBy,
       } satisfies OrchestrationThreadShell);
     });
 
@@ -2039,6 +2060,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             streaming: row.isStreaming === 1,
             createdAt: row.createdAt,
             updatedAt: row.updatedAt,
+            author: row.author,
           };
           if (row.attachments !== null) {
             return Object.assign(message, { attachments: row.attachments });
@@ -2072,6 +2094,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           completedAt: row.completedAt,
         })),
         session: Option.isSome(sessionRow) ? mapSessionRow(sessionRow.value) : null,
+        createdBy: threadRow.value.createdBy,
       };
 
       return Option.some(

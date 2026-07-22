@@ -7,9 +7,11 @@ import {
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { memo } from "react";
+import { MessageCircleIcon } from "lucide-react";
 import GitActionsControl from "../GitActionsControl";
 import { type DraftId } from "~/composerDraftStore";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { Button } from "../ui/button";
 import ProjectScriptsControl, {
   type NewProjectScriptInput,
   type ProjectScriptActionResult,
@@ -35,6 +37,9 @@ interface ChatHeaderProps {
   keybindings: ResolvedKeybindingsConfig;
   availableEditors: ReadonlyArray<EditorId>;
   rightPanelOpen: boolean;
+  sideThreadOpen: boolean;
+  sideThreadMessageCount: number;
+  onToggleSideThread: () => void;
   gitCwd: string | null;
   onNewThreadInProject: () => void;
   onRunProjectScript: (script: ProjectScript) => void;
@@ -71,6 +76,9 @@ export const ChatHeader = memo(function ChatHeader({
   keybindings,
   availableEditors,
   rightPanelOpen,
+  sideThreadOpen,
+  sideThreadMessageCount,
+  onToggleSideThread,
   gitCwd,
   onNewThreadInProject,
   onRunProjectScript,
@@ -144,6 +152,31 @@ export const ChatHeader = memo(function ChatHeader({
         )}
       >
         <PresenceAvatarStack viewers={viewers} />
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                type="button"
+                size="sm"
+                variant={sideThreadOpen ? "secondary" : "ghost"}
+                aria-label={sideThreadOpen ? "Close side thread" : "Open side thread"}
+                aria-pressed={sideThreadOpen}
+                onClick={onToggleSideThread}
+                className="relative"
+              />
+            }
+          >
+            <MessageCircleIcon className="size-4" />
+            {sideThreadMessageCount > 0 ? (
+              <span className="min-w-4 rounded-full bg-primary px-1 text-[10px] leading-4 text-primary-foreground">
+                {sideThreadMessageCount > 99 ? "99+" : sideThreadMessageCount}
+              </span>
+            ) : null}
+          </TooltipTrigger>
+          <TooltipPopup side="bottom">
+            {sideThreadOpen ? "Close side thread" : "Open side thread"}
+          </TooltipPopup>
+        </Tooltip>
         {activeProjectScripts && (
           <ProjectScriptsControl
             scripts={activeProjectScripts}

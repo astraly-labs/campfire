@@ -126,6 +126,11 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
       expect(verified.subject).toBe("google:alice-stable-subject");
       expect(verified.displayName).toBe("Alice Example");
       expect(verified.scopes).toEqual(AuthAdministrativeScopes);
+      const state = yield* serverAuth.getSessionState(makeCookieRequest(issued.sessionToken));
+      expect(state.identity).toEqual({
+        subject: "google:alice-stable-subject",
+        displayName: "Alice Example",
+      });
       expect(yield* serverAuth.revokeSession(verified.sessionId)).toBe(true);
 
       const revoked = yield* serverAuth

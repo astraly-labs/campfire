@@ -14,12 +14,13 @@ import {
   ProjectionThreadRepository,
   type ProjectionThreadRepositoryShape,
 } from "../Services/ProjectionThreads.ts";
-import { ModelSelection, SideThread } from "@t3tools/contracts";
+import { CollaborationUser, ModelSelection, SideThread } from "@t3tools/contracts";
 
 const ProjectionThreadDbRow = ProjectionThread.mapFields(
   Struct.assign({
     modelSelection: Schema.fromJsonString(ModelSelection),
     sideThreads: Schema.fromJsonString(Schema.Array(SideThread)),
+    createdBy: Schema.NullOr(Schema.fromJsonString(CollaborationUser)),
   }),
 );
 type ProjectionThreadDbRow = typeof ProjectionThreadDbRow.Type;
@@ -53,7 +54,8 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           pending_user_input_count,
           has_actionable_proposed_plan,
           side_threads_json,
-          deleted_at
+          deleted_at,
+          created_by_json
         )
         VALUES (
           ${row.threadId},
@@ -77,7 +79,8 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           ${row.pendingUserInputCount},
           ${row.hasActionableProposedPlan},
           ${JSON.stringify(row.sideThreads ?? [])},
-          ${row.deletedAt}
+          ${row.deletedAt},
+          ${row.createdBy !== null ? JSON.stringify(row.createdBy) : null}
         )
         ON CONFLICT (thread_id)
         DO UPDATE SET
@@ -101,7 +104,8 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           pending_user_input_count = excluded.pending_user_input_count,
           has_actionable_proposed_plan = excluded.has_actionable_proposed_plan,
           side_threads_json = excluded.side_threads_json,
-          deleted_at = excluded.deleted_at
+          deleted_at = excluded.deleted_at,
+          created_by_json = COALESCE(projection_threads.created_by_json, excluded.created_by_json)
       `,
   });
 
@@ -132,7 +136,8 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
           side_threads_json AS "sideThreads",
-          deleted_at AS "deletedAt"
+          deleted_at AS "deletedAt",
+          created_by_json AS "createdBy"
         FROM projection_threads
         WHERE thread_id = ${threadId}
       `,
@@ -165,7 +170,8 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
           side_threads_json AS "sideThreads",
-          deleted_at AS "deletedAt"
+          deleted_at AS "deletedAt",
+          created_by_json AS "createdBy"
         FROM projection_threads
         WHERE project_id = ${projectId}
         ORDER BY created_at ASC, thread_id ASC

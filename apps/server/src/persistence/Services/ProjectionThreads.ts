@@ -7,6 +7,7 @@
  * @module ProjectionThreadRepository
  */
 import {
+  CollaborationUser,
   IsoDateTime,
   ModelSelection,
   NonNegativeInt,
@@ -47,6 +48,7 @@ export const ProjectionThread = Schema.Struct({
   hasActionableProposedPlan: NonNegativeInt,
   sideThreads: Schema.optional(Schema.Array(SideThread)),
   deletedAt: Schema.NullOr(IsoDateTime),
+  createdBy: Schema.NullOr(CollaborationUser),
 });
 export type ProjectionThread = typeof ProjectionThread.Type;
 

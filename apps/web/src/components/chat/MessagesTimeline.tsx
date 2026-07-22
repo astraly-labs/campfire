@@ -113,6 +113,9 @@ import {
   parseReviewCommentMessageSegments,
   type ReviewCommentContext,
 } from "../../reviewCommentContext";
+import type { GoogleTeamMember } from "../../collaboration/googleTeam";
+import { TakeALookButton } from "../../sidethread/TakeALookButton";
+import { CollaborationAvatar } from "../../collaboration/CollaborationAvatar";
 
 // ---------------------------------------------------------------------------
 // Context — shared state consumed by every row component via Context.
@@ -132,6 +135,8 @@ interface TimelineRowSharedState {
   activeThreadEnvironmentId: EnvironmentId;
   onRevertUserMessage: (messageId: MessageId) => void;
   onOpenSideThread: (messageId: MessageId) => void;
+  googleTeam: ReadonlyArray<GoogleTeamMember>;
+  currentGoogleSubject: string | null;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
   onToggleTurnFold: (turnId: TurnId) => void;
@@ -171,6 +176,8 @@ interface MessagesTimelineProps {
   revertTurnCountByUserMessageId: Map<MessageId, number>;
   onRevertUserMessage: (messageId: MessageId) => void;
   onOpenSideThread?: (messageId: MessageId) => void;
+  googleTeam?: ReadonlyArray<GoogleTeamMember>;
+  currentGoogleSubject?: string | null;
   isRevertingCheckpoint: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   activeThreadEnvironmentId: EnvironmentId;
@@ -207,6 +214,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   revertTurnCountByUserMessageId,
   onRevertUserMessage,
   onOpenSideThread = IGNORE_SIDE_THREAD_OPEN,
+  googleTeam = [],
+  currentGoogleSubject = null,
   isRevertingCheckpoint,
   onImageExpand,
   activeThreadEnvironmentId,
@@ -431,6 +440,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       activeThreadEnvironmentId,
       onRevertUserMessage,
       onOpenSideThread,
+      googleTeam,
+      currentGoogleSubject,
       onImageExpand,
       onOpenTurnDiff,
       onToggleTurnFold,
@@ -446,6 +457,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       activeThreadEnvironmentId,
       onRevertUserMessage,
       onOpenSideThread,
+      googleTeam,
+      currentGoogleSubject,
       onImageExpand,
       onOpenTurnDiff,
       onToggleTurnFold,
@@ -895,84 +908,89 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   const canRevertAgentWork = typeof row.revertTurnCount === "number";
 
   return (
-    <div className="group flex flex-col items-end gap-1">
-      <div className="relative max-w-[80%] rounded-2xl bg-accent p-3">
-        {regularImages.length > 0 && (
-          <div className="mb-2 grid max-w-[420px] grid-cols-2 gap-2">
-            {regularImages.map((image: NonNullable<TimelineMessage["attachments"]>[number]) => (
-              <div
-                key={image.id}
-                className="overflow-hidden rounded-lg border border-border/80 bg-background/70"
-              >
-                {image.previewUrl ? (
-                  <button
-                    type="button"
-                    className="h-full w-full cursor-zoom-in"
-                    aria-label={`Preview ${image.name}`}
-                    onClick={() => {
-                      const preview = buildExpandedImagePreview(regularImages, image.id);
-                      if (!preview) return;
-                      ctx.onImageExpand(preview);
-                    }}
-                  >
-                    <img
-                      src={image.previewUrl}
-                      alt={image.name}
-                      className="block h-auto max-h-[220px] w-full object-cover"
-                    />
-                  </button>
-                ) : (
-                  <div className="flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-[11px] text-muted-foreground/70">
-                    {image.name}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-        {previewAnnotations.map((annotation, index) => (
-          <UserMessagePreviewAnnotationCard
-            key={annotation.id}
-            annotation={annotation}
-            image={previewImages[index] ?? null}
+    <div className="group flex items-start justify-end gap-2">
+      <div className="flex max-w-[80%] flex-col items-end gap-1">
+        <div className="relative w-full rounded-2xl border border-border bg-secondary p-3">
+          {regularImages.length > 0 && (
+            <div className="mb-2 grid max-w-[420px] grid-cols-2 gap-2">
+              {regularImages.map((image: NonNullable<TimelineMessage["attachments"]>[number]) => (
+                <div
+                  key={image.id}
+                  className="overflow-hidden rounded-lg border border-border/80 bg-background/70"
+                >
+                  {image.previewUrl ? (
+                    <button
+                      type="button"
+                      className="h-full w-full cursor-zoom-in"
+                      aria-label={`Preview ${image.name}`}
+                      onClick={() => {
+                        const preview = buildExpandedImagePreview(regularImages, image.id);
+                        if (!preview) return;
+                        ctx.onImageExpand(preview);
+                      }}
+                    >
+                      <img
+                        src={image.previewUrl}
+                        alt={image.name}
+                        className="block h-auto max-h-[220px] w-full object-cover"
+                      />
+                    </button>
+                  ) : (
+                    <div className="flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-[11px] text-muted-foreground/70">
+                      {image.name}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          {previewAnnotations.map((annotation, index) => (
+            <UserMessagePreviewAnnotationCard
+              key={annotation.id}
+              annotation={annotation}
+              image={previewImages[index] ?? null}
+            />
+          ))}
+          {elementContexts.length > 0 ? (
+            <div className="mb-2 flex flex-wrap gap-1.5">
+              {elementContexts.map((context) => (
+                <UserMessageElementContextChip
+                  key={`${context.header}:${context.body}`}
+                  context={context}
+                />
+              ))}
+            </div>
+          ) : null}
+          <CollapsibleUserMessageBody
+            text={elementContextState.promptText}
+            terminalContexts={terminalContexts}
+            skills={ctx.skills}
+            markdownCwd={ctx.markdownCwd}
           />
-        ))}
-        {elementContexts.length > 0 ? (
-          <div className="mb-2 flex flex-wrap gap-1.5">
-            {elementContexts.map((context) => (
-              <UserMessageElementContextChip
-                key={`${context.header}:${context.body}`}
-                context={context}
-              />
-            ))}
-          </div>
-        ) : null}
-        <CollapsibleUserMessageBody
-          text={elementContextState.promptText}
-          terminalContexts={terminalContexts}
-          skills={ctx.skills}
-          markdownCwd={ctx.markdownCwd}
-        />
-      </div>
-      <div className="flex w-full max-w-[80%] items-center justify-end pe-1 text-xs tabular-nums opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
-        <div className="flex shrink-0 items-center gap-2">
-          <Tooltip>
-            <TooltipTrigger render={<p className="text-muted-foreground text-xs tabular-nums" />}>
-              {formatShortTimestamp(row.message.createdAt, ctx.timestampFormat)}
-            </TooltipTrigger>
-            <TooltipPopup>
-              {formatChatTimestampTooltip(row.message.createdAt, ctx.timestampFormat)}
-            </TooltipPopup>
-          </Tooltip>
-          <div className="flex items-center gap-0.5">
-            <SideThreadButton messageId={row.message.id} />
-            {canRevertAgentWork && <RevertUserMessageButton messageId={row.message.id} />}
-            {displayedUserMessage.copyText && (
-              <MessageCopyButton text={displayedUserMessage.copyText} variant="ghost" />
-            )}
+        </div>
+        <div className="flex w-full items-center justify-end pe-1 text-xs tabular-nums opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
+          <div className="flex shrink-0 items-center gap-2">
+            <Tooltip>
+              <TooltipTrigger render={<p className="text-muted-foreground text-xs tabular-nums" />}>
+                {formatShortTimestamp(row.message.createdAt, ctx.timestampFormat)}
+              </TooltipTrigger>
+              <TooltipPopup>
+                {formatChatTimestampTooltip(row.message.createdAt, ctx.timestampFormat)}
+              </TooltipPopup>
+            </Tooltip>
+            <div className="flex items-center gap-0.5">
+              <SideThreadButton messageId={row.message.id} />
+              {canRevertAgentWork && <RevertUserMessageButton messageId={row.message.id} />}
+              {displayedUserMessage.copyText && (
+                <MessageCopyButton text={displayedUserMessage.copyText} variant="ghost" />
+              )}
+            </div>
           </div>
         </div>
       </div>
+      {row.message.author ? (
+        <CollaborationAvatar user={row.message.author} labelPrefix="Sent by" className="mt-1" />
+      ) : null}
     </div>
   );
 }
@@ -1067,6 +1085,16 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
         {row.showAssistantMeta ? (
           <div className="mt-1.5 flex items-center gap-2 text-xs tabular-nums opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover/assistant:opacity-100">
             <SideThreadButton messageId={row.message.id} />
+            {ctx.threadRef ? (
+              <TakeALookButton
+                environmentId={ctx.activeThreadEnvironmentId}
+                threadId={ctx.threadRef.threadId}
+                messageId={row.message.id}
+                team={ctx.googleTeam}
+                currentSubject={ctx.currentGoogleSubject}
+                onOpenSideThread={ctx.onOpenSideThread}
+              />
+            ) : null}
             <AssistantCopyButton row={row} />
             {!row.message.streaming && (
               <Tooltip>

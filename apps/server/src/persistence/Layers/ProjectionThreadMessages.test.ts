@@ -39,6 +39,7 @@ layer("ProjectionThreadMessageRepository", (it) => {
         isStreaming: false,
         createdAt,
         updatedAt,
+        author: null,
       });
 
       yield* repository.upsert({
@@ -50,6 +51,7 @@ layer("ProjectionThreadMessageRepository", (it) => {
         isStreaming: false,
         createdAt,
         updatedAt: "2026-02-28T19:00:02.000Z",
+        author: null,
       });
 
       const rows = yield* repository.listByThreadId({ threadId });
@@ -91,6 +93,7 @@ layer("ProjectionThreadMessageRepository", (it) => {
         isStreaming: false,
         createdAt,
         updatedAt: "2026-02-28T19:10:01.000Z",
+        author: null,
       });
 
       yield* repository.upsert({
@@ -103,6 +106,7 @@ layer("ProjectionThreadMessageRepository", (it) => {
         isStreaming: false,
         createdAt,
         updatedAt: "2026-02-28T19:10:02.000Z",
+        author: null,
       });
 
       const rows = yield* repository.listByThreadId({ threadId });

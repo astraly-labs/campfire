@@ -430,26 +430,13 @@ const makeWsRpcLayer = (
       const presence = yield* PresenceService.Presence;
       const authenticatedActor = {
         kind: "client",
-        subject: currentSession.subject.startsWith("google:")
-          ? currentSession.subject
-          : currentSession.tailscaleIdentity
-            ? `tailscale:${currentSession.tailscaleIdentity.login}`
-            : currentSession.subject,
-        displayName:
-          currentSession.displayName ??
-          currentSession.tailscaleIdentity?.displayName ??
-          currentSession.subject,
-        ...(currentSession.tailscaleIdentity
-          ? { networkLogin: currentSession.tailscaleIdentity.login }
-          : {}),
+        subject: currentSession.subject,
+        displayName: currentSession.displayName ?? currentSession.subject,
         sessionId: currentSession.sessionId,
       } satisfies OrchestrationEventActor;
       const presenceUser = {
         subject: authenticatedActor.subject,
         displayName: authenticatedActor.displayName ?? authenticatedActor.subject,
-        ...(authenticatedActor.networkLogin !== undefined
-          ? { networkLogin: authenticatedActor.networkLogin }
-          : {}),
       };
       const authorizationError = (requiredScope: AuthEnvironmentScope) =>
         new EnvironmentAuthorizationError({

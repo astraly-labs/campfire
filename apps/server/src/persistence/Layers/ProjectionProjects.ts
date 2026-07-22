@@ -5,7 +5,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Struct from "effect/Struct";
 
-import { ModelSelection, ProjectScript } from "@t3tools/contracts";
+import { CollaborationUser, ModelSelection, ProjectScript } from "@t3tools/contracts";
 import { toPersistenceSqlError } from "../Errors.ts";
 import {
   DeleteProjectionProjectInput,
@@ -19,6 +19,7 @@ const ProjectionProjectDbRow = ProjectionProject.mapFields(
   Struct.assign({
     defaultModelSelection: Schema.NullOr(Schema.fromJsonString(ModelSelection)),
     scripts: Schema.fromJsonString(Schema.Array(ProjectScript)),
+    createdBy: Schema.NullOr(Schema.fromJsonString(CollaborationUser)),
   }),
 );
 type ProjectionProjectDbRow = typeof ProjectionProjectDbRow.Type;
@@ -38,7 +39,8 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           scripts_json,
           created_at,
           updated_at,
-          deleted_at
+          deleted_at,
+          created_by_json
         )
         VALUES (
           ${row.projectId},
@@ -48,7 +50,8 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           ${JSON.stringify(row.scripts)},
           ${row.createdAt},
           ${row.updatedAt},
-          ${row.deletedAt}
+          ${row.deletedAt},
+          ${row.createdBy !== null ? JSON.stringify(row.createdBy) : null}
         )
         ON CONFLICT (project_id)
         DO UPDATE SET
@@ -58,7 +61,8 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           scripts_json = excluded.scripts_json,
           created_at = excluded.created_at,
           updated_at = excluded.updated_at,
-          deleted_at = excluded.deleted_at
+          deleted_at = excluded.deleted_at,
+          created_by_json = COALESCE(projection_projects.created_by_json, excluded.created_by_json)
       `,
   });
 
@@ -75,7 +79,8 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           scripts_json AS "scripts",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
-          deleted_at AS "deletedAt"
+          deleted_at AS "deletedAt",
+          created_by_json AS "createdBy"
         FROM projection_projects
         WHERE project_id = ${projectId}
       `,
@@ -94,7 +99,8 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           scripts_json AS "scripts",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
-          deleted_at AS "deletedAt"
+          deleted_at AS "deletedAt",
+          created_by_json AS "createdBy"
         FROM projection_projects
         ORDER BY created_at ASC, project_id ASC
       `,

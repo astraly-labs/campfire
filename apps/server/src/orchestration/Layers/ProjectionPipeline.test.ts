@@ -73,7 +73,9 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
         commandId: CommandId.make("cmd-1"),
         causationEventId: null,
         correlationId: CommandId.make("cmd-1"),
-        metadata: {},
+        metadata: {
+          actor: { kind: "client", subject: "google:alice", displayName: "Alice" },
+        },
         payload: {
           projectId: ProjectId.make("project-1"),
           title: "Project 1",
@@ -94,7 +96,9 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
         commandId: CommandId.make("cmd-2"),
         causationEventId: null,
         correlationId: CommandId.make("cmd-2"),
-        metadata: {},
+        metadata: {
+          actor: { kind: "client", subject: "google:alice", displayName: "Alice" },
+        },
         payload: {
           threadId: ThreadId.make("thread-1"),
           projectId: ProjectId.make("project-1"),
@@ -120,7 +124,9 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
         commandId: CommandId.make("cmd-3"),
         causationEventId: null,
         correlationId: CommandId.make("cmd-3"),
-        metadata: {},
+        metadata: {
+          actor: { kind: "client", subject: "google:alice", displayName: "Alice" },
+        },
         payload: {
           threadId: ThreadId.make("thread-1"),
           messageId: MessageId.make("message-1"),
@@ -195,27 +201,51 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
         readonly projectId: string;
         readonly title: string;
         readonly scriptsJson: string;
+        readonly createdByJson: string | null;
       }>`
         SELECT
           project_id AS "projectId",
           title,
-          scripts_json AS "scriptsJson"
+          scripts_json AS "scriptsJson",
+          created_by_json AS "createdByJson"
         FROM projection_projects
       `;
       assert.deepEqual(projectRows, [
-        { projectId: "project-1", title: "Project 1", scriptsJson: "[]" },
+        {
+          projectId: "project-1",
+          title: "Project 1",
+          scriptsJson: "[]",
+          createdByJson: '{"subject":"google:alice","displayName":"Alice"}',
+        },
       ]);
 
       const messageRows = yield* sql<{
         readonly messageId: string;
         readonly text: string;
+        readonly authorJson: string | null;
       }>`
         SELECT
           message_id AS "messageId",
-          text
+          text,
+          author_json AS "authorJson"
         FROM projection_thread_messages
       `;
-      assert.deepEqual(messageRows, [{ messageId: "message-1", text: "hello" }]);
+      assert.deepEqual(messageRows, [
+        {
+          messageId: "message-1",
+          text: "hello",
+          authorJson: '{"subject":"google:alice","displayName":"Alice"}',
+        },
+      ]);
+
+      const threadIdentityRows = yield* sql<{ readonly createdByJson: string | null }>`
+        SELECT created_by_json AS "createdByJson"
+        FROM projection_threads
+        WHERE thread_id = 'thread-1'
+      `;
+      assert.deepEqual(threadIdentityRows, [
+        { createdByJson: '{"subject":"google:alice","displayName":"Alice"}' },
+      ]);
 
       const sideThreadRows = yield* sql<{ readonly sideThreadsJson: string }>`
         SELECT side_threads_json AS "sideThreadsJson"

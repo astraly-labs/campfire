@@ -91,6 +91,9 @@ import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useNowMinute } from "../hooks/useNowMinute";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 import { useProjects, useThreadShells } from "../state/entities";
+import { useGoogleTeam } from "../collaboration/googleTeam";
+import { CollaborationAvatar } from "../collaboration/CollaborationAvatar";
+import { isGoogleOwnedByCurrentAccount } from "../sidebarThreadAffiliation";
 import { environmentServerConfigsAtom, primaryServerKeybindingsAtom } from "../state/server";
 import { vcsEnvironment } from "../state/vcs";
 import { threadEnvironment } from "../state/threads";
@@ -816,6 +819,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
             </span>
             {title}
             {terminalStatusIcon}
+            {thread.createdBy ? <CollaborationAvatar user={thread.createdBy} size="xs" /> : null}
             {/* The PR badge stays outside the hover-fading slot: it must
               remain visible AND clickable while the row is hovered. Only
               the time/jump label yields to the settle affordance. */}
@@ -927,6 +931,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
               ) : (
                 <span className="flex-1" />
               )}
+              {thread.createdBy ? <CollaborationAvatar user={thread.createdBy} size="xs" /> : null}
               {/* The visible state owns this slot's width: status at rest,
                   actions on hover/focus or while the popover is open. Keeping
                   the hidden state out of flow lets the project label reclaim
@@ -1122,6 +1127,7 @@ export default function SidebarV2() {
   );
   const { environments } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const googleTeam = useGoogleTeam(primaryEnvironmentId);
   const clearSelection = useThreadSelectionStore((s) => s.clearSelection);
   const setSelectionAnchor = useThreadSelectionStore((s) => s.setAnchor);
   const toggleThreadSelection = useThreadSelectionStore((s) => s.toggleThread);
@@ -1218,6 +1224,13 @@ export default function SidebarV2() {
         ),
       ),
     [projectGroups],
+  );
+  const projectByKey = useMemo(
+    () =>
+      new Map(
+        projects.map((project) => [`${project.environmentId}:${project.id}`, project] as const),
+      ),
+    [projects],
   );
 
   // now is quantized to the minute so effectiveSettled memoization doesn't
@@ -1585,9 +1598,57 @@ export default function SidebarV2() {
     return routeThread === undefined ? [] : [routeThread];
   }, [routeThreadKey, snoozedShelfExpanded, snoozedThreads]);
 
-  const orderedThreads = useMemo(
+  const chronologicallyOrderedThreads = useMemo(
     () => [...activeThreads, ...visibleSnoozedThreads, ...renderedSettledThreads],
     [activeThreads, visibleSnoozedThreads, renderedSettledThreads],
+  );
+  const mineThreadKeys = useMemo(() => {
+    const mine = new Set<string>();
+    for (const thread of chronologicallyOrderedThreads) {
+      const project = projectByKey.get(`${thread.environmentId}:${thread.projectId}`);
+      if (
+        isGoogleOwnedByCurrentAccount({
+          createdBy: thread.createdBy,
+          fallbackCreatedBy: project?.createdBy,
+          environmentId: thread.environmentId,
+          currentGoogleSubject: googleTeam.current?.subject ?? null,
+          primaryEnvironmentId,
+        })
+      ) {
+        mine.add(scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)));
+      }
+    }
+    return mine;
+  }, [
+    chronologicallyOrderedThreads,
+    googleTeam.current?.subject,
+    primaryEnvironmentId,
+    projectByKey,
+  ]);
+  const orderedThreads = useMemo(
+    () => {
+      const byOwnership = (threads: readonly EnvironmentThreadShell[]) =>
+        threads.toSorted((left, right) => {
+          const leftIsMine = mineThreadKeys.has(
+            scopedThreadKey(scopeThreadRef(left.environmentId, left.id)),
+          );
+          const rightIsMine = mineThreadKeys.has(
+            scopedThreadKey(scopeThreadRef(right.environmentId, right.id)),
+          );
+          return Number(rightIsMine) - Number(leftIsMine);
+        });
+      return [
+        ...byOwnership(activeThreads),
+        ...byOwnership(visibleSnoozedThreads),
+        ...byOwnership(renderedSettledThreads),
+      ];
+    },
+    [
+      activeThreads,
+      mineThreadKeys,
+      renderedSettledThreads,
+      visibleSnoozedThreads,
+    ],
   );
   const orderedThreadKeys = useMemo(
     () =>
@@ -2564,9 +2625,41 @@ export default function SidebarV2() {
                     />
                   );
                 };
-                const items: ReactNode[] = activeThreads.map((thread) =>
-                  renderThreadRow(thread, "active"),
-                );
+                const orderByOwnership = (threads: readonly EnvironmentThreadShell[]) =>
+                  threads.toSorted((left, right) => {
+                    const leftKey = scopedThreadKey(
+                      scopeThreadRef(left.environmentId, left.id),
+                    );
+                    const rightKey = scopedThreadKey(
+                      scopeThreadRef(right.environmentId, right.id),
+                    );
+                    return Number(mineThreadKeys.has(rightKey)) - Number(mineThreadKeys.has(leftKey));
+                  });
+                const items: ReactNode[] = [];
+                let previousOwnership: boolean | null = null;
+                for (const thread of orderByOwnership(activeThreads)) {
+                  const threadKey = scopedThreadKey(
+                    scopeThreadRef(thread.environmentId, thread.id),
+                  );
+                  const isMine = mineThreadKeys.has(threadKey);
+                  if (previousOwnership !== isMine) {
+                    items.push(
+                      <li
+                        key={`${isMine ? "mine" : "other"}-active-section`}
+                        data-thread-selection-safe
+                        className="list-none"
+                      >
+                        <div className={cn("mb-1 px-2.5", previousOwnership === null ? "mt-0" : "mt-4")}>
+                          <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
+                            {isMine ? "My Projects" : "Projects"}
+                          </span>
+                        </div>
+                      </li>,
+                    );
+                    previousOwnership = isMine;
+                  }
+                  items.push(renderThreadRow(thread, "active"));
+                }
                 // Snoozed shelf: between the inbox and Settled — out of the
                 // way, never gone. The header always renders while anything
                 // is snoozed (the count is the whole footprint when
@@ -2596,7 +2689,7 @@ export default function SidebarV2() {
                       </button>
                     </li>,
                   );
-                  for (const thread of visibleSnoozedThreads) {
+                  for (const thread of orderByOwnership(visibleSnoozedThreads)) {
                     items.push(renderThreadRow(thread, "snoozed"));
                   }
                 }
@@ -2625,7 +2718,7 @@ export default function SidebarV2() {
                     </li>,
                   );
                 }
-                for (const thread of renderedSettledThreads) {
+                for (const thread of orderByOwnership(renderedSettledThreads)) {
                   items.push(renderThreadRow(thread, "settled"));
                 }
                 return items;

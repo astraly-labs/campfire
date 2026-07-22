@@ -6,7 +6,13 @@
  *
  * @module ProjectionProjectRepository
  */
-import { IsoDateTime, ModelSelection, ProjectId, ProjectScript } from "@t3tools/contracts";
+import {
+  CollaborationUser,
+  IsoDateTime,
+  ModelSelection,
+  ProjectId,
+  ProjectScript,
+} from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Context from "effect/Context";
@@ -23,6 +29,7 @@ export const ProjectionProject = Schema.Struct({
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   deletedAt: Schema.NullOr(IsoDateTime),
+  createdBy: Schema.NullOr(CollaborationUser),
 });
 export type ProjectionProject = typeof ProjectionProject.Type;
 

@@ -1,6 +1,7 @@
 import {
   ApprovalRequestId,
   type ChatAttachment,
+  type CollaborationUser,
   type OrchestrationEvent,
   type OrchestrationSessionStatus,
   ThreadId,
@@ -69,6 +70,15 @@ export const ORCHESTRATION_PROJECTOR_NAMES = {
 
 type ProjectorName =
   (typeof ORCHESTRATION_PROJECTOR_NAMES)[keyof typeof ORCHESTRATION_PROJECTOR_NAMES];
+
+function googleUserFromEvent(event: OrchestrationEvent): CollaborationUser | null {
+  const actor = event.metadata.actor;
+  if (actor?.kind !== "client" || !actor.subject?.startsWith("google:")) return null;
+  return {
+    subject: actor.subject,
+    displayName: actor.displayName ?? actor.subject,
+  };
+}
 
 /**
  * Turn state to settle still-running turns with when their session leaves the
@@ -499,6 +509,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             createdAt: event.payload.createdAt,
             updatedAt: event.payload.updatedAt,
             deletedAt: null,
+            createdBy: googleUserFromEvent(event),
           });
           return;
 
@@ -617,6 +628,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             hasActionableProposedPlan: 0,
             sideThreads: [],
             deletedAt: null,
+            createdBy: googleUserFromEvent(event),
           });
           return;
 
@@ -795,7 +807,9 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
               ...(existingRow.value.sideThreads ?? []),
               {
                 id: event.payload.sideThreadId,
-                anchorMessageId: event.payload.anchorMessageId,
+                ...(event.payload.anchorMessageId !== undefined
+                  ? { anchorMessageId: event.payload.anchorMessageId }
+                  : {}),
                 createdBy: event.payload.createdBy,
                 createdAt: event.payload.createdAt,
                 updatedAt: event.payload.createdAt,
@@ -827,6 +841,12 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
                         id: event.payload.messageId,
                         text: event.payload.text,
                         author: event.payload.author,
+                        ...(event.payload.mentions !== undefined
+                          ? { mentions: event.payload.mentions }
+                          : {}),
+                        ...(event.payload.quotedMessageId !== undefined
+                          ? { quotedMessageId: event.payload.quotedMessageId }
+                          : {}),
                         createdAt: event.payload.createdAt,
                       },
                     ],
@@ -993,6 +1013,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             isStreaming: event.payload.streaming,
             createdAt: previousMessage?.createdAt ?? event.payload.createdAt,
             updatedAt: event.payload.updatedAt,
+            author: googleUserFromEvent(event),
           });
           return;
         }
