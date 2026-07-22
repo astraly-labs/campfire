@@ -41,6 +41,9 @@ import { useThreadShells } from "../state/entities";
 import { threadEnvironment } from "../state/threads";
 import { useAtomCommand } from "../state/use-atom-command";
 import { mentionHandleForGoogleUser } from "./takeALook";
+import { GifAttachmentInline } from "./GifAttachmentInline";
+import { GifPicker } from "./GifPicker";
+import { giphyAttachment } from "./giphyClient";
 
 const QUICK_REACTIONS = ["👍", "❤️", "👀", "🎉"] as const;
 
@@ -84,10 +87,20 @@ export function SideThreadDrawer(props: {
   readonly currentSubject: string | null;
   readonly open: boolean;
   readonly contextMessageId: MessageId | null;
+  readonly draftPrefill: string;
   readonly onClose: () => void;
 }) {
-  const { environmentId, threadId, thread, team, currentSubject, open, contextMessageId, onClose } =
-    props;
+  const {
+    environmentId,
+    threadId,
+    thread,
+    team,
+    currentSubject,
+    open,
+    contextMessageId,
+    draftPrefill,
+    onClose,
+  } = props;
   const sideThreadId = sideThreadIdForThread(threadId);
   const sideThread = useMemo(
     () => (thread.sideThreads ?? []).find((entry) => entry.id === sideThreadId) ?? null,
@@ -127,7 +140,12 @@ export function SideThreadDrawer(props: {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<ReadonlyArray<SideThreadPostAttachment>>([]);
   const [gifUrl, setGifUrl] = useState("");
+  const [gifPickerOpen, setGifPickerOpen] = useState(false);
   const [linkedThreadId, setLinkedThreadId] = useState("");
+
+  useEffect(() => {
+    if (open && draftPrefill) setDraft(draftPrefill);
+  }, [draftPrefill, open]);
 
   const imageAttachmentIds = useMemo(
     () =>
@@ -203,6 +221,7 @@ export function SideThreadDrawer(props: {
     setEditingId(null);
     setAttachments([]);
     setGifUrl("");
+    setGifPickerOpen(false);
     setLinkedThreadId("");
   };
 
@@ -321,14 +340,7 @@ export function SideThreadDrawer(props: {
                     ) : null}
                     {(message.attachments ?? []).map((attachment) =>
                       attachment.type === "gif" ? (
-                        <img
-                          key={attachment.url}
-                          src={attachment.url}
-                          alt="GIF"
-                          loading="lazy"
-                          referrerPolicy="no-referrer"
-                          className="mt-2 max-h-56 rounded-lg object-contain"
-                        />
+                        <GifAttachmentInline key={attachment.url} attachment={attachment} />
                       ) : imageUrlById.get(attachment.id) ? (
                         <img
                           key={attachment.id}
@@ -508,14 +520,14 @@ export function SideThreadDrawer(props: {
               ) : null}
               {attachments.length > 0 ? (
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <CheckIcon className="size-3" /> {attachments.length} image(s) attached
+                  <CheckIcon className="size-3" /> {attachments.length} attachment(s)
                   <button type="button" className="ml-auto" onClick={() => setAttachments([])}>
                     Clear
                   </button>
                 </div>
               ) : null}
               <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-1">
+                <div className="relative flex items-center gap-1">
                   {!editingId ? (
                     <>
                       <input
@@ -544,6 +556,26 @@ export function SideThreadDrawer(props: {
                       >
                         <ImageIcon className="size-3" /> Image
                       </Button>
+                      <Button
+                        type="button"
+                        size="xs"
+                        variant="ghost"
+                        onClick={() => setGifPickerOpen((current) => !current)}
+                      >
+                        GIF
+                      </Button>
+                      <GifPicker
+                        open={gifPickerOpen}
+                        onClose={() => setGifPickerOpen(false)}
+                        onPick={(gif) => {
+                          setAttachments((current) => [
+                            ...current.filter((attachment) => attachment.type !== "gif"),
+                            giphyAttachment(gif),
+                          ]);
+                          setGifUrl("");
+                          setGifPickerOpen(false);
+                        }}
+                      />
                       <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground">
                         <SmilePlusIcon className="size-3" /> reactions enabled
                       </span>

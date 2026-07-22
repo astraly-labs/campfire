@@ -116,6 +116,7 @@ import {
 import type { GoogleTeamMember } from "../../collaboration/googleTeam";
 import { TakeALookButton } from "../../sidethread/TakeALookButton";
 import { CollaborationAvatar } from "../../collaboration/CollaborationAvatar";
+import { QuoteOnSelection } from "../../sidethread/QuoteOnSelection";
 
 // ---------------------------------------------------------------------------
 // Context — shared state consumed by every row component via Context.
@@ -135,6 +136,7 @@ interface TimelineRowSharedState {
   activeThreadEnvironmentId: EnvironmentId;
   onRevertUserMessage: (messageId: MessageId) => void;
   onOpenSideThread: (messageId: MessageId) => void;
+  onQuoteSideThread: (messageId: MessageId, quote: string) => void;
   googleTeam: ReadonlyArray<GoogleTeamMember>;
   currentGoogleSubject: string | null;
   onImageExpand: (preview: ExpandedImagePreview) => void;
@@ -157,6 +159,7 @@ const TIMELINE_LIST_FADE_HEADER = <div className="h-10 sm:h-12" />;
 const TIMELINE_LIST_FOOTER = <div className="h-3 sm:h-4" />;
 const EMPTY_TIMELINE_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
 const IGNORE_SIDE_THREAD_OPEN = (_messageId: MessageId) => {};
+const IGNORE_SIDE_THREAD_QUOTE = (_messageId: MessageId, _quote: string) => {};
 
 // ---------------------------------------------------------------------------
 // Props (public API)
@@ -176,6 +179,7 @@ interface MessagesTimelineProps {
   revertTurnCountByUserMessageId: Map<MessageId, number>;
   onRevertUserMessage: (messageId: MessageId) => void;
   onOpenSideThread?: (messageId: MessageId) => void;
+  onQuoteSideThread?: (messageId: MessageId, quote: string) => void;
   googleTeam?: ReadonlyArray<GoogleTeamMember>;
   currentGoogleSubject?: string | null;
   isRevertingCheckpoint: boolean;
@@ -214,6 +218,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   revertTurnCountByUserMessageId,
   onRevertUserMessage,
   onOpenSideThread = IGNORE_SIDE_THREAD_OPEN,
+  onQuoteSideThread = IGNORE_SIDE_THREAD_QUOTE,
   googleTeam = [],
   currentGoogleSubject = null,
   isRevertingCheckpoint,
@@ -440,6 +445,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       activeThreadEnvironmentId,
       onRevertUserMessage,
       onOpenSideThread,
+      onQuoteSideThread,
       googleTeam,
       currentGoogleSubject,
       onImageExpand,
@@ -457,6 +463,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       activeThreadEnvironmentId,
       onRevertUserMessage,
       onOpenSideThread,
+      onQuoteSideThread,
       googleTeam,
       currentGoogleSubject,
       onImageExpand,
@@ -1069,13 +1076,15 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
   return (
     <>
       <div className="relative min-w-0 px-1 py-0.5">
-        <ChatMarkdown
-          text={messageText}
-          cwd={ctx.markdownCwd}
-          threadRef={ctx.threadRef ?? undefined}
-          isStreaming={Boolean(row.message.streaming)}
-          skills={ctx.skills}
-        />
+        <QuoteOnSelection onQuote={(quote) => ctx.onQuoteSideThread(row.message.id, quote)}>
+          <ChatMarkdown
+            text={messageText}
+            cwd={ctx.markdownCwd}
+            threadRef={ctx.threadRef ?? undefined}
+            isStreaming={Boolean(row.message.streaming)}
+            skills={ctx.skills}
+          />
+        </QuoteOnSelection>
         <AssistantChangedFilesSection
           turnSummary={row.assistantTurnDiffSummary}
           routeThreadKey={ctx.routeThreadKey}

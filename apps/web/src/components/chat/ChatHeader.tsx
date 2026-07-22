@@ -39,6 +39,7 @@ interface ChatHeaderProps {
   rightPanelOpen: boolean;
   sideThreadOpen: boolean;
   sideThreadMessageCount: number;
+  sideThreadUnread: boolean;
   onToggleSideThread: () => void;
   gitCwd: string | null;
   onNewThreadInProject: () => void;
@@ -78,6 +79,7 @@ export const ChatHeader = memo(function ChatHeader({
   rightPanelOpen,
   sideThreadOpen,
   sideThreadMessageCount,
+  sideThreadUnread,
   onToggleSideThread,
   gitCwd,
   onNewThreadInProject,
@@ -171,6 +173,12 @@ export const ChatHeader = memo(function ChatHeader({
               <span className="min-w-4 rounded-full bg-primary px-1 text-[10px] leading-4 text-primary-foreground">
                 {sideThreadMessageCount > 99 ? "99+" : sideThreadMessageCount}
               </span>
+            ) : null}
+            {sideThreadUnread ? (
+              <span
+                aria-label="Unread team discussion"
+                className="absolute -right-0.5 -top-0.5 size-2 rounded-full bg-red-500 ring-2 ring-background"
+              />
             ) : null}
           </TooltipTrigger>
           <TooltipPopup side="bottom">
