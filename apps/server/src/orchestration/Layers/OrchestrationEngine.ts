@@ -1,5 +1,6 @@
 import type {
   OrchestrationEvent,
+  OrchestrationEventActor,
   OrchestrationReadModel,
   ProjectId,
   ThreadId,
@@ -62,8 +63,19 @@ const COMMAND_QUEUE_OFFER_TIMEOUT = Duration.seconds(2);
 
 interface CommandEnvelope {
   command: OrchestrationCommand;
+  actor: OrchestrationEventActor;
   result: Deferred.Deferred<{ sequence: number }, OrchestrationDispatchError>;
   startedAtMs: number;
+}
+
+function inferCommandActor(command: OrchestrationCommand): OrchestrationEventActor {
+  if (command.commandId.startsWith("provider:")) {
+    return { kind: "provider" };
+  }
+  if (command.commandId.startsWith("server:")) {
+    return { kind: "server" };
+  }
+  return { kind: "client" };
 }
 
 function commandToAggregateRef(command: OrchestrationCommand): {
@@ -198,7 +210,13 @@ const makeOrchestrationEngine = Effect.gen(function* () {
                 }),
           ),
         );
-        const eventBases = Array.isArray(eventBase) ? eventBase : [eventBase];
+        const eventBases = (Array.isArray(eventBase) ? eventBase : [eventBase]).map((event) => ({
+          ...event,
+          metadata: {
+            ...event.metadata,
+            actor: envelope.actor,
+          },
+        }));
         const committedCommand = yield* sql
           .withTransaction(
             Effect.gen(function* () {
@@ -350,11 +368,12 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   const readEvents: OrchestrationEngineShape["readEvents"] = (fromSequenceExclusive, limit) =>
     eventStore.readFromSequence(fromSequenceExclusive, limit);
 
-  const dispatch: OrchestrationEngineShape["dispatch"] = (command) =>
+  const dispatch: OrchestrationEngineShape["dispatch"] = (command, actor) =>
     Effect.gen(function* () {
       const result = yield* Deferred.make<{ sequence: number }, OrchestrationDispatchError>();
       const envelope = {
         command,
+        actor: actor ?? inferCommandActor(command),
         result,
         startedAtMs: yield* Clock.currentTimeMillis,
       };

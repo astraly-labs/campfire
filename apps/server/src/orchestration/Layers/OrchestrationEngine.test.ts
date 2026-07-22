@@ -1,6 +1,7 @@
 import {
   CheckpointRef,
   CommandId,
+  AuthSessionId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   MessageId,
   ProjectId,
@@ -420,6 +421,44 @@ describe("OrchestrationEngine", () => {
       "thread.created",
       "thread.deleted",
     ]);
+    await system.dispose();
+  });
+
+  it("persists server-supplied client attribution on every decided event", async () => {
+    const system = await createOrchestrationSystem();
+    const { engine } = system;
+    const sessionId = AuthSessionId.make("session-alice");
+
+    await system.run(
+      engine.dispatch(
+        {
+          type: "project.create",
+          commandId: CommandId.make("cmd-attributed-project"),
+          projectId: asProjectId("project-attributed"),
+          title: "Attributed Project",
+          workspaceRoot: "/tmp/project-attributed",
+          defaultModelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          createdAt: now(),
+        },
+        {
+          kind: "client",
+          subject: "google:alice-subject",
+          sessionId,
+        },
+      ),
+    );
+
+    const events = Array.from(await system.run(Stream.runCollect(engine.readEvents(0))));
+    expect(events).toHaveLength(1);
+    expect(events[0]?.metadata.actor).toEqual({
+      kind: "client",
+      subject: "google:alice-subject",
+      sessionId,
+    });
+
     await system.dispose();
   });
 

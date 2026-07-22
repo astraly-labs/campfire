@@ -20,6 +20,7 @@ import {
   TerminalNotRunningError,
   type OrchestrationCommand,
   type OrchestrationEvent,
+  type OrchestrationEventActor,
   ORCHESTRATION_WS_METHODS,
   type PreviewEvent,
   ProjectId,
@@ -909,7 +910,7 @@ const parseSessionCookieFromWsUrl = (
   };
 };
 
-const wsRpcProtocolLayer = (wsUrl: string) => {
+const wsRpcProtocolLayer = (wsUrl: string, headers?: Readonly<Record<string, string>>) => {
   const { cookie, url } = parseSessionCookieFromWsUrl(wsUrl);
   const webSocketConstructorLayer = Layer.succeed(
     Socket.WebSocketConstructor,
@@ -917,7 +918,14 @@ const wsRpcProtocolLayer = (wsUrl: string) => {
       new NodeSocket.NodeWS.WebSocket(
         socketUrl,
         protocols,
-        cookie ? { headers: { cookie } } : undefined,
+        cookie || headers
+          ? {
+              headers: {
+                ...(cookie ? { cookie } : {}),
+                ...headers,
+              },
+            }
+          : undefined,
       ) as unknown as globalThis.WebSocket,
   );
 
@@ -934,7 +942,8 @@ type WsRpcClient =
 const withWsRpcClient = <A, E, R>(
   wsUrl: string,
   f: (client: WsRpcClient) => Effect.Effect<A, E, R>,
-) => makeWsRpcClient.pipe(Effect.flatMap(f), Effect.provide(wsRpcProtocolLayer(wsUrl)));
+  headers?: Readonly<Record<string, string>>,
+) => makeWsRpcClient.pipe(Effect.flatMap(f), Effect.provide(wsRpcProtocolLayer(wsUrl, headers)));
 
 const appendSessionCookieToWsUrl = (url: string, sessionCookieHeader: string) => {
   const isAbsoluteUrl = /^[a-zA-Z][a-zA-Z\d+.-]*:/.test(url);
@@ -4909,6 +4918,98 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       assert.isAtLeast(response.sequence, 0);
       assert.equal(stat.type, "Directory");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("derives orchestration attribution from the authenticated websocket session", () =>
+    Effect.gen(function* () {
+      let observedActor: OrchestrationEventActor | undefined;
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            dispatch: (_command, actor) =>
+              Effect.sync(() => {
+                observedActor = actor;
+                return { sequence: 1 };
+              }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+            type: "project.create",
+            commandId: CommandId.make("cmd-attributed-ws-project"),
+            projectId: ProjectId.make("project-attributed-ws"),
+            title: "Attributed WS Project",
+            workspaceRoot: process.cwd(),
+            createWorkspaceRootIfMissing: false,
+            defaultModelSelection: {
+              instanceId: ProviderInstanceId.make("codex"),
+              model: "gpt-5-codex",
+            },
+            createdAt: "2026-01-01T00:00:00.000Z",
+          }),
+        ),
+      );
+
+      assert.equal(observedActor?.kind, "client");
+      assert.equal(observedActor?.subject, "desktop-bootstrap");
+      assert.isString(observedActor?.sessionId);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("uses trusted Tailscale Serve identity for websocket attribution", () =>
+    Effect.gen(function* () {
+      let observedActor: OrchestrationEventActor | undefined;
+      yield* buildAppUnderTest({
+        config: { tailscaleServeEnabled: true, host: "127.0.0.1" },
+        layers: {
+          orchestrationEngine: {
+            dispatch: (_command, actor) =>
+              Effect.sync(() => {
+                observedActor = actor;
+                return { sequence: 1 };
+              }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      yield* Effect.scoped(
+        withWsRpcClient(
+          wsUrl,
+          (client) =>
+            client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+              type: "project.create",
+              commandId: CommandId.make("cmd-tailscale-attributed-ws-project"),
+              projectId: ProjectId.make("project-tailscale-attributed-ws"),
+              title: "Tailscale Attributed WS Project",
+              workspaceRoot: process.cwd(),
+              createWorkspaceRootIfMissing: false,
+              defaultModelSelection: {
+                instanceId: ProviderInstanceId.make("codex"),
+                model: "gpt-5-codex",
+              },
+              createdAt: "2026-01-01T00:00:00.000Z",
+            }),
+          {
+            "tailscale-user-login": "Alice@Example.com",
+            "tailscale-user-name": "Alice Example",
+          },
+        ),
+      );
+
+      assert.deepEqual(observedActor, {
+        kind: "client",
+        subject: "tailscale:alice@example.com",
+        displayName: "Alice Example",
+        networkLogin: "alice@example.com",
+        sessionId: observedActor?.sessionId,
+      });
+      assert.isString(observedActor?.sessionId);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

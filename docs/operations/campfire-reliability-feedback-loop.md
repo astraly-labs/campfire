@@ -70,7 +70,7 @@ Next:
 
 ### H2: A production-boundary five-client harness exposes the old failure class
 
-Status: proposed
+Status: confirmed
 
 Unit-level orchestration tests are insufficient to detect connection-level head-of-line blocking, replay gaps, or cross-client leakage; a five-client WebSocket harness with controllable slow and disconnected consumers will expose those regressions deterministically.
 
@@ -111,21 +111,26 @@ Expected signal:
 
 Validation:
 
-- Command/query: focused identity resolver and WebSocket dispatch tests.
+- Command/query: focused trusted-Tailscale-header resolver, orchestration attribution, and WebSocket dispatch tests.
 - Dataset/window: direct LAN/Tailnet request fixtures, loopback Serve fixtures, missing/encoded header fixtures, and reconnecting sessions.
 - Control/baseline: archived `campfire/v0` identity behavior.
 
 Result:
 
-- Pending.
+- Added a server-owned `OrchestrationEventActor` to durable event metadata. The orchestration engine accepts attribution out-of-band from the decoded command, overwrites decided-event actor metadata, and persists subject, display name, application session ID, and optional network login with every client event.
+- The WebSocket boundary now derives that actor exclusively from its verified session. A focused RPC fixture observed `kind=client`, the server-issued `desktop-bootstrap` subject, and a real server session ID; no client command field participates in authorship.
+- Added a Tailscale Serve identity resolver that trusts `tailscale-user-*` headers only when Serve is explicitly enabled, the configured backend host is loopback-only, and the immediate socket peer is loopback. It normalizes mapped IPv4, bounds header lengths, and normalizes login casing.
+- Direct tailnet-origin forged headers, wildcard-bound backends, and Serve-disabled loopback requests all resolved to no Tailscale identity. An enabled loopback WebSocket resolved `Alice@Example.com` to the stable actor subject `tailscale:alice@example.com` with display/network attribution.
+- The first WebSocket attribution fixture failed before dispatch because its synthetic workspace path did not exist; switching the fixture to the real test workspace reached the intended oracle and passed.
+- Focused auth/contract/engine/server validation passed 4 files and 177 tests in 4.41 seconds. Targeted lint passed with zero warnings/errors; contracts and server typechecks passed with only the same three pre-existing `decider.ts` suggestions.
 
 Decision:
 
-- Pending.
+- Keep actor context out of the client command schema and trust Tailscale headers only at the proven Serve hop. This makes authorship non-spoofable at the application boundary and gives Google OIDC a stable subject slot without coupling authorization to client-presented identity.
 
 Next:
 
-- Integrate Google OIDC subject mapping after the trust boundary is explicit.
+- Integrate Google OIDC subject mapping, allowlisting, nonce/state validation, and revocable browser-session issuance on this server-derived identity boundary.
 
 ### H4: Google OIDC plus Tailscale reduces onboarding risk without coupling agent lifetime to login
 
