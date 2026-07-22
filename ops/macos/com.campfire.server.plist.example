@@ -11,6 +11,12 @@
     <string>/Users/campfire/.config/campfire/server.env</string>
   </array>
 
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/opt/node@24/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+
   <key>WorkingDirectory</key>
   <string>/Users/campfire/services/campfire/current</string>
 
@@ -23,6 +29,9 @@
   </dict>
   <key>ThrottleInterval</key>
   <integer>10</integer>
+
+  <key>Umask</key>
+  <integer>63</integer>
 
   <key>StandardOutPath</key>
   <string>/Users/campfire/Library/Logs/Campfire/server.stdout.log</string>

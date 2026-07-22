@@ -33,7 +33,9 @@ Official references:
    security updates. Do not run this service from a personal admin account.
 2. Install Tailscale, join the intended tailnet, enable MagicDNS/HTTPS, and restrict access to this
    Mac in the tailnet policy to the five team identities/devices.
-3. Install the exact Node version required by the repository (`24.13.x`) and pnpm through Corepack.
+3. Install Node `24.13.1` or newer within major 24 and pnpm through Corepack. On Homebrew macOS,
+   `brew install node@24` provides the pinned executable at
+   `/opt/homebrew/opt/node@24/bin/node` without replacing the interactive shell's Node.
 4. Keep releases immutable:
 
    ```text
@@ -43,14 +45,14 @@ Official references:
    /Users/campfire/.config/campfire/server.env
    ```
 
-5. Build each release before switching `current`:
+5. Build each release before switching `current`. CI owns the full workspace suite; on the host,
+   install the frozen lockfile, build the release, run the focused Campfire server/ops gates, and
+   retain the advisory result:
 
    ```bash
    corepack pnpm install --frozen-lockfile
    corepack pnpm build
-   corepack pnpm test
-   corepack pnpm lint
-   corepack pnpm typecheck
+   corepack pnpm test:campfire-ops
    corepack pnpm audit:prod
    ```
 
@@ -78,7 +80,9 @@ Create `/Users/campfire/.config/campfire/server.env`, owned by `campfire` and mo
 
 ```bash
 CAMPFIRE_RELEASE='/Users/campfire/services/campfire/current'
-CAMPFIRE_NODE='/absolute/path/to/node-24.13.x'
+CAMPFIRE_NODE='/opt/homebrew/opt/node@24/bin/node'
+CAMPFIRE_DEPLOYMENT='production'
+CAMPFIRE_PRODUCTION_HOME='/Users/campfire/Library/Application Support/Campfire'
 T3CODE_HOME='/Users/campfire/Library/Application Support/Campfire'
 T3CODE_PORT='3773'
 T3CODE_TAILSCALE_SERVE_PORT='443'
@@ -93,6 +97,13 @@ T3CODE_OTLP_SERVICE_NAME='campfire-mac-mini'
 ```
 
 Never put this file, its backup, or the client secret in Git, Telegram, traces, or shell history.
+Before loading it, Campfire requires a non-symlink file owned by the service user with mode `0600`,
+a built release, Node 24, an exact Tailnet callback whose port matches Serve, one to five unique
+allowlisted emails, and non-overlapping code/data directories:
+
+```bash
+./ops/macos/campfire-preflight.sh /Users/campfire/.config/campfire/server.env
+```
 
 ## Staging without replacing production
 
@@ -101,7 +112,10 @@ Before the first promotion and before every risky upgrade:
 1. Back up production.
 2. Run the candidate from its immutable release directory with a separate base directory, backend
    port `3774`, and a free Serve HTTPS port (`10000` in these examples).
-3. Set the staging Google redirect URI to the exact `:10000` callback.
+3. Use a separate mode-0600 staging env file with `CAMPFIRE_DEPLOYMENT='staging'`,
+   `CAMPFIRE_PRODUCTION_HOME` pointing at production, `T3CODE_HOME` pointing at the isolated staging
+   directory, ports `3774`/`10000`, and the exact `:10000` Google callback. The preflight rejects
+   production data or ports in staging.
 4. Verify locally:
 
    ```bash
@@ -141,6 +155,15 @@ On staging, repeat with real Codex for at least 60 minutes:
 Record the release commit, client/network locations, p50/p95/p99, maximum queue depth, maximum RSS,
 maximum event-loop lag, reconnect result, and any trace IDs in the reliability ledger.
 
+The deterministic portion can run repeatedly and append a mode-0600 JSONL evidence record. Its
+record deliberately says `humanGateStatus: "pending"` and `eligibleForPromotion: false`; it never
+pretends to replace the real five-person Google/Codex gate:
+
+```bash
+corepack pnpm soak:campfire 3600 \
+  '/Users/campfire/Library/Application Support/Campfire/evidence/release-gates.jsonl'
+```
+
 ## launchd installation and promotion
 
 Copy `ops/macos/com.campfire.server.plist.example` to
@@ -153,8 +176,24 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.campfire.server.plis
 launchctl kickstart -k gui/$(id -u)/com.campfire.server
 ```
 
-Promotion is an atomic symlink change followed by a service restart. Keep the previous release and
-backup until the new release has completed a full soak.
+After the real acceptance gate is recorded, promote with the guarded atomic switch and restart the
+service. The command refuses an unbuilt release or a non-symlink `current`, canonicalizes the
+release path, and preserves the replaced target as `current.previous`:
+
+```bash
+./ops/macos/campfire-release.sh promote \
+  '/Users/campfire/services/campfire/current' \
+  '/Users/campfire/services/campfire/releases/<git-commit>'
+launchctl kickstart -k gui/$(id -u)/com.campfire.server
+```
+
+Keep the previous release and backup until the promoted release has completed its full soak. An
+application-only rollback swaps back to the recorded built release atomically:
+
+```bash
+./ops/macos/campfire-release.sh rollback '/Users/campfire/services/campfire/current'
+launchctl kickstart -k gui/$(id -u)/com.campfire.server
+```
 
 ## Health and diagnosis
 
@@ -185,6 +224,16 @@ It uses SQLite's online backup API, copies non-log runtime state and worktrees, 
 database, and creates a mode-0600 archive. Project roots outside `T3CODE_HOME` must also be covered
 by encrypted Time Machine/APFS snapshots. Test restoring backups quarterly on a different base
 directory.
+
+Restore archives only into a new path. The restore command rejects existing destinations and unsafe
+archive paths, extracts into a temporary sibling, verifies SQLite, and then moves the complete
+restore into place:
+
+```bash
+./ops/macos/campfire-restore.sh \
+  '/Volumes/EncryptedBackups/Campfire/<archive>.tar.gz' \
+  '/Users/campfire/Library/Application Support/Campfire-restore-<timestamp>'
+```
 
 For an application rollback:
 
