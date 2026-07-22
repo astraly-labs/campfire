@@ -296,3 +296,40 @@ Decision:
 Next:
 
 - Replace the unbounded event PubSub with a bounded durable wake-up feed rather than dropping domain events.
+
+### H9: A one-slot wake-up feed can remain lossless through durable replay
+
+Status: confirmed
+
+The engine does not need to retain every domain event separately for every live subscriber because SQLite already is the authoritative ordered log. A capacity-one sliding PubSub can carry only the newest committed sequence as a wake-up signal; each subscriber then reads the exact missing range from its private cursor. Coalesced wake-ups should bound memory without losing or reordering events, and publication should never wait for a slow subscriber.
+
+Expected signal:
+
+- A subscriber blocked after its first event later receives every intervening persisted event in sequence even though all wake-ups coalesce to one slot.
+- A fast subscriber continues receiving while another is blocked.
+- Event publication remains non-blocking and the in-memory PubSub retains at most one sequence signal per subscriber.
+- Transient durable-read failures retry from the last emitted sequence rather than duplicating the successful prefix.
+
+Validation:
+
+- Command/query: focused durable-feed unit fixtures plus an orchestration-engine integration fixture with fast and deliberately blocked subscribers.
+- Dataset/window: consecutive synthetic sequences with a mid-range read failure, then a real thread receiving a burst while one subscriber is paused.
+- Control/baseline: current unbounded event PubSub containing full `OrchestrationEvent` objects per subscriber.
+
+Result:
+
+- Replaced the full-event unbounded PubSub with a capacity-one sliding sequence wake-up feed. Each subscription captures a race-safe initial cursor/head pair, then reads only its missing durable range; later wake-ups coalesce while the subscriber is busy.
+- The first implementation attempt exposed two invalid Effect v4 assumptions: `Stream.unwrapScoped` does not exist, and a PubSub subscription is not a `Queue` consumable by `Stream.fromQueue`. The resulting focused runs failed before the oracle could execute (then one timed out). Switching to `Stream.unwrap` and a repeated `PubSub.take` produced the intended scoped subscription.
+- A synthetic fast/blocked subscriber fixture coalesced four pending wake-ups into the one-slot signal while both subscribers still received sequences `[1, 2, 3, 4, 5]` exactly once and in order.
+- A durable-read fixture emitted sequence 1, failed mid-range, retried from the updated cursor, and produced `[1, 2, 3]` without duplicating the successful prefix. The retry counter observed one read error.
+- A real engine integration fixture blocked one subscriber after its first event while dispatching 20 thread updates. The fast subscriber completed independently; after release, the blocked subscriber replayed exactly the same 20 strictly increasing sequences from SQLite.
+- Added `t3_orchestration_event_feed_read_retries_total` and a 100 ms retry interval for transient event-store failures.
+- The expanded reliability group passed 7 files and 182 tests in 4.55 seconds. Targeted lint passed with zero warnings/errors and server typecheck passed with only the three pre-existing `decider.ts` suggestions.
+
+Decision:
+
+- Keep the durable one-slot wake-up architecture. It gives event delivery a fixed in-memory bound per subscriber, preserves the database as the oracle, and removes slow-subscriber backpressure from command publication without dropping domain events.
+
+Next:
+
+- Bound the drainable reactor workers that currently absorb this stream into their own unbounded queues.

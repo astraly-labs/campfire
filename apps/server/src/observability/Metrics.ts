@@ -46,6 +46,13 @@ export const orchestrationCommandQueueRejectionsTotal = Metric.counter(
   },
 );
 
+export const orchestrationEventFeedReadRetriesTotal = Metric.counter(
+  "t3_orchestration_event_feed_read_retries_total",
+  {
+    description: "Durable event-feed reads retried after a persistence failure.",
+  },
+);
+
 export const orchestrationEventsProcessedTotal = Metric.counter(
   "t3_orchestration_events_processed_total",
   {
