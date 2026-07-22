@@ -31,6 +31,7 @@ import {
   type GitManagerServiceError,
   OrchestrationDispatchCommandError,
   type OrchestrationEvent,
+  type OrchestrationEventActor,
   type OrchestrationShellStreamEvent,
   type OrchestrationShellStreamItem,
   type OrchestrationThreadStreamItem,
@@ -470,6 +471,19 @@ const makeWsRpcLayer = (
       const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
       const threadDeletionReactor = yield* ThreadDeletionReactor;
       const analytics = yield* AnalyticsService.AnalyticsService;
+      const authenticatedActor = {
+        kind: "client",
+        subject: currentSession.tailscaleIdentity
+          ? `tailscale:${currentSession.tailscaleIdentity.login}`
+          : currentSession.subject,
+        ...(currentSession.tailscaleIdentity
+          ? {
+              displayName: currentSession.tailscaleIdentity.displayName,
+              networkLogin: currentSession.tailscaleIdentity.login,
+            }
+          : {}),
+        sessionId: currentSession.sessionId,
+      } satisfies OrchestrationEventActor;
       // Every command dispatched on this connection carries the connecting
       // client's origin, including server-generated bootstrap sub-commands:
       // the client's request caused them.
@@ -478,10 +492,10 @@ const makeWsRpcLayer = (
       const dispatchFromClient: OrchestrationEngine.OrchestrationEngineShape["dispatch"] = (
         command,
       ) =>
-        orchestrationEngine.dispatch(
-          command,
-          hasClientOrigin ? { origin: clientOrigin } : undefined,
-        );
+        orchestrationEngine.dispatch(command, {
+          ...(hasClientOrigin ? { origin: clientOrigin } : {}),
+          actor: authenticatedActor,
+        });
       const recordClientCommandAnalytics = (command: OrchestrationCommand) => {
         switch (command.type) {
           case "thread.create":

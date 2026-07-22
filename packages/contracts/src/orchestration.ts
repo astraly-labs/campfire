@@ -7,6 +7,7 @@ import { ProviderOptionSelections } from "./model.ts";
 import { RepositoryIdentity, ThreadEnvMode } from "./environment.ts";
 import {
   ApprovalRequestId,
+  AuthSessionId,
   CheckpointRef,
   ClientSurface,
   CommandId,
@@ -1168,6 +1169,16 @@ export type OrchestrationEventType = typeof OrchestrationEventType.Type;
 export const OrchestrationAggregateKind = Schema.Literals(["project", "thread"]);
 export type OrchestrationAggregateKind = typeof OrchestrationAggregateKind.Type;
 export const OrchestrationActorKind = Schema.Literals(["client", "server", "provider"]);
+export type OrchestrationActorKind = typeof OrchestrationActorKind.Type;
+
+export const OrchestrationEventActor = Schema.Struct({
+  kind: OrchestrationActorKind,
+  subject: Schema.optional(TrimmedNonEmptyString),
+  displayName: Schema.optional(TrimmedNonEmptyString),
+  sessionId: Schema.optional(AuthSessionId),
+  networkLogin: Schema.optional(TrimmedNonEmptyString),
+});
+export type OrchestrationEventActor = typeof OrchestrationEventActor.Type;
 
 export const ProjectCreatedPayload = Schema.Struct({
   projectId: ProjectId,
@@ -1410,6 +1421,7 @@ export const OrchestrationClientOrigin = Schema.Struct({
 export type OrchestrationClientOrigin = typeof OrchestrationClientOrigin.Type;
 
 export const OrchestrationEventMetadata = Schema.Struct({
+  actor: Schema.optional(OrchestrationEventActor),
   providerTurnId: Schema.optional(TrimmedNonEmptyString),
   providerItemId: Schema.optional(ProviderItemId),
   adapterKey: Schema.optional(TrimmedNonEmptyString),

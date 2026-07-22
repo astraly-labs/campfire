@@ -35,7 +35,12 @@ import * as EnvironmentAuthPolicy from "./EnvironmentAuthPolicy.ts";
 import * as PairingGrantStore from "./PairingGrantStore.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import * as SessionStore from "./SessionStore.ts";
+import {
+  resolveTrustedTailscaleServeIdentity,
+  type TrustedTailscaleServeIdentity,
+} from "./tailscaleServeIdentity.ts";
 import { verifyRequestDpopProof } from "./dpop.ts";
+import * as ServerConfig from "../config.ts";
 import { layerConfig as SqlitePersistenceLayer } from "../persistence/Layers/Sqlite.ts";
 
 export const DEFAULT_SESSION_SUBJECT = "cli-issued-session";
@@ -68,6 +73,7 @@ export interface AuthenticatedSession {
   readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
   readonly proofKeyThumbprint?: string;
   readonly expiresAt?: DateTime.DateTime;
+  readonly tailscaleIdentity?: TrustedTailscaleServeIdentity;
 }
 
 const serverAuthInternalErrorContext = {
@@ -593,11 +599,28 @@ export function selectRequestCredential(
 
 export const make = Effect.gen(function* () {
   const policy = yield* EnvironmentAuthPolicy.EnvironmentAuthPolicy;
+  const config = yield* ServerConfig.ServerConfig;
   const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
   const sessions = yield* SessionStore.SessionStore;
   const secretStore = yield* ServerSecretStore.ServerSecretStore;
   const crypto = yield* Crypto.Crypto;
   const descriptor = yield* policy.getDescriptor();
+
+  const attachTrustedTailscaleIdentity = (
+    session: AuthenticatedSession,
+    request: HttpServerRequest.HttpServerRequest,
+  ): AuthenticatedSession =>
+    Option.match(
+      resolveTrustedTailscaleServeIdentity({
+        request,
+        tailscaleServeEnabled: config.tailscaleServeEnabled,
+        serverHost: config.host,
+      }),
+      {
+        onNone: () => session,
+        onSome: (tailscaleIdentity) => ({ ...session, tailscaleIdentity }),
+      },
+    );
 
   const authenticateToken = (
     token: string,
@@ -669,6 +692,7 @@ export const make = Effect.gen(function* () {
         }
         return Effect.succeed(session);
       }),
+      Effect.map((session) => attachTrustedTailscaleIdentity(session, request)),
     );
   };
 
@@ -986,13 +1010,18 @@ export const make = Effect.gen(function* () {
         const websocketTicket = requestUrl.value.searchParams.get(WEBSOCKET_TICKET_QUERY_PARAM);
         if (websocketTicket && websocketTicket.trim().length > 0) {
           return yield* sessions.verifyWebSocketToken(websocketTicket).pipe(
-            Effect.map((session) => ({
-              sessionId: session.sessionId,
-              subject: session.subject,
-              method: session.method,
-              scopes: session.scopes,
-              ...(session.expiresAt ? { expiresAt: session.expiresAt } : {}),
-            })),
+            Effect.map((session) =>
+              attachTrustedTailscaleIdentity(
+                {
+                  sessionId: session.sessionId,
+                  subject: session.subject,
+                  method: session.method,
+                  scopes: session.scopes,
+                  ...(session.expiresAt ? { expiresAt: session.expiresAt } : {}),
+                },
+                request,
+              ),
+            ),
             mapSessionVerificationErrors,
           );
         }

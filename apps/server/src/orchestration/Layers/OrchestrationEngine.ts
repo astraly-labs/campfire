@@ -1,6 +1,7 @@
 import type {
   OrchestrationClientOrigin,
   OrchestrationEvent,
+  OrchestrationEventActor,
   OrchestrationReadModel,
   ProjectId,
   ThreadId,
@@ -67,8 +68,19 @@ const COMMAND_QUEUE_OFFER_TIMEOUT = Duration.seconds(2);
 interface CommandEnvelope {
   command: OrchestrationCommand;
   origin: OrchestrationClientOrigin | undefined;
+  actor: OrchestrationEventActor;
   result: Deferred.Deferred<{ sequence: number }, OrchestrationDispatchError>;
   startedAtMs: number;
+}
+
+function inferCommandActor(command: OrchestrationCommand): OrchestrationEventActor {
+  if (command.commandId.startsWith("provider:")) {
+    return { kind: "provider" };
+  }
+  if (command.commandId.startsWith("server:")) {
+    return { kind: "server" };
+  }
+  return { kind: "client" };
 }
 
 function commandToAggregateRef(command: OrchestrationCommand): {
@@ -244,15 +256,15 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           ),
         );
         const plannedEvents = Array.isArray(eventBase) ? eventBase : [eventBase];
-        // Stamp the dispatching client's origin onto every event the command
-        // produced. The decider stays pure; attribution is an engine concern.
-        const eventBases =
-          envelope.origin === undefined
-            ? plannedEvents
-            : plannedEvents.map((planned) => ({
-                ...planned,
-                metadata: { ...planned.metadata, origin: envelope.origin },
-              }));
+        // Attribution belongs to the engine so the decider stays pure.
+        const eventBases = plannedEvents.map((event) => ({
+          ...event,
+          metadata: {
+            ...event.metadata,
+            ...(envelope.origin === undefined ? {} : { origin: envelope.origin }),
+            actor: envelope.actor,
+          },
+        }));
         const committedCommand = yield* sql
           .withTransaction(
             Effect.gen(function* () {
@@ -413,6 +425,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
       const envelope = {
         command,
         origin: options?.origin,
+        actor: options?.actor ?? inferCommandActor(command),
         result,
         startedAtMs: yield* Clock.currentTimeMillis,
       };
