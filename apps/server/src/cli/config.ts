@@ -139,7 +139,55 @@ const EnvServerConfig = Config.all({
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
+  googleOidcClientId: Config.string("T3CODE_GOOGLE_OIDC_CLIENT_ID").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  googleOidcClientSecret: Config.string("T3CODE_GOOGLE_OIDC_CLIENT_SECRET").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  googleOidcRedirectUri: Config.string("T3CODE_GOOGLE_OIDC_REDIRECT_URI").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  googleOidcAllowedEmails: Config.string("T3CODE_GOOGLE_OIDC_ALLOWED_EMAILS").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
 });
+
+export function parseGoogleOidcConfig(input: {
+  readonly clientId?: string;
+  readonly clientSecret?: string;
+  readonly redirectUri?: string;
+  readonly allowedEmails?: string;
+}): ServerConfig.GoogleOidcConfig | undefined {
+  const clientId = input.clientId?.trim();
+  const clientSecret = input.clientSecret?.trim();
+  const redirectUriValue = input.redirectUri?.trim();
+  const allowedEmails = Array.from(
+    new Set(
+      (input.allowedEmails ?? "")
+        .split(",")
+        .map((email) => email.trim().toLowerCase())
+        .filter((email) => email.length > 0),
+    ),
+  );
+  if (!clientId && !clientSecret && !redirectUriValue && allowedEmails.length === 0) {
+    return undefined;
+  }
+  if (!clientId || !clientSecret || !redirectUriValue || allowedEmails.length === 0) {
+    throw new Error(
+      "Google OIDC requires client ID, client secret, redirect URI, and at least one allowed email.",
+    );
+  }
+  const redirectUri = new URL(redirectUriValue);
+  if (redirectUri.protocol !== "https:" && redirectUri.hostname !== "localhost") {
+    throw new Error("Google OIDC redirect URI must use HTTPS (except localhost development).");
+  }
+  return { clientId, clientSecret, redirectUri, allowedEmails };
+}
 
 export interface CliServerFlags {
   readonly mode: Option.Option<ServerConfig.RuntimeMode>;
@@ -220,6 +268,12 @@ export const resolveServerConfig = (
     const path = yield* Path.Path;
     const fs = yield* FileSystem.FileSystem;
     const env = yield* EnvServerConfig;
+    const googleOidc = parseGoogleOidcConfig({
+      ...(env.googleOidcClientId ? { clientId: env.googleOidcClientId } : {}),
+      ...(env.googleOidcClientSecret ? { clientSecret: env.googleOidcClientSecret } : {}),
+      ...(env.googleOidcRedirectUri ? { redirectUri: env.googleOidcRedirectUri } : {}),
+      ...(env.googleOidcAllowedEmails ? { allowedEmails: env.googleOidcAllowedEmails } : {}),
+    });
     const normalizedFlags = {
       mode: flags.mode ?? Option.none(),
       port: flags.port ?? Option.none(),
@@ -386,6 +440,7 @@ export const resolveServerConfig = (
       logWebSocketEvents,
       tailscaleServeEnabled,
       tailscaleServePort,
+      ...(googleOidc ? { googleOidc } : {}),
     };
 
     return config;

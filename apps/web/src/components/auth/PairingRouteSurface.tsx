@@ -52,6 +52,7 @@ export function PairingRouteSurface({
   const [errorMessage, setErrorMessage] = useState(initialErrorMessage ?? "");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const autoSubmitAttemptedRef = useRef(false);
+  const googleOidcEnabled = auth.bootstrapMethods.includes("google-oidc");
 
   const submitCredential = useCallback(
     async (nextCredential: string) => {
@@ -109,51 +110,68 @@ export function PairingRouteSurface({
           {APP_DISPLAY_NAME}
         </p>
         <h1 className="mt-3 text-2xl font-semibold tracking-tight sm:text-3xl">
-          Pair with this environment
+          {googleOidcEnabled ? "Sign in to Campfire" : "Pair with this environment"}
         </h1>
         <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
           {describeAuthGate(auth.bootstrapMethods)}
         </p>
 
-        <form className="mt-6 space-y-4" onSubmit={(event) => void handleSubmit(event)}>
-          <div className="space-y-2">
-            <label className="text-sm font-medium" htmlFor="pairing-token">
-              Pairing token
-            </label>
-            <Input
-              id="pairing-token"
-              autoCapitalize="none"
-              autoComplete="off"
-              autoCorrect="off"
-              disabled={isSubmitting}
-              nativeInput
-              onChange={(event) => setCredential(event.currentTarget.value)}
-              placeholder="Paste a one-time token or pairing secret"
-              spellCheck={false}
-              value={credential}
-            />
-          </div>
-
-          {errorMessage ? (
-            <div className="rounded-lg border border-destructive/30 bg-destructive/6 px-3 py-2 text-sm text-destructive">
-              {errorMessage}
-            </div>
-          ) : null}
-
-          <div className="flex flex-wrap gap-2">
-            <Button disabled={isSubmitting} size="sm" type="submit">
-              {isSubmitting ? "Pairing..." : "Continue"}
-            </Button>
+        {googleOidcEnabled ? (
+          <div className="mt-6 space-y-4">
+            {errorMessage ? (
+              <div className="rounded-lg border border-destructive/30 bg-destructive/6 px-3 py-2 text-sm text-destructive">
+                {errorMessage}
+              </div>
+            ) : null}
             <Button
-              disabled={isSubmitting}
-              onClick={() => window.location.reload()}
+              onClick={() => window.location.assign("/auth/google/login?returnTo=%2F")}
               size="sm"
-              variant="outline"
+              type="button"
             >
-              Reload app
+              Continue with Google
             </Button>
           </div>
-        </form>
+        ) : (
+          <form className="mt-6 space-y-4" onSubmit={(event) => void handleSubmit(event)}>
+            <div className="space-y-2">
+              <label className="text-sm font-medium" htmlFor="pairing-token">
+                Pairing token
+              </label>
+              <Input
+                id="pairing-token"
+                autoCapitalize="none"
+                autoComplete="off"
+                autoCorrect="off"
+                disabled={isSubmitting}
+                nativeInput
+                onChange={(event) => setCredential(event.currentTarget.value)}
+                placeholder="Paste a one-time token or pairing secret"
+                spellCheck={false}
+                value={credential}
+              />
+            </div>
+
+            {errorMessage ? (
+              <div className="rounded-lg border border-destructive/30 bg-destructive/6 px-3 py-2 text-sm text-destructive">
+                {errorMessage}
+              </div>
+            ) : null}
+
+            <div className="flex flex-wrap gap-2">
+              <Button disabled={isSubmitting} size="sm" type="submit">
+                {isSubmitting ? "Pairing..." : "Continue"}
+              </Button>
+              <Button
+                disabled={isSubmitting}
+                onClick={() => window.location.reload()}
+                size="sm"
+                variant="outline"
+              >
+                Reload app
+              </Button>
+            </div>
+          </form>
+        )}
 
         <div className="mt-6 rounded-lg border border-border/70 bg-background/55 px-3 py-3 text-xs leading-relaxed text-muted-foreground">
           {describeSupportedMethods(auth.bootstrapMethods)}
@@ -300,6 +318,9 @@ function errorMessageFromUnknown(error: unknown): string {
 }
 
 function describeAuthGate(bootstrapMethods: ReadonlyArray<string>): string {
+  if (bootstrapMethods.includes("google-oidc")) {
+    return "Use an allowlisted Google account. Campfire will create a revocable session for this browser.";
+  }
   if (bootstrapMethods.includes("desktop-bootstrap")) {
     return "This environment expects a trusted pairing credential before the app can connect.";
   }
@@ -308,6 +329,9 @@ function describeAuthGate(bootstrapMethods: ReadonlyArray<string>): string {
 }
 
 function describeSupportedMethods(bootstrapMethods: ReadonlyArray<string>): string {
+  if (bootstrapMethods.includes("google-oidc")) {
+    return "Tailscale protects network access; Google verifies who is using this Campfire session.";
+  }
   if (
     bootstrapMethods.includes("desktop-bootstrap") &&
     bootstrapMethods.includes("one-time-token")
