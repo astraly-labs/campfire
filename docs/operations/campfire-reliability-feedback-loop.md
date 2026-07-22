@@ -190,3 +190,38 @@ Decision:
 Next:
 
 - Address slow-consumer live buffers independently; snapshot fallback alone does not bound an indefinitely connected slow client.
+
+### H6: Fail-and-resume isolates a slow detailed-thread subscriber
+
+Status: confirmed
+
+A fixed-capacity dropping buffer can preserve all queued events until capacity, then fail only that subscription on overflow. The existing client retry loop can resume after 250 ms from its last applied sequence, avoiding both silent drops and server-wide producer backpressure.
+
+Expected signal:
+
+- Offering beyond capacity never blocks the orchestration producer and causes one explicit overflow failure after already-queued items drain.
+- The affected subscription terminates with a typed synchronization error instead of dropping an event silently.
+- Other subscriptions and command dispatch remain independent.
+- The existing client test for same-session recovery from a transient domain failure remains green.
+
+Validation:
+
+- Command/query: focused unit test for the bounded live buffer, server subscription tests, and client same-session recovery tests.
+- Dataset/window: a capacity-two deterministic unit fixture plus production buffer capacity of 512 thread stream items.
+- Control/baseline: current unbounded per-thread `Queue`.
+
+Result:
+
+- Added a reusable fixed-capacity live subscription buffer backed by a dropping queue. It accepts every item up to capacity without blocking the producer; the first rejected offer terminates only that queue with a typed failure after the accepted backlog drains.
+- Detailed-thread subscriptions now use a capacity of 512 items and surface `OrchestrationGetSnapshotError` on overflow. The client runtime already retries expected stream failures after 250 ms with the latest applied sequence, so recovery goes through the bounded replay-or-snapshot path from H5.
+- The capacity-two unit fixture received `[1, 2]` in order and then the exact overflow failure after a third offer; a non-overflow fixture remained open and delivered both accepted items.
+- `corepack pnpm exec vp test run apps/server/src/orchestration/liveSubscriptionBuffer.test.ts apps/server/src/server.test.ts packages/client-runtime/src/state/threads-sync.test.ts`: 3 files and 131 tests passed in 4.43 seconds.
+- Targeted formatting and lint passed with zero errors or warnings. `corepack pnpm exec vp run --filter t3 typecheck` passed; it reported only three pre-existing Effect suggestions in `decider.ts`.
+
+Decision:
+
+- Keep fail-and-resume rather than blocking or silently dropping. A slow detailed-thread browser is now isolated by a fixed memory bound, while its durable cursor gives it a deterministic recovery path.
+
+Next:
+
+- Apply the same invariant to shell subscriptions and add overflow observability before bounding the engine-wide PubSub.

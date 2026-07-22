@@ -69,6 +69,7 @@ import {
 import { normalizeDispatchCommand } from "./orchestration/Normalizer.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
+import { makeLiveSubscriptionBuffer } from "./orchestration/liveSubscriptionBuffer.ts";
 import {
   observeRpcEffect as instrumentRpcEffect,
   observeRpcStream as instrumentRpcStream,
@@ -299,6 +300,10 @@ const SHELL_RESUME_MAX_GAP = 1_000;
 // shell subscription: a fresh projected thread snapshot is cheaper than
 // replaying an arbitrarily large global gap.
 const THREAD_RESUME_MAX_GAP = 1_000;
+// A detailed-thread stream is durable: if one browser cannot consume events
+// fast enough, fail only that subscription and let it resume from its last
+// applied sequence. Never let an unbounded per-client queue retain the server.
+const THREAD_LIVE_BUFFER_CAPACITY = 512;
 function toAuthAccessStreamEvent(
   change: PairingGrantStore.BootstrapCredentialChange | SessionStore.SessionCredentialChange,
   revision: number,
@@ -1249,17 +1254,29 @@ const makeWsRpcLayer = (
 
               // Attach live delivery before reading either replay or snapshot state.
               // Otherwise an event published while the snapshot is loading is lost.
-              const liveBuffer = yield* Queue.unbounded<OrchestrationThreadStreamItem>();
-              yield* Effect.forkScoped(
-                liveStream.pipe(Stream.runForEach((item) => Queue.offer(liveBuffer, item))),
-              );
-              const bufferedLiveStream = Stream.fromQueue(liveBuffer);
+              const liveBuffer = yield* makeLiveSubscriptionBuffer<
+                OrchestrationThreadStreamItem,
+                OrchestrationGetSnapshotError
+              >({
+                capacity: THREAD_LIVE_BUFFER_CAPACITY,
+                label: `orchestration.thread:${input.threadId}`,
+                onOverflow: () =>
+                  new OrchestrationGetSnapshotError({
+                    message: `Thread ${input.threadId} subscription fell behind; resynchronization required`,
+                    cause: {
+                      capacity: THREAD_LIVE_BUFFER_CAPACITY,
+                      threadId: input.threadId,
+                    },
+                  }),
+              });
+              yield* Effect.forkScoped(liveStream.pipe(Stream.runForEach(liveBuffer.offer)));
+              const bufferedLiveStream = liveBuffer.stream;
               const synchronizedThenLive =
                 input.requestCompletionMarker === true
                   ? Stream.concat(
-                      Stream.fromEffect(
-                        Queue.offer(liveBuffer, { kind: "synchronized" as const }),
-                      ).pipe(Stream.drain),
+                      Stream.fromEffect(liveBuffer.offer({ kind: "synchronized" as const })).pipe(
+                        Stream.drain,
+                      ),
                       bufferedLiveStream,
                     )
                   : bufferedLiveStream;
