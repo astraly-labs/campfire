@@ -58,6 +58,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import {
   FetchHttpClient,
+  Cookies,
   HttpBody,
   HttpClient,
   HttpClientRequest,
@@ -113,6 +114,7 @@ import * as ReviewService from "./review/ReviewService.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
+import * as GoogleOidc from "./auth/GoogleOidc.ts";
 import * as CloudManagedEndpointRuntime from "./cloud/ManagedEndpointRuntime.ts";
 import * as CloudCliTokenManager from "./cloud/CliTokenManager.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
@@ -1444,6 +1446,109 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       // Desktop, so port-scoped: instances scan for a free port and share
       // 127.0.0.1, and cookies are not scoped by port.
       assert.isTrue(body.auth.sessionCookieName.startsWith("t3_session_"));
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("completes Google OIDC into an attributable revocable server session", () =>
+    Effect.gen(function* () {
+      const googleConfig: ServerConfig.GoogleOidcConfig = {
+        clientId: "google-client-id",
+        clientSecret: "google-client-secret",
+        redirectUri: new URL("https://campfire.example.ts.net/auth/google/callback"),
+        allowedEmails: ["alice@example.com"],
+      };
+      let observedActor: OrchestrationEventActor | undefined;
+      const config = yield* buildAppUnderTest({
+        config: { mode: "web", googleOidc: googleConfig },
+        layers: {
+          orchestrationEngine: {
+            dispatch: (_command, actor) =>
+              Effect.sync(() => {
+                observedActor = actor;
+                return { sequence: 1 };
+              }),
+          },
+        },
+      });
+      const flow = yield* GoogleOidc.makeGoogleOidcFlow(googleConfig, {
+        exchangeAndVerify: () =>
+          Effect.succeed({
+            subject: "google:alice-stable-subject",
+            googleSubject: "alice-stable-subject",
+            email: "alice@example.com",
+            displayName: "Alice Example",
+          }),
+      });
+      GoogleOidc.setGoogleOidcFlowForTesting(config.googleOidc!, flow);
+
+      const loginUrl = yield* getHttpServerUrl("/auth/google/login?returnTo=%2F");
+      const loginResponse = yield* fetchEffect(loginUrl, { redirect: "manual" });
+      assert.equal(loginResponse.status, 302);
+      const authorizationUrl = new URL(loginResponse.headers.location!);
+      const state = authorizationUrl.searchParams.get("state");
+      const transactionCookie = loginResponse.headers["set-cookie"]?.match(
+        /campfire_google_oidc=[^;]+/,
+      )?.[0];
+      assert.isNotNull(state);
+      assert.isDefined(transactionCookie);
+
+      const callbackUrl = yield* getHttpServerUrl(
+        `/auth/google/callback?code=authorization-code&state=${encodeURIComponent(state!)}`,
+      );
+      const callbackResponse = yield* fetchEffect(callbackUrl, {
+        redirect: "manual",
+        headers: { cookie: transactionCookie! },
+      });
+      assert.equal(callbackResponse.status, 302);
+      assert.equal(callbackResponse.headers.location, "/");
+      const callbackCookies = Cookies.toRecord(callbackResponse.cookies);
+      const sessionToken = callbackCookies.t3_session;
+      assert.isDefined(sessionToken);
+      const sessionCookie = `t3_session=${sessionToken}`;
+
+      const clientsUrl = yield* getHttpServerUrl("/api/auth/clients");
+      const clientsResponse = yield* fetchEffect(clientsUrl, {
+        headers: { cookie: sessionCookie! },
+      });
+      const clients = yield* responseJsonEffect<
+        ReadonlyArray<{
+          readonly subject: string;
+          readonly client: { readonly label?: string };
+          readonly current: boolean;
+        }>
+      >(clientsResponse);
+      assert.equal(clientsResponse.status, 200);
+      assert.equal(clients[0]?.subject, "google:alice-stable-subject");
+      assert.equal(clients[0]?.client.label, "Alice Example");
+      assert.equal(clients[0]?.current, true);
+
+      const server = yield* HttpServer.HttpServer;
+      const address = server.address as HttpServer.TcpAddress;
+      const wsUrl = appendSessionCookieToWsUrl(`ws://127.0.0.1:${address.port}/ws`, sessionCookie);
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+            type: "project.create",
+            commandId: CommandId.make("cmd-google-attributed-ws-project"),
+            projectId: ProjectId.make("project-google-attributed-ws"),
+            title: "Google Attributed WS Project",
+            workspaceRoot: process.cwd(),
+            createWorkspaceRootIfMissing: false,
+            defaultModelSelection,
+            createdAt: "2026-01-01T00:00:00.000Z",
+          }),
+        ),
+      );
+      assert.equal(observedActor?.subject, "google:alice-stable-subject");
+      assert.equal(observedActor?.displayName, "Alice Example");
+      assert.isString(observedActor?.sessionId);
+
+      const replayResponse = yield* fetchEffect(callbackUrl, {
+        redirect: "manual",
+        headers: { cookie: transactionCookie! },
+      });
+      assert.equal(replayResponse.status, 400);
+      assert.isUndefined(Cookies.toRecord(replayResponse.cookies).t3_session);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

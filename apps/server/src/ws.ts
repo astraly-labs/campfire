@@ -419,14 +419,19 @@ const makeWsRpcLayer = (
       const relayClient = yield* RelayClient.RelayClient;
       const authenticatedActor = {
         kind: "client",
-        subject: currentSession.tailscaleIdentity
-          ? `tailscale:${currentSession.tailscaleIdentity.login}`
-          : currentSession.subject,
-        ...(currentSession.tailscaleIdentity
+        subject: currentSession.subject.startsWith("google:")
+          ? currentSession.subject
+          : currentSession.tailscaleIdentity
+            ? `tailscale:${currentSession.tailscaleIdentity.login}`
+            : currentSession.subject,
+        ...(currentSession.displayName || currentSession.tailscaleIdentity
           ? {
-              displayName: currentSession.tailscaleIdentity.displayName,
-              networkLogin: currentSession.tailscaleIdentity.login,
+              displayName:
+                currentSession.displayName ?? currentSession.tailscaleIdentity?.displayName,
             }
+          : {}),
+        ...(currentSession.tailscaleIdentity
+          ? { networkLogin: currentSession.tailscaleIdentity.login }
           : {}),
         sessionId: currentSession.sessionId,
       } satisfies OrchestrationEventActor;

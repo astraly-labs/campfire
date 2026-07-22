@@ -26,8 +26,11 @@ export const make = Effect.gen(function* () {
         ? "remote-reachable"
         : "loopback-browser";
 
-  const bootstrapMethods: ServerAuthDescriptor["bootstrapMethods"] =
-    policy === "desktop-managed-local"
+  const bootstrapMethods: ServerAuthDescriptor["bootstrapMethods"] = config.googleOidc
+    ? config.mode === "desktop"
+      ? ["desktop-bootstrap", "google-oidc"]
+      : ["google-oidc"]
+    : policy === "desktop-managed-local"
       ? ["desktop-bootstrap"]
       : config.mode === "desktop" && policy === "remote-reachable"
         ? ["desktop-bootstrap", "one-time-token"]

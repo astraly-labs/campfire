@@ -153,4 +153,26 @@ it.layer(NodeServices.layer)("EnvironmentAuthPolicy.layer", (it) => {
       ),
     ),
   );
+
+  it.effect("advertises Google OIDC instead of shared pairing when configured", () =>
+    Effect.gen(function* () {
+      const policy = yield* EnvironmentAuthPolicy.EnvironmentAuthPolicy;
+      const descriptor = yield* policy.getDescriptor();
+
+      expect(descriptor.bootstrapMethods).toEqual(["google-oidc"]);
+    }).pipe(
+      Effect.provide(
+        makeEnvironmentAuthPolicyLayer({
+          mode: "web",
+          host: "127.0.0.1",
+          googleOidc: {
+            clientId: "client-id",
+            clientSecret: "client-secret",
+            redirectUri: new URL("https://campfire.example.ts.net/auth/google/callback"),
+            allowedEmails: ["alice@example.com"],
+          },
+        }),
+      ),
+    ),
+  );
 });

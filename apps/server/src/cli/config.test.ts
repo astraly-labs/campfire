@@ -16,7 +16,7 @@ import {
 import * as NetService from "@t3tools/shared/Net";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { deriveServerPaths } from "../config.ts";
-import { resolveServerConfig } from "./config.ts";
+import { parseGoogleOidcConfig, resolveServerConfig } from "./config.ts";
 
 const deriveExplicitServerPaths = (baseDir: string, devUrl: URL | undefined) =>
   deriveServerPaths(baseDir, devUrl, { baseDirIsExplicit: true });
@@ -38,6 +38,34 @@ const makeDesktopBootstrap = (
 });
 
 it.layer(NodeServices.layer)("cli config resolution", (it) => {
+  it("normalizes a complete Google OIDC allowlist", () => {
+    expect(
+      parseGoogleOidcConfig({
+        clientId: " client-id ",
+        clientSecret: " client-secret ",
+        redirectUri: "https://campfire.example.ts.net/auth/google/callback",
+        allowedEmails: " Alice@Example.com, bob@example.com,alice@example.com ",
+      }),
+    ).toEqual({
+      clientId: "client-id",
+      clientSecret: "client-secret",
+      redirectUri: new URL("https://campfire.example.ts.net/auth/google/callback"),
+      allowedEmails: ["alice@example.com", "bob@example.com"],
+    });
+  });
+
+  it("rejects a partial or non-HTTPS Google OIDC configuration", () => {
+    expect(() => parseGoogleOidcConfig({ clientId: "client-id" })).toThrow("requires client ID");
+    expect(() =>
+      parseGoogleOidcConfig({
+        clientId: "client-id",
+        clientSecret: "client-secret",
+        redirectUri: "http://campfire.example.com/auth/google/callback",
+        allowedEmails: "alice@example.com",
+      }),
+    ).toThrow("must use HTTPS");
+  });
+
   const defaultObservabilityConfig = {
     traceMinLevel: "Info",
     traceTimingEnabled: true,

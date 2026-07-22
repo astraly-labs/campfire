@@ -99,7 +99,7 @@ Next:
 
 ### H3: Server-derived identity prevents spoofed authorship
 
-Status: proposed
+Status: confirmed
 
 Authorship and presence can be derived at the authenticated WebSocket boundary without trusting client-supplied user fields. Tailscale Serve identity headers are safe only when the backend is loopback-only and the immediate peer is loopback.
 
@@ -134,7 +134,7 @@ Next:
 
 ### H4: Google OIDC plus Tailscale reduces onboarding risk without coupling agent lifetime to login
 
-Status: proposed
+Status: running
 
 Google OIDC can replace shared pairing credentials while preserving long-lived, revocable server sessions. Tailscale remains the network gate; OIDC authenticates the human at the application layer; neither browser token refresh nor browser disconnect owns Codex process lifetime.
 
@@ -152,15 +152,19 @@ Validation:
 
 Result:
 
-- Pending.
+- Implemented authorization-code OIDC with PKCE S256, nonce, one-time state, a browser-bound HttpOnly transaction cookie, a 10-minute TTL, a 128-transaction cap, Google signature/issuer/audience verification, verified-email enforcement, and an explicit normalized email allowlist. Google access and refresh tokens are never persisted.
+- Successful callbacks issue the existing 30-day revocable Campfire browser session with administrative scopes, stable `google:<sub>` authorship, display-name attribution, session inventory visibility, HttpOnly/SameSite=Lax cookies, and Secure cookies in HTTPS deployments. Callback return paths are restricted to local absolute paths.
+- Hosted web auth now advertises only `google-oidc` when configured and renders a Google sign-in action instead of a shared pairing-token form. Desktop bootstrap remains available only in desktop mode.
+- Deterministic flow tests rejected state/browser-binding replay, open redirects, non-allowlisted identities, incomplete/insecure configuration, and callback replay. The HTTP integration test completed login/callback, authenticated the issued session, found the Google subject in session inventory, and observed the same Google subject/display name at WebSocket command dispatch.
+- Focused regression validation passed 6 files and 163 tests in 4.50 seconds. Contracts, server, and web typechecks passed; targeted lint reported zero warnings/errors. A live Google staging flow and explicit zero-browser Codex lifetime run remain deployment gates.
 
 Decision:
 
-- Pending.
+- Keep Google tokens ephemeral and use the existing server-owned session store as the only steady-state credential. Tailscale remains the private network boundary; Google identity supplies human attribution and application-level revocation without owning provider-process lifetime.
 
 Next:
 
-- Choose the smallest standards-compliant OIDC integration that fits the existing environment auth service.
+- Validate a real Google client through Tailscale Serve, revoke an active browser session, and prove an in-flight Codex turn survives browser disappearance before promoting this hypothesis to confirmed.
 
 ### H5: Snapshot fallback bounds detailed-thread catch-up without losing events
 

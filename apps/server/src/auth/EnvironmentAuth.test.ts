@@ -109,6 +109,32 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
     }).pipe(Effect.provide(makeEnvironmentAuthLayer())),
   );
 
+  it.effect("issues attributable and revocable Google browser sessions", () =>
+    Effect.gen(function* () {
+      const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+      const issued = yield* serverAuth.issueTrustedBrowserSession(
+        {
+          subject: "google:alice-stable-subject",
+          displayName: "Alice Example",
+        },
+        requestMetadata,
+      );
+      const verified = yield* serverAuth.authenticateHttpRequest(
+        makeCookieRequest(issued.sessionToken),
+      );
+
+      expect(verified.subject).toBe("google:alice-stable-subject");
+      expect(verified.displayName).toBe("Alice Example");
+      expect(verified.scopes).toEqual(AuthAdministrativeScopes);
+      expect(yield* serverAuth.revokeSession(verified.sessionId)).toBe(true);
+
+      const revoked = yield* serverAuth
+        .authenticateHttpRequest(makeCookieRequest(issued.sessionToken))
+        .pipe(Effect.flip);
+      expect(revoked._tag).toBe("ServerAuthInvalidCredentialError");
+    }).pipe(Effect.provide(makeEnvironmentAuthLayer())),
+  );
+
   it.effect("does not exchange ordinary pairing grants for administrative access tokens", () =>
     Effect.gen(function* () {
       const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
