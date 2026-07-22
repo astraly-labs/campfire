@@ -333,3 +333,38 @@ Decision:
 Next:
 
 - Bound the drainable reactor workers that currently absorb this stream into their own unbounded queues.
+
+### H10: Bounded reactor workers propagate safe backpressure into durable feeds
+
+Status: confirmed
+
+Internal reactors should not copy the now-bounded durable event feed into unbounded worker queues. A bounded drainable worker can suspend its producer when full: domain-event producers then stop pulling and later replay from SQLite via H9, while runtime-event producers retain backpressure instead of growing the worker heap. No internal event should be rejected or dropped.
+
+Expected signal:
+
+- A worker with capacity one processes FIFO and keeps a third enqueue suspended until space is released.
+- `drain` still resolves only when every admitted item has completed.
+- Existing provider-command, runtime-ingestion, checkpoint, deletion, and relay tests remain green with a finite default capacity.
+- Reactor failures continue to be isolated by each reactor's existing safe processor and do not kill the worker loop.
+
+Validation:
+
+- Command/query: deterministic `DrainableWorker` backpressure/drain fixtures followed by focused tests for every production consumer.
+- Dataset/window: capacity-one blocked processor for the primitive; production default capacity 1,024.
+- Control/baseline: current shared `TxQueue.unbounded` implementation.
+
+Result:
+
+- Changed the shared worker from `TxQueue.unbounded` to a bounded FIFO `TxQueue` with a production default of 1,024 and an explicit capacity override for focused tests.
+- A capacity-one fixture blocked the first processor, admitted a second item, and proved a third producer remained suspended until capacity freed. After release, `drain` waited for all three and the observed order was exactly `first`, `second`, `third`.
+- No rejection/drop path was added: backpressure propagates to the source stream. For domain events that source is H9's durable cursor feed, so coalesced wake-ups replay later from SQLite rather than accumulating in the worker.
+- Focused production-consumer validation passed 7 files and 108 tests covering `DrainableWorker`, provider command/runtime ingestion (including approvals), checkpoints, thread deletion, and agent-awareness relay.
+- Targeted lint passed with zero warnings/errors. Shared and server typechecks passed; server output contained only the same three pre-existing `decider.ts` suggestions.
+
+Decision:
+
+- Keep the 1,024-item bounded backpressure default. It removes every unbounded queue created through `makeDrainableWorker` while preserving FIFO, drain semantics, and lossless internal processing.
+
+Next:
+
+- Inventory remaining unbounded browser-facing terminal/preview queues and separate lossy output from durable control messages.
