@@ -31,6 +31,7 @@ import {
   OrchestrationGetSnapshotError,
   OrchestrationGetTurnDiffError,
   ORCHESTRATION_WS_METHODS,
+  PRESENCE_WS_METHODS,
   type ProjectId,
   type ProjectEntriesFailure,
   type ProjectFileFailure,
@@ -102,6 +103,7 @@ import { requiredScopeForRpcMethod } from "./auth/RpcAuthorization.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
+import * as PresenceService from "./presence/Presence.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
@@ -353,6 +355,7 @@ function toAuthAccessStreamEvent(
 const makeWsRpcLayer = (
   currentSession: EnvironmentAuth.AuthenticatedSession,
   previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
+  presenceConnectionId: string,
 ) =>
   WsRpcGroup.toLayer(
     Effect.gen(function* () {
@@ -417,6 +420,7 @@ const makeWsRpcLayer = (
       const processResourceMonitor = yield* ProcessResourceMonitor.ProcessResourceMonitor;
       const resourceTelemetry = yield* ResourceTelemetry.ResourceTelemetry;
       const relayClient = yield* RelayClient.RelayClient;
+      const presence = yield* PresenceService.Presence;
       const authenticatedActor = {
         kind: "client",
         subject: currentSession.subject.startsWith("google:")
@@ -435,6 +439,13 @@ const makeWsRpcLayer = (
           : {}),
         sessionId: currentSession.sessionId,
       } satisfies OrchestrationEventActor;
+      const presenceUser = {
+        subject: authenticatedActor.subject,
+        displayName: authenticatedActor.displayName ?? authenticatedActor.subject,
+        ...(authenticatedActor.networkLogin !== undefined
+          ? { networkLogin: authenticatedActor.networkLogin }
+          : {}),
+      };
       const authorizationError = (requiredScope: AuthEnvironmentScope) =>
         new EnvironmentAuthorizationError({
           message: `The authenticated token is missing required scope: ${requiredScope}.`,
@@ -1047,6 +1058,21 @@ const makeWsRpcLayer = (
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
 
       return WsRpcGroup.of({
+        [PRESENCE_WS_METHODS.heartbeat]: (focus) =>
+          observeRpcEffect(
+            PRESENCE_WS_METHODS.heartbeat,
+            presence.touch({
+              connectionId: presenceConnectionId,
+              sessionId: currentSessionId,
+              user: presenceUser,
+              focus,
+            }),
+            { "rpc.aggregate": "presence" },
+          ),
+        [PRESENCE_WS_METHODS.subscribe]: (_input) =>
+          observeRpcStream(PRESENCE_WS_METHODS.subscribe, presence.snapshots, {
+            "rpc.aggregate": "presence",
+          }),
         [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.dispatchCommand,
@@ -2101,6 +2127,8 @@ export const websocketRpcRouteLayer = Layer.unwrap(
         const request = yield* HttpServerRequest.HttpServerRequest;
         const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
         const sessions = yield* SessionStore.SessionStore;
+        const presence = yield* PresenceService.Presence;
+        const crypto = yield* Crypto.Crypto;
         const session = yield* serverAuth.authenticateWebSocketUpgrade(request).pipe(
           Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
             failEnvironmentAuthInvalid(EnvironmentAuth.serverAuthCredentialReason(error)),
@@ -2109,11 +2137,12 @@ export const websocketRpcRouteLayer = Layer.unwrap(
             failEnvironmentInternal("internal_error", error),
           ),
         );
+        const presenceConnectionId = yield* crypto.randomUUIDv4;
         const rpcWebSocketHttpEffect = yield* RpcServer.toHttpEffectWebsocket(WsRpcGroup, {
           disableTracing: true,
         }).pipe(
           Effect.provide(
-            makeWsRpcLayer(session, previewAutomationBroker).pipe(
+            makeWsRpcLayer(session, previewAutomationBroker, presenceConnectionId).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               Layer.provide(ProviderMaintenanceRunner.layer),
               Layer.provide(Layer.succeed(ServerSelfUpdate.ServerSelfUpdate, serverSelfUpdate)),
@@ -2144,7 +2173,11 @@ export const websocketRpcRouteLayer = Layer.unwrap(
         return yield* Effect.acquireUseRelease(
           sessions.markConnected(session.sessionId),
           () => rpcWebSocketHttpEffect,
-          () => sessions.markDisconnected(session.sessionId),
+          () =>
+            Effect.all(
+              [sessions.markDisconnected(session.sessionId), presence.drop(presenceConnectionId)],
+              { discard: true },
+            ),
         );
       }).pipe(
         Effect.catchTags({

@@ -22,6 +22,7 @@ import {
   type OrchestrationEvent,
   type OrchestrationEventActor,
   ORCHESTRATION_WS_METHODS,
+  PRESENCE_WS_METHODS,
   type PreviewEvent,
   ProjectId,
   ProviderDriverKind,
@@ -119,6 +120,7 @@ import * as CloudManagedEndpointRuntime from "./cloud/ManagedEndpointRuntime.ts"
 import * as CloudCliTokenManager from "./cloud/CliTokenManager.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
+import * as Presence from "./presence/Presence.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as DesktopTelemetryReceiver from "./resourceTelemetry/DesktopTelemetryReceiver.ts";
 import * as NativeTelemetryClient from "./resourceTelemetry/NativeTelemetryClient.ts";
@@ -887,6 +889,7 @@ const buildAppUnderTest = (options?: {
         }),
       ),
       Layer.provideMerge(makeAuthTestLayer()),
+      Layer.provideMerge(Presence.layer),
       Layer.provideMerge(ServerSecretStore.layer),
       Layer.provide(workspaceAndProjectServicesLayer),
       Layer.provideMerge(FetchHttpClient.layer),
@@ -1542,6 +1545,26 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(observedActor?.subject, "google:alice-stable-subject");
       assert.equal(observedActor?.displayName, "Alice Example");
       assert.isString(observedActor?.sessionId);
+
+      const presenceSnapshot = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            yield* client[PRESENCE_WS_METHODS.heartbeat]({
+              threadId: defaultThreadId,
+              typing: true,
+            });
+            return yield* client[PRESENCE_WS_METHODS.subscribe]({}).pipe(
+              Stream.runHead,
+              Effect.map(Option.getOrThrow),
+            );
+          }),
+        ),
+      );
+      assert.equal(presenceSnapshot.entries[0]?.user.subject, "google:alice-stable-subject");
+      assert.equal(presenceSnapshot.entries[0]?.user.displayName, "Alice Example");
+      assert.equal(presenceSnapshot.entries[0]?.sessionId, observedActor?.sessionId);
+      assert.equal(presenceSnapshot.entries[0]?.threadId, defaultThreadId);
+      assert.equal(presenceSnapshot.entries[0]?.typing, true);
 
       const replayResponse = yield* fetchEffect(callbackUrl, {
         redirect: "manual",

@@ -19,6 +19,8 @@ import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useT3ProjectFileScripts } from "~/hooks/useT3ProjectFileScripts";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { cn } from "~/lib/utils";
+import { PresenceAvatarStack } from "../../presence/PresenceAvatarStack";
+import { useThreadPresence } from "../../presence/presence";
 
 interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;
@@ -81,6 +83,7 @@ export const ChatHeader = memo(function ChatHeader({
     activeThreadEnvironmentId,
     activeProjectScripts ? activeProjectCwd : null,
   );
+  const viewers = useThreadPresence(activeThreadEnvironmentId, activeThreadId);
   const showOpenInPicker = shouldShowOpenInPicker({
     activeProjectName,
     activeThreadEnvironmentId,
@@ -140,6 +143,7 @@ export const ChatHeader = memo(function ChatHeader({
           rightPanelOpen ? "pr-0" : "pr-16",
         )}
       >
+        <PresenceAvatarStack viewers={viewers} />
         {activeProjectScripts && (
           <ProjectScriptsControl
             scripts={activeProjectScripts}

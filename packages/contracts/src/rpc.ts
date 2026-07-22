@@ -117,6 +117,12 @@ import {
   PreviewAutomationStreamEvent,
 } from "./previewAutomation.ts";
 import {
+  PRESENCE_WS_METHODS,
+  PresenceHeartbeatInput,
+  PresenceHeartbeatResult,
+  PresenceSnapshot,
+} from "./presence.ts";
+import {
   ServerConfigStreamEvent,
   ServerConfig,
   ServerProviderUpdateError,
@@ -654,6 +660,19 @@ export const WsSubscribeDiscoveredLocalServersRpc = Rpc.make(
   },
 );
 
+export const WsPresenceHeartbeatRpc = Rpc.make(PRESENCE_WS_METHODS.heartbeat, {
+  payload: PresenceHeartbeatInput,
+  success: PresenceHeartbeatResult,
+  error: EnvironmentAuthorizationError,
+});
+
+export const WsPresenceSubscribeRpc = Rpc.make(PRESENCE_WS_METHODS.subscribe, {
+  payload: Schema.Struct({}),
+  success: PresenceSnapshot,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
 export const WsOrchestrationDispatchCommandRpc = Rpc.make(
   ORCHESTRATION_WS_METHODS.dispatchCommand,
   {
@@ -819,6 +838,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsPreviewAutomationFocusHostRpc,
   WsSubscribePreviewEventsRpc,
   WsSubscribeDiscoveredLocalServersRpc,
+  WsPresenceHeartbeatRpc,
+  WsPresenceSubscribeRpc,
   WsSubscribeServerConfigRpc,
   WsSubscribeServerLifecycleRpc,
   WsSubscribeAuthAccessRpc,
