@@ -662,3 +662,61 @@ Next:
 
 - Install the Google client/allowlist in the mode-0600 env file, run staging on ports 3774/10000,
   complete the real 60-minute five-person gate, then promote and merge.
+
+### H17: A commit-verified production package is independent of the development checkout
+
+Status: confirmed
+
+The staging configuration pointed at the development checkout. Although H16 prevents an unsafe
+switch, a mutable checkout and its shared dependency tree are not an immutable production artifact.
+Requiring all build inputs to match an exact commit, installing the frozen lockfile, building Web
+plus server under the pinned Node runtime, and deploying production dependencies into a separate
+tree should create a self-contained release that can be staged, promoted, and rolled back without
+depending on developer state.
+
+Expected signal:
+
+- Packaging refuses build inputs that differ from the requested commit, an ambiguous commit, an
+  existing destination, an unsupported Node runtime, or an invalid release root.
+- The artifact contains a commit/runtime manifest, built server/client output, and its own installed
+  dependency graph; it contains no `.git` directory and is read-only after atomic publication.
+- The packaged CLI starts under Node 24 from outside the source checkout, while the active 8443/8444
+  Serve handlers remain unchanged.
+
+Validation:
+
+- Command/query: focused packaging fixtures plus one real package of commit `7cd0b4029`, frozen pnpm
+  install, targeted Web/server build, CLI smoke check, and checksum/permission/symlink inspection.
+- Dataset/window: one temporary fake repository/release root and the current clean Campfire commit.
+- Control/baseline: staging env points at `/Users/jeffbezos/documents/campfire`, whose dependency
+  tree and files remain mutable.
+
+Result:
+
+- Added a fail-closed packager that resolves the requested commit, compares every tracked/untracked
+  Web/server build input with it, pins Node/Corepack, performs the frozen install and targeted build,
+  deploys only the server's production graph, copies ops from the commit archive, smoke-tests the
+  standalone CLI, records checksums/runtime versions, then publishes read-only by same-filesystem
+  rename.
+- The first real `pnpm deploy --legacy` artifact exposed one workspace self-link named `t3` back to
+  the development checkout; recursively following it exposed hundreds of ambient source/dependency
+  paths despite a passing CLI smoke. The inactive artifact was deleted. The packager now removes
+  that non-runtime self-link and aborts publication on every broken or external symlink.
+- The rebuilt artifact at
+  `/Users/jeffbezos/services/campfire/releases/7cd0b40295f31381beafd73790905ca57569bc92`
+  is 1.6 GB, has no Git metadata, contains 545 internal and zero broken/external symlinks, and is
+  read-only (`0500` root, `0400` manifest, executable CLI). Its manifest records Node 24.18.0, pnpm
+  11.10.0, commit/lockfile/server checksums, and the packaged CLI reports `t3 v0.0.28` outside the
+  checkout.
+- The mode-0600 inactive staging config now points at this artifact. Existing Tailscale handlers
+  8443/8444 still proxy only the old backend at `127.0.0.1:13773`.
+
+Decision:
+
+- Keep production packaging commit-addressed and refuse any escaping symlink. A CLI smoke alone is
+  insufficient proof of independence; the symlink-closure audit is a mandatory publication gate.
+
+Next:
+
+- Fill the three Google fields in the staging env, pass preflight, and start this artifact only on
+  backend 3774 / Serve 10000 for the real acceptance gate.

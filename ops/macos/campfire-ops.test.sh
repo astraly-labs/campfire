@@ -149,6 +149,7 @@ campfire_restore="$campfire_fixture/restore"
 expect_failure sh "$campfire_repo_root/scripts/campfire-soak.sh" 0
 plutil -lint "$campfire_repo_root/ops/macos/com.campfire.server.plist.example" >/dev/null
 sh -n "$campfire_repo_root/ops/macos/campfire-preflight.sh"
+sh -n "$campfire_repo_root/ops/macos/campfire-package-release.sh"
 sh -n "$campfire_repo_root/ops/macos/campfire-release.sh"
 sh -n "$campfire_repo_root/ops/macos/run-campfire.sh"
 sh -n "$campfire_repo_root/ops/macos/campfire-backup.sh"

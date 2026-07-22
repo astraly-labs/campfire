@@ -56,6 +56,19 @@ Official references:
    corepack pnpm audit:prod
    ```
 
+   Package the exact tested commit from clean build inputs. The packager runs the frozen install and
+   targeted Web/server build under Node 24, creates a production-only dependency tree, copies the
+   committed ops scripts, smoke-tests the standalone CLI, records checksums/runtime versions, and
+   atomically publishes a read-only directory with no Git metadata:
+
+   ```bash
+   mkdir -p /Users/campfire/services/campfire/releases
+   ./ops/macos/campfire-package-release.sh \
+     /absolute/path/to/campfire \
+     /Users/campfire/services/campfire/releases \
+     <git-commit>
+   ```
+
 ## Google OIDC setup
 
 In Google Cloud Console, create an OAuth client of type **Web application**. Configure the consent
