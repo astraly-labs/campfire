@@ -78,6 +78,7 @@ export function applyThreadDetailEvent(
           snoozedAt: null,
           deletedAt: null,
           messages: [],
+          sideThreads: [],
           proposedPlans: [],
           activities: [],
           checkpoints: [],
@@ -517,6 +518,71 @@ export function applyThreadDetailEvent(
         thread: { ...thread, activities, updatedAt: event.occurredAt },
       };
     }
+
+    case "sidethread.created":
+      return {
+        kind: "updated",
+        thread: {
+          ...thread,
+          sideThreads: [
+            ...(thread.sideThreads ?? []),
+            {
+              id: event.payload.sideThreadId,
+              anchorMessageId: event.payload.anchorMessageId,
+              createdBy: event.payload.createdBy,
+              createdAt: event.payload.createdAt,
+              updatedAt: event.payload.createdAt,
+              archivedAt: null,
+              messages: [],
+            },
+          ],
+          updatedAt: event.payload.createdAt,
+        },
+      };
+
+    case "sidethread.message-posted":
+      return {
+        kind: "updated",
+        thread: {
+          ...thread,
+          sideThreads: (thread.sideThreads ?? []).map((sideThread) =>
+            sideThread.id === event.payload.sideThreadId
+              ? {
+                  ...sideThread,
+                  messages: [
+                    ...sideThread.messages,
+                    {
+                      id: event.payload.messageId,
+                      author: event.payload.author,
+                      text: event.payload.text,
+                      createdAt: event.payload.createdAt,
+                    },
+                  ],
+                  updatedAt: event.payload.createdAt,
+                }
+              : sideThread,
+          ),
+          updatedAt: event.payload.createdAt,
+        },
+      };
+
+    case "sidethread.archived":
+      return {
+        kind: "updated",
+        thread: {
+          ...thread,
+          sideThreads: (thread.sideThreads ?? []).map((sideThread) =>
+            sideThread.id === event.payload.sideThreadId
+              ? {
+                  ...sideThread,
+                  archivedAt: event.payload.archivedAt,
+                  updatedAt: event.payload.archivedAt,
+                }
+              : sideThread,
+          ),
+          updatedAt: event.payload.archivedAt,
+        },
+      };
 
     // ── Events that don't mutate thread state directly ──────────────
     case "thread.approval-response-requested":

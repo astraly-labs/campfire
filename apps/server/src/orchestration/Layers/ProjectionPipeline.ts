@@ -615,6 +615,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             pendingApprovalCount: 0,
             pendingUserInputCount: 0,
             hasActionableProposedPlan: 0,
+            sideThreads: [],
             deletedAt: null,
           });
           return;
@@ -777,6 +778,86 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             ...existingRow.value,
             deletedAt: event.payload.deletedAt,
             updatedAt: event.payload.deletedAt,
+          });
+          return;
+        }
+
+        case "sidethread.created": {
+          const existingRow = yield* projectionThreadRepository.getById({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isNone(existingRow)) {
+            return;
+          }
+          yield* projectionThreadRepository.upsert({
+            ...existingRow.value,
+            sideThreads: [
+              ...(existingRow.value.sideThreads ?? []),
+              {
+                id: event.payload.sideThreadId,
+                anchorMessageId: event.payload.anchorMessageId,
+                createdBy: event.payload.createdBy,
+                createdAt: event.payload.createdAt,
+                updatedAt: event.payload.createdAt,
+                archivedAt: null,
+                messages: [],
+              },
+            ],
+            updatedAt: event.occurredAt,
+          });
+          return;
+        }
+
+        case "sidethread.message-posted": {
+          const existingRow = yield* projectionThreadRepository.getById({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isNone(existingRow)) {
+            return;
+          }
+          yield* projectionThreadRepository.upsert({
+            ...existingRow.value,
+            sideThreads: (existingRow.value.sideThreads ?? []).map((sideThread) =>
+              sideThread.id === event.payload.sideThreadId
+                ? {
+                    ...sideThread,
+                    messages: [
+                      ...sideThread.messages,
+                      {
+                        id: event.payload.messageId,
+                        text: event.payload.text,
+                        author: event.payload.author,
+                        createdAt: event.payload.createdAt,
+                      },
+                    ],
+                    updatedAt: event.payload.createdAt,
+                  }
+                : sideThread,
+            ),
+            updatedAt: event.occurredAt,
+          });
+          return;
+        }
+
+        case "sidethread.archived": {
+          const existingRow = yield* projectionThreadRepository.getById({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isNone(existingRow)) {
+            return;
+          }
+          yield* projectionThreadRepository.upsert({
+            ...existingRow.value,
+            sideThreads: (existingRow.value.sideThreads ?? []).map((sideThread) =>
+              sideThread.id === event.payload.sideThreadId
+                ? {
+                    ...sideThread,
+                    archivedAt: event.payload.archivedAt,
+                    updatedAt: event.payload.archivedAt,
+                  }
+                : sideThread,
+            ),
+            updatedAt: event.occurredAt,
           });
           return;
         }

@@ -1461,6 +1461,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         allowedEmails: ["alice@example.com"],
       };
       let observedActor: OrchestrationEventActor | undefined;
+      let observedCommand: OrchestrationCommand | undefined;
       const config = yield* buildAppUnderTest({
         config: { mode: "web", googleOidc: googleConfig },
         layers: {
@@ -1468,6 +1469,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             dispatch: (_command, actor) =>
               Effect.sync(() => {
                 observedActor = actor;
+                observedCommand = _command;
                 return { sequence: 1 };
               }),
           },
@@ -1545,6 +1547,23 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(observedActor?.subject, "google:alice-stable-subject");
       assert.equal(observedActor?.displayName, "Alice Example");
       assert.isString(observedActor?.sessionId);
+
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+            type: "sidethread.create",
+            commandId: CommandId.make("cmd-google-side-thread"),
+            threadId: defaultThreadId,
+            sideThreadId: "side-google" as never,
+            anchorMessageId: MessageId.make("message-google-anchor"),
+            createdAt: "2026-01-01T00:00:00.000Z",
+            createdBy: { subject: "forged", displayName: "Mallory" },
+          } as never),
+        ),
+      );
+      assert.equal(observedCommand?.type, "sidethread.create");
+      assert.isFalse("createdBy" in (observedCommand as unknown as Record<string, unknown>));
+      assert.equal(observedActor?.subject, "google:alice-stable-subject");
 
       const presenceSnapshot = yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>

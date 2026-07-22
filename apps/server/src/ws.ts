@@ -428,12 +428,10 @@ const makeWsRpcLayer = (
           : currentSession.tailscaleIdentity
             ? `tailscale:${currentSession.tailscaleIdentity.login}`
             : currentSession.subject,
-        ...(currentSession.displayName || currentSession.tailscaleIdentity
-          ? {
-              displayName:
-                currentSession.displayName ?? currentSession.tailscaleIdentity?.displayName,
-            }
-          : {}),
+        displayName:
+          currentSession.displayName ??
+          currentSession.tailscaleIdentity?.displayName ??
+          currentSession.subject,
         ...(currentSession.tailscaleIdentity
           ? { networkLogin: currentSession.tailscaleIdentity.login }
           : {}),

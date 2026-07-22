@@ -6,6 +6,8 @@ import {
   ThreadId,
   TurnId,
   ProviderInstanceId,
+  SideThreadId,
+  SideThreadMessageId,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -82,6 +84,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           pending_approval_count,
           pending_user_input_count,
           has_actionable_proposed_plan,
+          side_threads_json,
           created_at,
           updated_at,
           deleted_at
@@ -100,6 +103,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           1,
           0,
           0,
+          '[{"id":"side-thread-1","anchorMessageId":"message-1","createdBy":{"subject":"google:alice","displayName":"Alice"},"createdAt":"2026-02-24T00:00:05.000Z","updatedAt":"2026-02-24T00:00:06.000Z","archivedAt":null,"messages":[{"id":"side-message-1","author":{"subject":"google:bob","displayName":"Bob"},"text":"Looks good","createdAt":"2026-02-24T00:00:06.000Z"}]}]',
           '2026-02-24T00:00:02.000Z',
           '2026-02-24T00:00:03.000Z',
           NULL
@@ -322,6 +326,24 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
               streaming: false,
               createdAt: "2026-02-24T00:00:04.000Z",
               updatedAt: "2026-02-24T00:00:05.000Z",
+            },
+          ],
+          sideThreads: [
+            {
+              id: SideThreadId.make("side-thread-1"),
+              anchorMessageId: asMessageId("message-1"),
+              createdBy: { subject: "google:alice", displayName: "Alice" },
+              createdAt: "2026-02-24T00:00:05.000Z",
+              updatedAt: "2026-02-24T00:00:06.000Z",
+              archivedAt: null,
+              messages: [
+                {
+                  id: SideThreadMessageId.make("side-message-1"),
+                  author: { subject: "google:bob", displayName: "Bob" },
+                  text: "Looks good",
+                  createdAt: "2026-02-24T00:00:06.000Z",
+                },
+              ],
             },
           ],
           proposedPlans: [

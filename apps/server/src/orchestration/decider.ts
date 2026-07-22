@@ -2,7 +2,9 @@ import {
   EventId,
   type OrchestrationCommand,
   type OrchestrationEvent,
+  type OrchestrationEventActor,
   type OrchestrationReadModel,
+  type SideThreadAuthor,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
@@ -178,6 +180,25 @@ type DecideOrchestrationCommandResult =
   | PlannedOrchestrationEvent
   | ReadonlyArray<PlannedOrchestrationEvent>;
 
+function requireSideThreadAuthor(
+  actor: OrchestrationEventActor | undefined,
+  commandType: OrchestrationCommand["type"],
+): Effect.Effect<SideThreadAuthor, OrchestrationCommandInvariantError> {
+  if (actor?.kind === "client" && actor.subject !== undefined) {
+    return Effect.succeed({
+      subject: actor.subject,
+      displayName: actor.displayName ?? actor.subject,
+      ...(actor.networkLogin !== undefined ? { networkLogin: actor.networkLogin } : {}),
+    });
+  }
+  return Effect.fail(
+    new OrchestrationCommandInvariantError({
+      commandType,
+      detail: "SideThread commands require an authenticated client actor.",
+    }),
+  );
+}
+
 const decideCommandSequence = Effect.fn("decideCommandSequence")(function* ({
   commands,
   readModel,
@@ -215,15 +236,144 @@ const decideCommandSequence = Effect.fn("decideCommandSequence")(function* ({
 export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand")(function* ({
   command,
   readModel,
+  actor,
 }: {
   readonly command: OrchestrationCommand;
   readonly readModel: OrchestrationReadModel;
+  readonly actor?: OrchestrationEventActor;
 }): Effect.fn.Return<
   DecideOrchestrationCommandResult,
   OrchestrationCommandInvariantError | PlatformError.PlatformError,
   Crypto.Crypto
 > {
   switch (command.type) {
+    case "sidethread.create": {
+      const createdBy = yield* requireSideThreadAuthor(actor, command.type);
+      const thread = yield* requireThread({ readModel, command, threadId: command.threadId });
+      if (thread.archivedAt !== null || thread.deletedAt !== null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.threadId}' cannot accept a side conversation.`,
+        });
+      }
+      if (!thread.messages.some((message) => message.id === command.anchorMessageId)) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Anchor message '${command.anchorMessageId}' does not exist.`,
+        });
+      }
+      if ((thread.sideThreads ?? []).some((sideThread) => sideThread.id === command.sideThreadId)) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `SideThread '${command.sideThreadId}' already exists.`,
+        });
+      }
+      if ((thread.sideThreads?.length ?? 0) >= 256) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.threadId}' reached the 256 SideThread limit.`,
+        });
+      }
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "sidethread.created",
+        payload: {
+          threadId: command.threadId,
+          sideThreadId: command.sideThreadId,
+          anchorMessageId: command.anchorMessageId,
+          createdBy,
+          createdAt: command.createdAt,
+        },
+      };
+    }
+
+    case "sidethread.message.post": {
+      const author = yield* requireSideThreadAuthor(actor, command.type);
+      const thread = yield* requireThread({ readModel, command, threadId: command.threadId });
+      const sideThread = (thread.sideThreads ?? []).find(
+        (entry) => entry.id === command.sideThreadId,
+      );
+      if (sideThread === undefined) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `SideThread '${command.sideThreadId}' does not exist.`,
+        });
+      }
+      if (sideThread.archivedAt !== null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `SideThread '${command.sideThreadId}' is archived.`,
+        });
+      }
+      if (sideThread.messages.some((message) => message.id === command.messageId)) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `SideThread message '${command.messageId}' already exists.`,
+        });
+      }
+      if (sideThread.messages.length >= 500) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `SideThread '${command.sideThreadId}' reached the 500 message limit.`,
+        });
+      }
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "sidethread.message-posted",
+        payload: {
+          threadId: command.threadId,
+          sideThreadId: command.sideThreadId,
+          messageId: command.messageId,
+          author,
+          text: command.text,
+          createdAt: command.createdAt,
+        },
+      };
+    }
+
+    case "sidethread.archive": {
+      const thread = yield* requireThread({ readModel, command, threadId: command.threadId });
+      const sideThread = (thread.sideThreads ?? []).find(
+        (entry) => entry.id === command.sideThreadId,
+      );
+      if (sideThread === undefined) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `SideThread '${command.sideThreadId}' does not exist.`,
+        });
+      }
+      if (sideThread.archivedAt !== null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `SideThread '${command.sideThreadId}' is already archived.`,
+        });
+      }
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "sidethread.archived",
+        payload: {
+          threadId: command.threadId,
+          sideThreadId: command.sideThreadId,
+          archivedAt: command.createdAt,
+        },
+      };
+    }
+
     case "project.create": {
       yield* requireProjectAbsent({
         readModel,

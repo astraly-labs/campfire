@@ -8,6 +8,9 @@ import {
   ThreadId,
   TurnId,
   ProviderInstanceId,
+  SideThread,
+  SideThreadId,
+  SideThreadMessageId,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -15,6 +18,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
@@ -129,6 +133,62 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
         },
       });
 
+      yield* eventStore.append({
+        type: "sidethread.created",
+        eventId: EventId.make("evt-4"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        occurredAt: "2026-01-01T00:00:01.000Z",
+        commandId: CommandId.make("cmd-4"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-4"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          sideThreadId: SideThreadId.make("side-thread-1"),
+          anchorMessageId: MessageId.make("message-1"),
+          createdBy: { subject: "google:alice", displayName: "Alice" },
+          createdAt: "2026-01-01T00:00:01.000Z",
+        },
+      });
+
+      yield* eventStore.append({
+        type: "sidethread.message-posted",
+        eventId: EventId.make("evt-5"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        occurredAt: "2026-01-01T00:00:02.000Z",
+        commandId: CommandId.make("cmd-5"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-5"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          sideThreadId: SideThreadId.make("side-thread-1"),
+          messageId: SideThreadMessageId.make("side-message-1"),
+          author: { subject: "google:bob", displayName: "Bob" },
+          text: "Ship this safely",
+          createdAt: "2026-01-01T00:00:02.000Z",
+        },
+      });
+
+      yield* eventStore.append({
+        type: "sidethread.archived",
+        eventId: EventId.make("evt-6"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        occurredAt: "2026-01-01T00:00:03.000Z",
+        commandId: CommandId.make("cmd-6"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-6"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          sideThreadId: SideThreadId.make("side-thread-1"),
+          archivedAt: "2026-01-01T00:00:03.000Z",
+        },
+      });
+
       yield* projectionPipeline.bootstrap;
 
       const projectRows = yield* sql<{
@@ -157,6 +217,34 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
       `;
       assert.deepEqual(messageRows, [{ messageId: "message-1", text: "hello" }]);
 
+      const sideThreadRows = yield* sql<{ readonly sideThreadsJson: string }>`
+        SELECT side_threads_json AS "sideThreadsJson"
+        FROM projection_threads
+        WHERE thread_id = 'thread-1'
+      `;
+      const decodeSideThreads = Schema.decodeUnknownEffect(
+        Schema.fromJsonString(Schema.Array(SideThread)),
+      );
+      const sideThreads = yield* decodeSideThreads(sideThreadRows[0]?.sideThreadsJson);
+      assert.deepEqual(sideThreads, [
+        {
+          id: SideThreadId.make("side-thread-1"),
+          anchorMessageId: MessageId.make("message-1"),
+          createdBy: { subject: "google:alice", displayName: "Alice" },
+          createdAt: "2026-01-01T00:00:01.000Z",
+          updatedAt: "2026-01-01T00:00:03.000Z",
+          archivedAt: "2026-01-01T00:00:03.000Z",
+          messages: [
+            {
+              id: SideThreadMessageId.make("side-message-1"),
+              author: { subject: "google:bob", displayName: "Bob" },
+              text: "Ship this safely",
+              createdAt: "2026-01-01T00:00:02.000Z",
+            },
+          ],
+        },
+      ]);
+
       const stateRows = yield* sql<{
         readonly projector: string;
         readonly lastAppliedSequence: number;
@@ -169,7 +257,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
       `;
       assert.equal(stateRows.length, Object.keys(ORCHESTRATION_PROJECTOR_NAMES).length);
       for (const row of stateRows) {
-        assert.equal(row.lastAppliedSequence, 3);
+        assert.equal(row.lastAppliedSequence, 6);
       }
 
       // Settled lifecycle through the DB pipeline: thread.settled writes the

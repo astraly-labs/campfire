@@ -48,6 +48,9 @@ export type RespondToThreadApprovalInput = CommandInput<"thread.approval.respond
 export type RespondToThreadUserInputInput = CommandInput<"thread.user-input.respond">;
 export type RevertThreadCheckpointInput = CommandInput<"thread.checkpoint.revert">;
 export type StopThreadSessionInput = CommandInput<"thread.session.stop">;
+export type CreateSideThreadInput = CommandInput<"sidethread.create">;
+export type PostSideThreadMessageInput = CommandInput<"sidethread.message.post">;
+export type ArchiveSideThreadInput = CommandInput<"sidethread.archive">;
 
 type DispatchTag = typeof ORCHESTRATION_WS_METHODS.dispatchCommand;
 type CommandEffect = Effect.Effect<
@@ -294,6 +297,41 @@ export const stopThreadSession: (input: StopThreadSessionInput) => CommandEffect
   return yield* dispatch({
     ...input,
     type: "thread.session.stop",
+    commandId: metadata.commandId,
+    createdAt: metadata.createdAt,
+  });
+});
+
+export const createSideThread: (input: CreateSideThreadInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.createSideThread",
+)(function* (input) {
+  const metadata = yield* timestampedCommandMetadata(input);
+  return yield* dispatch({
+    ...input,
+    type: "sidethread.create",
+    commandId: metadata.commandId,
+    createdAt: metadata.createdAt,
+  });
+});
+
+export const postSideThreadMessage: (input: PostSideThreadMessageInput) => CommandEffect =
+  Effect.fn("EnvironmentCommands.postSideThreadMessage")(function* (input) {
+    const metadata = yield* timestampedCommandMetadata(input);
+    return yield* dispatch({
+      ...input,
+      type: "sidethread.message.post",
+      commandId: metadata.commandId,
+      createdAt: metadata.createdAt,
+    });
+  });
+
+export const archiveSideThread: (input: ArchiveSideThreadInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.archiveSideThread",
+)(function* (input) {
+  const metadata = yield* timestampedCommandMetadata(input);
+  return yield* dispatch({
+    ...input,
+    type: "sidethread.archive",
     commandId: metadata.commandId,
     createdAt: metadata.createdAt,
   });

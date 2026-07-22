@@ -29,6 +29,9 @@ import {
   ThreadUnsnoozedPayload,
   ThreadRevertedPayload,
   ThreadSessionSetPayload,
+  SideThreadArchivedPayload,
+  SideThreadCreatedPayload,
+  SideThreadMessagePostedPayload,
   ThreadTurnDiffCompletedPayload,
 } from "./Schemas.ts";
 
@@ -296,6 +299,7 @@ export function projectEvent(
             snoozedAt: null,
             deletedAt: null,
             messages: [],
+            sideThreads: [],
             activities: [],
             checkpoints: [],
             session: null,
@@ -743,6 +747,91 @@ export function projectEvent(
             threads: updateThread(nextBase.threads, payload.threadId, {
               activities,
               updatedAt: event.occurredAt,
+            }),
+          };
+        }),
+      );
+
+    case "sidethread.created":
+      return decodeForEvent(SideThreadCreatedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread) return nextBase;
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              sideThreads: [
+                ...(thread.sideThreads ?? []),
+                {
+                  id: payload.sideThreadId,
+                  anchorMessageId: payload.anchorMessageId,
+                  createdBy: payload.createdBy,
+                  createdAt: payload.createdAt,
+                  updatedAt: payload.createdAt,
+                  archivedAt: null,
+                  messages: [],
+                },
+              ],
+              updatedAt: payload.createdAt,
+            }),
+          };
+        }),
+      );
+
+    case "sidethread.message-posted":
+      return decodeForEvent(
+        SideThreadMessagePostedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread) return nextBase;
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              sideThreads: (thread.sideThreads ?? []).map((sideThread) =>
+                sideThread.id === payload.sideThreadId
+                  ? {
+                      ...sideThread,
+                      messages: [
+                        ...sideThread.messages,
+                        {
+                          id: payload.messageId,
+                          author: payload.author,
+                          text: payload.text,
+                          createdAt: payload.createdAt,
+                        },
+                      ],
+                      updatedAt: payload.createdAt,
+                    }
+                  : sideThread,
+              ),
+              updatedAt: payload.createdAt,
+            }),
+          };
+        }),
+      );
+
+    case "sidethread.archived":
+      return decodeForEvent(SideThreadArchivedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread) return nextBase;
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              sideThreads: (thread.sideThreads ?? []).map((sideThread) =>
+                sideThread.id === payload.sideThreadId
+                  ? {
+                      ...sideThread,
+                      archivedAt: payload.archivedAt,
+                      updatedAt: payload.archivedAt,
+                    }
+                  : sideThread,
+              ),
+              updatedAt: payload.archivedAt,
             }),
           };
         }),

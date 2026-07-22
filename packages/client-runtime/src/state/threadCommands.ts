@@ -20,6 +20,9 @@ import {
   type UnsettleThreadInput,
   type UnsnoozeThreadInput,
   type UpdateThreadMetadataInput,
+  type CreateSideThreadInput,
+  type PostSideThreadMessageInput,
+  type ArchiveSideThreadInput,
   archiveThread,
   createThread,
   deleteThread,
@@ -37,6 +40,9 @@ import {
   unsettleThread,
   unsnoozeThread,
   updateThreadMetadata,
+  createSideThread,
+  postSideThreadMessage,
+  archiveSideThread,
 } from "../operations/commands.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 
@@ -58,6 +64,9 @@ export type {
   UnsettleThreadInput,
   UnsnoozeThreadInput,
   UpdateThreadMetadataInput,
+  CreateSideThreadInput,
+  PostSideThreadMessageInput,
+  ArchiveSideThreadInput,
 } from "../operations/commands.ts";
 
 export function createThreadEnvironmentAtoms<R, E>(
@@ -169,6 +178,24 @@ export function createThreadEnvironmentAtoms<R, E>(
     stopSession: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:stop-session",
       execute: (input: StopThreadSessionInput) => stopThreadSession(input),
+      scheduler,
+      concurrency,
+    }),
+    createSideThread: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:sidethread:create",
+      execute: (input: CreateSideThreadInput) => createSideThread(input),
+      scheduler,
+      concurrency,
+    }),
+    postSideThreadMessage: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:sidethread:post-message",
+      execute: (input: PostSideThreadMessageInput) => postSideThreadMessage(input),
+      scheduler,
+      concurrency,
+    }),
+    archiveSideThread: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:sidethread:archive",
+      execute: (input: ArchiveSideThreadInput) => archiveSideThread(input),
       scheduler,
       concurrency,
     }),
