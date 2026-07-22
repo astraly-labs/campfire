@@ -4,6 +4,7 @@ import * as Stream from "effect/Stream";
 
 export interface LiveSubscriptionBuffer<A, E> {
   readonly offer: (item: A) => Effect.Effect<void>;
+  readonly takeAll: Effect.Effect<ReadonlyArray<A>, E>;
   readonly stream: Stream.Stream<A, E>;
 }
 
@@ -43,6 +44,7 @@ export const makeLiveSubscriptionBuffer = Effect.fn("makeLiveSubscriptionBuffer"
 
   return {
     offer,
+    takeAll: Queue.takeAll(queue),
     stream: Stream.fromQueue(queue),
   };
 });
