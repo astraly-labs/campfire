@@ -98,12 +98,22 @@ overrides:
   "@effect/vitest": "catalog:"
   "@effect/vitest>vitest": "-"
   "@expo/metro-config": 56.0.14
+  "@hono/node-server@<2.0.5": 2.0.11
   "@pierre/diffs>@shikijs/transformers": ^4.2.0
   "@types/node": "catalog:"
+  "brace-expansion@>=3.0.0 <5.0.7": 5.0.7
   effect: "catalog:"
   expo-modules-jsi: 56.0.10
+  "fast-uri@>=3.0.0 <3.1.4": 3.1.4
   "expo-sharing>@expo/config-plugins": 56.0.9
   "expo-sharing>@expo/config-types": 56.0.6
+  "js-yaml@>=4.0.0 <4.3.0": 4.3.0
+  "sharp@<0.35.0": 0.35.0
+  "shell-quote@<1.8.5": 1.10.0
+  "svgo@>=4.0.0 <4.0.2": 4.0.2
+  "undici@>=7.0.0 <7.28.0": 7.28.0
+  "undici@>=8.0.0 <8.5.0": 8.5.0
+  "uuid@>=7.0.0 <11.1.1": 11.1.1
   vite: "catalog:"
   yaml: "catalog:"
 

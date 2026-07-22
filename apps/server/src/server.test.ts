@@ -4107,6 +4107,57 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }),
   );
 
+  it.effect("accepts same-origin websocket handshakes and rejects cross-site cookie reuse", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+
+      const { cookie } = yield* bootstrapBrowserSession();
+      assert.isDefined(cookie);
+      const rawWsUrl = yield* getWsServerUrl("/ws", { authenticated: false });
+      const wsUrl = appendSessionCookieToWsUrl(rawWsUrl, cookie?.split(";")[0] ?? "");
+      const sameOrigin = new URL(rawWsUrl);
+      sameOrigin.protocol = "http:";
+
+      const response = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) => client[WS_METHODS.serverGetConfig]({}), {
+          origin: sameOrigin.origin,
+        }),
+      );
+      assert.equal(response.environment.environmentId, testEnvironmentDescriptor.environmentId);
+
+      const error = yield* Effect.flip(
+        Effect.scoped(
+          withWsRpcClient(wsUrl, (client) => client[WS_METHODS.serverGetConfig]({}), {
+            origin: "https://attacker.example",
+          }),
+        ),
+      );
+      assert.equal(error._tag, "RpcClientError");
+      assertInclude(String(error), "SocketOpenError");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("rejects cross-site HTTP use of a browser session cookie", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+
+      const { cookie } = yield* bootstrapBrowserSession();
+      assert.isDefined(cookie);
+      const ticketUrl = yield* getHttpServerUrl("/api/auth/websocket-ticket");
+      const response = yield* fetchEffect(ticketUrl, {
+        method: "POST",
+        headers: {
+          cookie: cookie?.split(";")[0] ?? "",
+          origin: "https://attacker.example",
+        },
+      });
+      const body = yield* responseJsonEffect<{ readonly reason?: string }>(response);
+
+      assert.equal(response.status, 401);
+      assert.equal(body.reason, "invalid_credential");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect(
     "rejects websocket rpc handshake when a session token is only provided via query string",
     () =>
@@ -4272,6 +4323,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       yield* buildAppUnderTest({
         config: {
           otlpTracesUrl: collector.url,
+          devUrl: new URL("http://localhost:5733"),
         },
         layers: {
           browserTraceCollector: {
@@ -4294,7 +4346,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       });
 
       assert.equal(response.status, 204);
-      assert.equal(response.headers["access-control-allow-origin"], "*");
+      assert.equal(response.headers["access-control-allow-origin"], "http://localhost:5733");
       assert.deepEqual(localTraceRecords, [
         {
           type: "otlp-span",

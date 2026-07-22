@@ -548,3 +548,55 @@ Next:
 
 - Supply production Google credentials/MagicDNS and run the documented staging gate; no code path
   should bypass that external validation.
+
+### H15: Patched production dependencies and presented-origin checks close ambient browser risks
+
+Status: confirmed
+
+Tailscale reachability and a valid application cookie are not sufficient if a malicious browser
+origin can reuse that cookie, or if the deployed dependency graph contains known remotely relevant
+vulnerabilities. Every presented browser origin must therefore be same-authority or explicitly
+configured, and the production lockfile must pass a repeatable advisory gate.
+
+Expected signal:
+
+- Cross-site WebSocket handshakes and authenticated HTTP requests using a browser-session cookie
+  fail before reaching an RPC or state-changing handler.
+- Same-origin, exact Google redirect, configured Vite, desktop, and origin-less native clients
+  continue to work.
+- The production dependency audit reports no known advisories, including the server's Undici,
+  Hono, and fast-uri paths.
+
+Validation:
+
+- Command/query: pure origin matrix, real HTTP/WebSocket router fixtures, frozen install,
+  `bun run audit:prod`, repository typecheck/tests/build.
+- Dataset/window: malicious, malformed, credentialed, path-bearing, same-authority, Google, Vite,
+  desktop, and missing origins; all production dependencies in the current lockfile.
+- Control/baseline: 27 production advisories (13 high) and no WebSocket Origin enforcement.
+
+Result:
+
+- Added one shared presented-origin validator. Missing Origin remains valid for native clients; a
+  supplied Origin must exactly match the request authority or the configured Google/Vite/desktop
+  origin. Length, whitespace, credentials, paths, invalid schemes, and malformed authorities are
+  rejected.
+- Browser-session-cookie HTTP authentication and every WebSocket upgrade now apply the validator
+  before an authenticated handler runs. Real router fixtures accepted same-origin WebSocket use and
+  rejected malicious-origin HTTP and WebSocket cookie reuse.
+- Added bounded production overrides for patched Undici 7/8, Hono, fast-uri, js-yaml, Sharp,
+  shell-quote, SVGO, brace-expansion, and UUID releases, plus the patched Astro release. The frozen
+  lockfile installs successfully and `bun run audit:prod` reports no known vulnerabilities.
+- All 1,610 server tests passed after the dependency and origin changes; all package typechecks and
+  the production build passed. The focused origin suite passed five tests.
+
+Decision:
+
+- Keep the audit command as a release gate and reject presented browser origins by default. Do not
+  weaken the check to trust forwarded headers; only configured origins and the actual request Host
+  participate.
+
+Next:
+
+- Exercise the exact Google staging origin through Tailscale Serve port 10000 and retain the audit
+  result with the promoted release record.

@@ -51,6 +51,7 @@ Official references:
    corepack pnpm test
    corepack pnpm lint
    corepack pnpm typecheck
+   corepack pnpm audit:prod
    ```
 
 ## Google OIDC setup
