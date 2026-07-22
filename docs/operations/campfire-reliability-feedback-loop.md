@@ -377,3 +377,39 @@ Decision:
 Next:
 
 - Inventory remaining unbounded browser-facing terminal/preview queues and separate lossy output from durable control messages.
+
+### H11: Bounded volatile presence can stay collaborative without touching agent delivery
+
+Status: confirmed
+
+Presence is useful only as a latest-state hint. A process-owned, session-keyed map with a hard capacity, TTL eviction, monotonic snapshot revisions, and a one-frame sliding broadcast can show who is viewing or typing without adding durable events, replay work, or backpressure to Codex command/event paths.
+
+Expected signal:
+
+- Five users see current thread focus and short-lived typing state within one heartbeat interval.
+- A stalled presence subscriber receives only the newest full snapshot and never blocks heartbeats, WebSocket RPCs, or orchestration delivery.
+- Disconnect and TTL expiry remove stale sessions; forged client identity fields are impossible because heartbeat payloads contain focus only.
+
+Validation:
+
+- Command/query: focused presence state-machine tests plus authenticated multi-WebSocket RPC fixtures.
+- Dataset/window: duplicate human sessions, focus changes, typing expiry, disconnect, TTL expiry, capacity pressure, and one intentionally stalled subscriber.
+- Control/baseline: archived `campfire/v0` unbounded PubSub presence implementation.
+
+Result:
+
+- Added schema-only presence heartbeat/snapshot contracts and authenticated WebSocket RPCs. The heartbeat accepts only thread focus and typing state; subject, display name, network login, and session ID are derived from the verified server session.
+- The process-owned service has a hard 64-connection cap, 15-second presence TTL, 4-second typing TTL, deterministic full snapshots, and a capacity-one sliding PubSub. A stalled subscriber observed revisions `[0, 3]`, proving intermediate volatile states coalesce without blocking producers.
+- Presence is tracked internally per WebSocket connection and projected per authenticated session. A duplicate-session fixture kept the human visible when one of two sockets disconnected, fell back to the surviving socket's focus, and removed the user only after the last socket dropped.
+- Capacity pressure evicted the oldest connection, typing expired independently, and disconnect removed state immediately. Repeated identical heartbeats refreshed TTL without incrementing the visible revision or broadcasting frames.
+- Added a client-runtime subscription and a latest-only heartbeat lane per environment. The web client sends every two seconds, signals typing immediately on transition, and renders deterministic avatars for viewers of the active task; neither transport backlog nor React render frequency can create an unbounded heartbeat queue.
+- A real Google OIDC WebSocket fixture proved the presence snapshot used `google:alice-stable-subject`, `Alice Example`, and the authenticated session ID rather than client-supplied identity.
+- Focused validation passed the four presence state-machine tests, the Google OIDC/WebSocket integration fixture, the web presentation tests, contracts/client-runtime/server/web typechecks, and targeted lint with zero warnings or errors (apart from the three pre-existing server typecheck suggestions).
+
+Decision:
+
+- Keep presence volatile, bounded, and outside the orchestration event log. Losing an intermediate presence frame is correct; the next full snapshot or heartbeat repairs it, while Codex command and event delivery remain isolated.
+
+Next:
+
+- Rebuild SideThreads on the already bounded durable orchestration command/event path instead of restoring the archived standalone queues and replay loop.

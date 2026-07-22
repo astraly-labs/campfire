@@ -336,6 +336,7 @@ import {
 import { searchProviderSkills } from "../../providerSkillSearch";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import type { ReviewCommentContext } from "../../reviewCommentContext";
+import { notifyPresenceTyping } from "../../presence/presence";
 
 const runtimeModeConfig: Record<
   RuntimeMode,
@@ -1865,6 +1866,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       cursorAdjacentToMention: boolean,
       terminalContextIds: string[],
     ) => {
+      if (activeThreadId !== null) {
+        notifyPresenceTyping(environmentId, activeThreadId);
+      }
       if (activePendingProgress?.activeQuestion && pendingUserInputs.length > 0) {
         setComposerCursor(nextCursor);
         setComposerTrigger(
@@ -1901,6 +1905,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       composerDraftTarget,
       composerTerminalContexts,
       setComposerDraftTerminalContexts,
+      activeThreadId,
+      environmentId,
     ],
   );
 

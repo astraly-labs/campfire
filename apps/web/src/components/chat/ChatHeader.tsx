@@ -44,6 +44,8 @@ import {
   WorkspaceBreadcrumbSeparator,
 } from "../WorkspaceBreadcrumb";
 import { cn } from "~/lib/utils";
+import { PresenceAvatarStack } from "../../presence/PresenceAvatarStack";
+import { useThreadPresence } from "../../presence/presence";
 
 interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;
@@ -143,6 +145,7 @@ export const ChatHeader = memo(function ChatHeader({
     activeProjectScripts ? activeProjectCwd : null,
   );
   const remoteOpenState = useRemoteOpenState(activeThreadEnvironmentId);
+  const viewers = useThreadPresence(activeThreadEnvironmentId, activeThreadId);
   const showOpenInPicker = shouldShowOpenInPicker({
     activeProjectName,
     activeThreadEnvironmentId,
@@ -378,6 +381,7 @@ export const ChatHeader = memo(function ChatHeader({
           rightPanelOpen ? "pr-0" : "pr-16",
         )}
       >
+        <PresenceAvatarStack viewers={viewers} />
         {activeProjectScripts && (
           <ProjectScriptsControl
             scripts={activeProjectScripts}
