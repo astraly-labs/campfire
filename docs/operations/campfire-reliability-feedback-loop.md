@@ -225,3 +225,38 @@ Decision:
 Next:
 
 - Apply the same invariant to shell subscriptions and add overflow observability before bounding the engine-wide PubSub.
+
+### H7: Fail-and-resume preserves shell synchronization ordering under overflow
+
+Status: confirmed
+
+The same fixed-capacity buffer can isolate a slow shell/sidebar subscriber without weakening the existing completion-marker invariant. Draining the accepted batch after queuing the marker keeps all pre-marker events before `synchronized`; if the marker or an event overflows, the stream must omit a false synchronization claim and fail after the accepted backlog so the client resumes from its durable shell cursor.
+
+Expected signal:
+
+- A bounded shell buffer drains accepted raw events in order, then propagates its typed overflow failure.
+- Under normal capacity, the completion marker stays after every event accepted before it.
+- One slow shell subscriber never blocks global orchestration publication or other subscribers.
+- Existing shell snapshot-race, replay, and completion-marker tests remain green.
+
+Validation:
+
+- Command/query: extend the buffer unit test for batch draining, then run focused server shell subscription and client thread-synchronization tests.
+- Dataset/window: a capacity-two deterministic overflow fixture plus production capacity of 2,048 raw global events before coalescing.
+- Control/baseline: current unbounded shell `Queue` and existing 50 ms/512-item coalescing window.
+
+Result:
+
+- Extended the bounded buffer with a typed `takeAll` batch drain. A capacity-two fixture drained `[1, 2]` in order after overflow, then propagated the exact terminal error on the next take.
+- Shell subscriptions now buffer at most 2,048 raw global events per client before the existing 50 ms/512-item aggregate coalescer. Overflow fails only that subscription with `OrchestrationGetSnapshotError`; normal completion markers are offered and drained through the same ordered queue as before.
+- If an already-full queue rejects the synchronization marker, no false `synchronized` item is emitted: the accepted backlog drains, the stream fails, and the client retries from its last shell sequence.
+- `corepack pnpm exec vp test run apps/server/src/orchestration/liveSubscriptionBuffer.test.ts apps/server/src/server.test.ts packages/client-runtime/src/state/threads-sync.test.ts`: 3 files and 132 tests passed in 4.41 seconds.
+- Targeted lint passed with zero errors or warnings. Server typecheck passed with only the same three pre-existing Effect suggestions in `decider.ts`.
+
+Decision:
+
+- Keep the 2,048-item fail-and-resume shell bound. It preserves completion-marker ordering without allowing one sidebar subscriber to retain memory indefinitely or backpressure global publication.
+
+Next:
+
+- Expose overflow counters and investigate the engine-wide unbounded event PubSub separately.

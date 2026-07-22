@@ -329,6 +329,11 @@ const PROVIDER_STATUS_DEBOUNCE_MS = 200;
 // Matches the event store's default page size (DEFAULT_READ_FROM_SEQUENCE_LIMIT).
 const SHELL_RESUME_MAX_GAP = 1_000;
 
+// Shell events are global and briefly buffered before aggregate coalescing, so
+// allow a larger burst than a single detailed-thread stream while retaining a
+// hard per-client memory bound.
+const SHELL_LIVE_BUFFER_CAPACITY = 2_048;
+
 // Same bound for thread resume. The replay reads the *global* event range and
 // filters per-thread afterwards, so a stale cursor far behind the head would
 // otherwise decode every intervening event's payload — reconnects with cursors
@@ -1363,16 +1368,25 @@ const makeWsRpcLayer = (
               // sequence but the live subscription is not attached yet). Every
               // path below emits from this same buffered live tail. Overlapping
               // events are deduped by sequence on the client.
-              const liveBuffer = yield* Queue.unbounded<ShellLiveInput>();
+              const liveBuffer = yield* makeLiveSubscriptionBuffer<
+                ShellLiveInput,
+                OrchestrationGetSnapshotError
+              >({
+                capacity: SHELL_LIVE_BUFFER_CAPACITY,
+                label: "orchestration.shell",
+                onOverflow: () =>
+                  new OrchestrationGetSnapshotError({
+                    message: "Shell subscription fell behind; resynchronization required",
+                    cause: { capacity: SHELL_LIVE_BUFFER_CAPACITY },
+                  }),
+              });
               yield* Effect.forkScoped(
                 orchestrationEngine.streamDomainEvents.pipe(
-                  Stream.runForEach((event) =>
-                    Queue.offer(liveBuffer, { kind: "event" as const, event }),
-                  ),
+                  Stream.runForEach((event) => liveBuffer.offer({ kind: "event" as const, event })),
                 ),
                 { startImmediately: true },
               );
-              const bufferedLiveStream = coalesceShellLiveStream(Stream.fromQueue(liveBuffer));
+              const bufferedLiveStream = coalesceShellLiveStream(liveBuffer.stream);
 
               const loadSnapshot = projectionSnapshotQuery.getShellSnapshot().pipe(
                 Effect.tapError((cause) =>
@@ -1394,10 +1408,12 @@ const makeWsRpcLayer = (
                 input.requestCompletionMarker === true
                   ? Stream.concat(
                       Stream.fromEffect(
-                        Queue.offer(liveBuffer, { kind: "synchronized" as const }).pipe(
-                          Effect.andThen(Queue.takeAll(liveBuffer)),
-                          Effect.flatMap(coalesceShellLiveInputs),
-                        ),
+                        liveBuffer
+                          .offer({ kind: "synchronized" as const })
+                          .pipe(
+                            Effect.andThen(liveBuffer.takeAll),
+                            Effect.flatMap(coalesceShellLiveInputs),
+                          ),
                       ).pipe(Stream.flatMap((items) => Stream.fromIterable(items))),
                       bufferedLiveStream,
                     )

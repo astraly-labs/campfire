@@ -1,16 +1,21 @@
 import { it } from "@effect/vitest";
+import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 import { describe, expect } from "vite-plus/test";
 
 import { makeLiveSubscriptionBuffer } from "./liveSubscriptionBuffer.ts";
 
+class TestOverflow extends Data.TaggedError("TestOverflow")<{
+  readonly message: string;
+}> {}
+
 describe("makeLiveSubscriptionBuffer", () => {
   it.effect("drains accepted items and then fails when a producer exceeds capacity", () =>
     Effect.gen(function* () {
-      const overflow = new Error("subscriber fell behind");
+      const overflow = new TestOverflow({ message: "subscriber fell behind" });
       const received: number[] = [];
-      const buffer = yield* makeLiveSubscriptionBuffer<number, Error>({
+      const buffer = yield* makeLiveSubscriptionBuffer<number, TestOverflow>({
         capacity: 2,
         label: "test",
         onOverflow: () => overflow,
@@ -32,10 +37,10 @@ describe("makeLiveSubscriptionBuffer", () => {
 
   it.effect("keeps the stream open while offers remain within capacity", () =>
     Effect.gen(function* () {
-      const buffer = yield* makeLiveSubscriptionBuffer<number, Error>({
+      const buffer = yield* makeLiveSubscriptionBuffer<number, TestOverflow>({
         capacity: 2,
         label: "test",
-        onOverflow: () => new Error("subscriber fell behind"),
+        onOverflow: () => new TestOverflow({ message: "subscriber fell behind" }),
       });
 
       yield* buffer.offer(1);
@@ -43,6 +48,24 @@ describe("makeLiveSubscriptionBuffer", () => {
 
       const values = yield* buffer.stream.pipe(Stream.take(2), Stream.runCollect);
       expect(Array.from(values)).toEqual([1, 2]);
+    }),
+  );
+
+  it.effect("drains an accepted batch before propagating overflow", () =>
+    Effect.gen(function* () {
+      const overflow = new TestOverflow({ message: "subscriber fell behind" });
+      const buffer = yield* makeLiveSubscriptionBuffer<number, TestOverflow>({
+        capacity: 2,
+        label: "test",
+        onOverflow: () => overflow,
+      });
+
+      yield* buffer.offer(1);
+      yield* buffer.offer(2);
+      yield* buffer.offer(3);
+
+      expect(Array.from(yield* buffer.takeAll)).toEqual([1, 2]);
+      expect(yield* Effect.flip(buffer.takeAll)).toBe(overflow);
     }),
   );
 });
