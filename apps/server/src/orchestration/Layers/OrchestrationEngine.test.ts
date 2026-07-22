@@ -31,6 +31,7 @@ import {
   type OrchestrationEventStoreShape,
 } from "../../persistence/Services/OrchestrationEventStore.ts";
 import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
+import { orchestrationCommandQueueDepth } from "../../observability/Metrics.ts";
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
@@ -874,6 +875,7 @@ describe("OrchestrationEngine", () => {
         ackEventType: "thread.created",
       }),
     ).toBe(true);
+    expect(await system.run(Metric.value(orchestrationCommandQueueDepth))).toEqual({ value: 0 });
 
     await system.dispose();
   });
