@@ -44,6 +44,8 @@ import {
   failEnvironmentInternal,
 } from "./auth/http.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
+import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import { browserApiCorsAllowedHeaders, browserApiCorsAllowedMethods } from "./httpCors.ts";
 
 const OTLP_TRACES_PROXY_PATH = "/api/observability/v1/traces";
@@ -173,6 +175,34 @@ export const httpCompressionLayer = HttpRouter.middleware(HttpMiddleware.compres
   global: true,
 });
 
+const HEALTH_HEADERS = { "cache-control": "no-store" } as const;
+
+export const livenessRouteLayer = HttpRouter.add(
+  "GET",
+  "/healthz",
+  HttpServerResponse.jsonUnsafe({ status: "ok" }, { headers: HEALTH_HEADERS }),
+);
+
+export const readinessRouteLayer = HttpRouter.add(
+  "GET",
+  "/readyz",
+  Effect.gen(function* () {
+    const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
+    const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+    return yield* startup.awaitCommandReady.pipe(
+      Effect.andThen(snapshots.getSnapshotSequence()),
+      Effect.as(HttpServerResponse.jsonUnsafe({ status: "ready" }, { headers: HEALTH_HEADERS })),
+      Effect.catchCause(() =>
+        Effect.succeed(
+          HttpServerResponse.jsonUnsafe(
+            { status: "unavailable" },
+            { status: 503, headers: HEALTH_HEADERS },
+          ),
+        ),
+      ),
+    );
+  }),
+);
 export const browserApiCorsLayer = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;

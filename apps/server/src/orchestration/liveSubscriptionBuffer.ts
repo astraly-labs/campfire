@@ -1,6 +1,9 @@
 import * as Effect from "effect/Effect";
+import * as Metric from "effect/Metric";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
+
+import { orchestrationSubscriptionOverflowsTotal } from "../observability/Metrics.ts";
 
 export interface LiveSubscriptionBuffer<A, E> {
   readonly offer: (item: A) => Effect.Effect<void>;
@@ -11,6 +14,7 @@ export interface LiveSubscriptionBuffer<A, E> {
 interface LiveSubscriptionBufferOptions<E> {
   readonly capacity: number;
   readonly label: string;
+  readonly metricLabel?: "shell" | "thread";
   readonly onOverflow: () => E;
 }
 
@@ -33,6 +37,14 @@ export const makeLiveSubscriptionBuffer = Effect.fn("makeLiveSubscriptionBuffer"
 
     const failed = yield* Queue.fail(queue, options.onOverflow());
     if (failed) {
+      if (options.metricLabel !== undefined) {
+        yield* Metric.update(
+          Metric.withAttributes(orchestrationSubscriptionOverflowsTotal, [
+            ["stream", options.metricLabel],
+          ]),
+          1,
+        );
+      }
       yield* Effect.logWarning("Live subscription buffer overflowed; resync required.").pipe(
         Effect.annotateLogs({
           capacity,

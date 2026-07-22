@@ -1,10 +1,12 @@
 import { it } from "@effect/vitest";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
+import * as Metric from "effect/Metric";
 import * as Stream from "effect/Stream";
 import { describe, expect } from "vite-plus/test";
 
 import { makeLiveSubscriptionBuffer } from "./liveSubscriptionBuffer.ts";
+import { orchestrationSubscriptionOverflowsTotal } from "../observability/Metrics.ts";
 
 class TestOverflow extends Data.TaggedError("TestOverflow")<{
   readonly message: string;
@@ -66,6 +68,27 @@ describe("makeLiveSubscriptionBuffer", () => {
 
       expect(Array.from(yield* buffer.takeAll)).toEqual([1, 2]);
       expect(yield* Effect.flip(buffer.takeAll)).toBe(overflow);
+    }),
+  );
+
+  it.effect("counts a bounded orchestration subscriber that must resynchronize", () =>
+    Effect.gen(function* () {
+      const metric = Metric.withAttributes(orchestrationSubscriptionOverflowsTotal, [
+        ["stream", "thread"],
+      ]);
+      const before = yield* Metric.value(metric);
+      const buffer = yield* makeLiveSubscriptionBuffer<number, TestOverflow>({
+        capacity: 1,
+        label: "thread:test",
+        metricLabel: "thread",
+        onOverflow: () => new TestOverflow({ message: "subscriber fell behind" }),
+      });
+
+      yield* buffer.offer(1);
+      yield* buffer.offer(2);
+
+      const after = yield* Metric.value(metric);
+      expect(after.count - before.count).toBe(1);
     }),
   );
 });

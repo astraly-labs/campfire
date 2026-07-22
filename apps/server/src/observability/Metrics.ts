@@ -92,6 +92,60 @@ export const terminalRestartsTotal = Metric.counter("t3_terminal_restarts_total"
   description: "Total terminal restart requests handled.",
 });
 
+export const websocketConnectionsActive = Metric.gauge("t3_websocket_connections_active", {
+  description: "Current authenticated WebSocket connections.",
+});
+
+export const websocketConnectionsTotal = Metric.counter("t3_websocket_connections_total", {
+  description: "Total authenticated WebSocket connections accepted.",
+});
+
+export const orchestrationResumeAttemptsTotal = Metric.counter(
+  "t3_orchestration_resume_attempts_total",
+  {
+    description:
+      "Resume decisions by stream kind, outcome, and reason (incremental replay or snapshot reset).",
+  },
+);
+
+export const orchestrationResumeReplayEventsTotal = Metric.counter(
+  "t3_orchestration_resume_replay_events_total",
+  {
+    description: "Global durable event span inspected by incremental resume operations.",
+  },
+);
+
+export const orchestrationSubscriptionOverflowsTotal = Metric.counter(
+  "t3_orchestration_subscription_overflows_total",
+  {
+    description: "Bounded live subscription buffers that overflowed and forced client resync.",
+  },
+);
+
+export const serverEventLoopLagMillis = Metric.gauge("t3_server_event_loop_lag_millis", {
+  description: "Latest scheduler delay beyond the event-loop sampling interval in milliseconds.",
+});
+
+export const serverRssBytes = Metric.gauge("t3_server_rss_bytes", {
+  description: "Resident memory used by the server process in bytes.",
+});
+
+export const serverHeapUsedBytes = Metric.gauge("t3_server_heap_used_bytes", {
+  description: "V8 heap currently used by the server process in bytes.",
+});
+
+export const processTreeRssBytes = Metric.gauge("t3_process_tree_rss_bytes", {
+  description: "Resident memory used by the server and its provider/terminal descendants in bytes.",
+});
+
+export const processTreeCpuPercent = Metric.gauge("t3_process_tree_cpu_percent", {
+  description: "Latest combined CPU percentage for the server and its descendants.",
+});
+
+export const processTreeCount = Metric.gauge("t3_process_tree_count", {
+  description: "Latest number of server/provider/terminal processes in the monitored tree.",
+});
+
 export const metricAttributes = (
   attributes: Readonly<Record<string, unknown>>,
 ): ReadonlyArray<[string, string]> => Object.entries(compactMetricAttributes(attributes));
