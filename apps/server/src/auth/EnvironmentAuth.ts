@@ -35,6 +35,7 @@ import * as EnvironmentAuthPolicy from "./EnvironmentAuthPolicy.ts";
 import * as PairingGrantStore from "./PairingGrantStore.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import * as SessionStore from "./SessionStore.ts";
+import { isBrowserRequestOriginAllowed } from "./requestOrigin.ts";
 import {
   resolveTrustedTailscaleServeIdentity,
   type TrustedTailscaleServeIdentity,
@@ -620,6 +621,19 @@ export const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const descriptor = yield* policy.getDescriptor();
 
+  const requireAllowedPresentedOrigin = (request: HttpServerRequest.HttpServerRequest) =>
+    isBrowserRequestOriginAllowed({
+      origin: request.headers.origin,
+      host: request.headers.host,
+      config,
+    })
+      ? Effect.void
+      : Effect.fail(
+          new ServerAuthInvalidCredentialError({
+            diagnostic: "Request origin is not allowed.",
+          }),
+        );
+
   const attachTrustedTailscaleIdentity = (
     session: AuthenticatedSession,
     request: HttpServerRequest.HttpServerRequest,
@@ -1044,13 +1058,19 @@ export const make = Effect.gen(function* () {
       Effect.withSpan("EnvironmentAuth.issueWebSocketTicket"),
     );
 
-  const authenticateHttpRequest: EnvironmentAuth["Service"]["authenticateHttpRequest"] = (
-    request,
-  ) =>
-    authenticateRequest(request).pipe(Effect.withSpan("EnvironmentAuth.authenticateHttpRequest"));
+  const authenticateHttpRequest: EnvironmentAuth["Service"]["authenticateHttpRequest"] = Effect.fn(
+    "EnvironmentAuth.authenticateHttpRequest",
+  )(function* (request) {
+    const session = yield* authenticateRequest(request);
+    if (session.method === "browser-session-cookie") {
+      yield* requireAllowedPresentedOrigin(request);
+    }
+    return session;
+  });
 
   const authenticateWebSocketUpgrade: EnvironmentAuth["Service"]["authenticateWebSocketUpgrade"] =
     Effect.fn("EnvironmentAuth.authenticateWebSocketUpgrade")(function* (request) {
+      yield* requireAllowedPresentedOrigin(request);
       const requestUrl = HttpServerRequest.toURL(request);
       if (Option.isSome(requestUrl)) {
         const websocketTicket = requestUrl.value.searchParams.get(WEBSOCKET_TICKET_QUERY_PARAM);
