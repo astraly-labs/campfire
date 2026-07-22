@@ -477,6 +477,78 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.session?.runtimeMode).toBe("approval-required");
   });
 
+  effectIt.effect("runs five independent Codex worktree turns with zero browser subscribers", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() => createHarness());
+      const createdAt = "2026-01-01T00:00:00.000Z";
+      const threadIds = Array.from({ length: 5 }, (_, index) =>
+        ThreadId.make(`thread-zero-browser-${index}`),
+      );
+      const worktreePaths = threadIds.map((_, index) => `/tmp/provider-worktree-${index}`);
+
+      yield* harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-zero-browser-meta-0"),
+        threadId: ThreadId.make("thread-1"),
+        branch: "campfire/zero-browser-0",
+        worktreePath: worktreePaths[0],
+      });
+      threadIds[0] = ThreadId.make("thread-1");
+
+      for (let index = 1; index < threadIds.length; index += 1) {
+        yield* harness.engine.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make(`cmd-zero-browser-create-${index}`),
+          threadId: threadIds[index]!,
+          projectId: asProjectId("project-1"),
+          title: `Zero-browser ${index}`,
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "full-access",
+          branch: `campfire/zero-browser-${index}`,
+          worktreePath: worktreePaths[index]!,
+          createdAt,
+        });
+      }
+
+      yield* Effect.all(
+        threadIds.map((threadId, index) =>
+          harness.engine.dispatch({
+            type: "thread.turn.start",
+            commandId: CommandId.make(`cmd-zero-browser-turn-${index}`),
+            threadId,
+            message: {
+              messageId: asMessageId(`message-zero-browser-${index}`),
+              role: "user",
+              text: `continue independently ${index}`,
+              attachments: [],
+            },
+            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+            runtimeMode: "full-access",
+            createdAt,
+          }),
+        ),
+        { concurrency: "unbounded" },
+      );
+
+      yield* Effect.promise(() => waitFor(() => harness.startSession.mock.calls.length === 5));
+      yield* Effect.promise(() => waitFor(() => harness.sendTurn.mock.calls.length === 5));
+
+      const startedCwds = new Set(
+        harness.startSession.mock.calls.map((call) =>
+          typeof call[1] === "object" && call[1] !== null && "cwd" in call[1]
+            ? call[1].cwd
+            : undefined,
+        ),
+      );
+      expect(startedCwds).toEqual(new Set(worktreePaths));
+      expect(harness.runtimeSessions).toHaveLength(5);
+    }),
+  );
+
   effectIt.effect("projects starting before a slow provider session finishes", () =>
     Effect.gen(function* () {
       const releaseStart = yield* Deferred.make<void>();

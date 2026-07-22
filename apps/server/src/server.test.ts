@@ -17,6 +17,7 @@ import {
   MessageId,
   ExternalLauncherCommandNotFoundError,
   type OrchestrationThreadShell,
+  type OrchestrationThreadStreamItem,
   TerminalNotRunningError,
   type OrchestrationCommand,
   type OrchestrationEvent,
@@ -51,6 +52,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
+import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
@@ -126,6 +128,12 @@ import * as DesktopTelemetryReceiver from "./resourceTelemetry/DesktopTelemetryR
 import * as NativeTelemetryClient from "./resourceTelemetry/NativeTelemetryClient.ts";
 import * as ResourceAttribution from "./resourceTelemetry/ResourceAttribution.ts";
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
+import {
+  orchestrationResumeAttemptsTotal,
+  orchestrationResumeReplayEventsTotal,
+  websocketConnectionsActive,
+  websocketConnectionsTotal,
+} from "./observability/Metrics.ts";
 import * as Data from "effect/Data";
 
 const defaultProjectId = ProjectId.make("project-default");
@@ -1449,6 +1457,38 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       // Desktop, so port-scoped: instances scan for a free port and share
       // 127.0.0.1, and cookies are not scoped by port.
       assert.isTrue(body.auth.sessionCookieName.startsWith("t3_session_"));
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("serves unauthenticated liveness and readiness probes without caching", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+
+      const healthResponse = yield* fetchEffect(yield* getHttpServerUrl("/healthz"));
+      const readyResponse = yield* fetchEffect(yield* getHttpServerUrl("/readyz"));
+
+      assert.equal(healthResponse.status, 200);
+      assert.deepEqual(yield* responseJsonEffect(healthResponse), { status: "ok" });
+      assert.equal(healthResponse.headers["cache-control"], "no-store");
+      assert.equal(readyResponse.status, 200);
+      assert.deepEqual(yield* responseJsonEffect(readyResponse), { status: "ready" });
+      assert.equal(readyResponse.headers["cache-control"], "no-store");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("returns unavailable while command startup is not ready", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest({
+        layers: {
+          serverRuntimeStartup: {
+            awaitCommandReady: Effect.die(new Error("startup failed")),
+          },
+        },
+      });
+
+      const response = yield* fetchEffect(yield* getHttpServerUrl("/readyz"));
+      assert.equal(response.status, 503);
+      assert.deepEqual(yield* responseJsonEffect(response), { status: "unavailable" });
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
@@ -5108,6 +5148,39 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("tracks authenticated websocket connection lifecycle", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+      const activeBefore = yield* Metric.value(websocketConnectionsActive);
+      const totalBefore = yield* Metric.value(websocketConnectionsTotal);
+      const wsUrl = yield* getWsServerUrl("/ws");
+
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.serverProbe]({}).pipe(
+            Effect.andThen(Metric.value(websocketConnectionsActive)),
+            Effect.tap((activeDuring) =>
+              Effect.sync(() => assert.equal(activeDuring.value, activeBefore.value + 1)),
+            ),
+          ),
+        ),
+      );
+
+      const waitForActiveCount = (): Effect.Effect<number> =>
+        Metric.value(websocketConnectionsActive).pipe(
+          Effect.flatMap((current) =>
+            current.value === activeBefore.value
+              ? Effect.succeed(current.value)
+              : Effect.sleep("5 millis").pipe(Effect.andThen(waitForActiveCount())),
+          ),
+        );
+      const activeAfter = yield* waitForActiveCount().pipe(Effect.timeout("1 second"));
+      const totalAfter = yield* Metric.value(websocketConnectionsTotal);
+      assert.equal(activeAfter, activeBefore.value);
+      assert.equal(totalAfter.count - totalBefore.count, 1);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
+  );
+
   it.effect("uses trusted Tailscale Serve identity for websocket attribution", () =>
     Effect.gen(function* () {
       let observedActor: OrchestrationEventActor | undefined;
@@ -6403,6 +6476,13 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
   it.effect("subscribeThread bounds replay at the captured authoritative head", () =>
     Effect.gen(function* () {
+      const resumeMetric = Metric.withAttributes(orchestrationResumeAttemptsTotal, [
+        ["stream", "thread"],
+        ["outcome", "replay"],
+        ["reason", "bounded_gap"],
+      ]);
+      const resumeBefore = yield* Metric.value(resumeMetric);
+      const replayedBefore = yield* Metric.value(orchestrationResumeReplayEventsTotal);
       let replayLimit: number | undefined;
       const event = {
         sequence: 10,
@@ -6453,7 +6533,145 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(items[0]?.kind, "event");
       assert.deepEqual(items[1], { kind: "synchronized" });
       assert.equal(replayLimit, 10);
+      assert.equal((yield* Metric.value(resumeMetric)).count - resumeBefore.count, 1);
+      assert.equal(
+        (yield* Metric.value(orchestrationResumeReplayEventsTotal)).count - replayedBefore.count,
+        10,
+      );
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("reconnects five clients across a 1000-event catch-up without loss or leakage", () =>
+    Effect.gen(function* () {
+      const threadIds = Array.from({ length: 5 }, (_, index) =>
+        ThreadId.make(`thread-catch-up-${index}`),
+      );
+      const events = Array.from({ length: 1_000 }, (_, index) => {
+        const sequence = index + 1;
+        const threadId = threadIds[index % threadIds.length]!;
+        return {
+          sequence,
+          eventId: EventId.make(`event-catch-up-${sequence}`),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: "2026-01-01T00:00:00.000Z",
+          commandId: null,
+          causationEventId: null,
+          correlationId: null,
+          metadata: {},
+          type: "thread.message-sent",
+          payload: {
+            threadId,
+            messageId: MessageId.make(`message-catch-up-${sequence}`),
+            role: "assistant",
+            text: `event ${sequence}`,
+            turnId: null,
+            streaming: false,
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+          },
+        } satisfies Extract<OrchestrationEvent, { type: "thread.message-sent" }>;
+      });
+      const replayLimits: number[] = [];
+
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            latestSequence: Effect.succeed(events.length),
+            readEvents: (afterSequence, limit = 512) => {
+              replayLimits.push(limit);
+              return Stream.fromIterable(
+                events
+                  .filter((event) => event.sequence > afterSequence)
+                  .slice(0, Math.max(0, limit)),
+              );
+            },
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const collectThreadEvents = (
+        threadId: ThreadId,
+        afterSequence: number,
+        take: number,
+        delayMillis = 0,
+        requestCompletionMarker = false,
+      ) =>
+        Effect.scoped(
+          withWsRpcClient(wsUrl, (client) => {
+            const stream = client[ORCHESTRATION_WS_METHODS.subscribeThread]({
+              threadId,
+              afterSequence,
+              requestCompletionMarker,
+            });
+            const delivered =
+              delayMillis > 0
+                ? stream.pipe(
+                    Stream.mapEffect((item) =>
+                      Effect.sleep(Duration.millis(delayMillis)).pipe(Effect.as(item)),
+                    ),
+                  )
+                : stream;
+            return delivered.pipe(
+              Stream.take(take),
+              Stream.runCollect,
+              Effect.map(
+                (items): ReadonlyArray<OrchestrationThreadStreamItem> => Array.from(items),
+              ),
+            );
+          }),
+        ).pipe(Effect.timeout("5 seconds"));
+
+      const firstHalves = yield* Effect.forEach(
+        threadIds,
+        (threadId) => collectThreadEvents(threadId, 0, 100),
+        { concurrency: threadIds.length },
+      );
+      const cursors = firstHalves.map((items) => {
+        const last = items.at(-1);
+        assert.equal(last?.kind, "event");
+        return last?.kind === "event" ? last.event.sequence : 0;
+      });
+      const reconnectDurations: number[] = [];
+      const secondHalves = yield* Effect.forEach(
+        threadIds,
+        (threadId, index) =>
+          Effect.gen(function* () {
+            const startedAt = yield* Clock.currentTimeMillis;
+            const items = yield* collectThreadEvents(
+              threadId,
+              cursors[index]!,
+              101,
+              index === 0 ? 2 : 0,
+              true,
+            );
+            reconnectDurations[index] = (yield* Clock.currentTimeMillis) - startedAt;
+            return items;
+          }),
+        { concurrency: threadIds.length },
+      );
+
+      for (let index = 0; index < threadIds.length; index += 1) {
+        const combined = [...firstHalves[index]!, ...secondHalves[index]!];
+        const replayed = combined.flatMap((item) => (item.kind === "event" ? [item.event] : []));
+        const sequences = replayed.map((event) => event.sequence);
+        const expectedSequences = events
+          .filter((event) => event.aggregateId === threadIds[index])
+          .map((event) => event.sequence);
+
+        assert.equal(secondHalves[index]?.at(-1)?.kind, "synchronized");
+        assert.deepEqual(sequences, expectedSequences);
+        assert.equal(new Set(sequences).size, 200);
+        assertTrue(replayed.every((event) => event.aggregateId === threadIds[index]));
+      }
+
+      const slowReconnectDuration = reconnectDurations[0] ?? 0;
+      const fastestPeerDuration = Math.min(...reconnectDurations.slice(1));
+      assert.isAbove(slowReconnectDuration, fastestPeerDuration);
+      assertTrue(replayLimits.every((limit) => limit <= 1_000));
+      assert.equal(replayLimits.length, 10);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
   );
 
   it.effect("subscribeShell coalesces a per-thread burst without stalling other threads", () =>
@@ -7425,6 +7643,223 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           assert.equal(finalCommand.bootstrap, undefined);
         }
       }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("bootstraps five independent worktree turns concurrently for five Google users", () =>
+    Effect.gen(function* () {
+      const userCount = 5;
+      const googleConfig: ServerConfig.GoogleOidcConfig = {
+        clientId: "campfire-five-client-id",
+        clientSecret: "campfire-five-client-secret",
+        redirectUri: new URL("https://campfire.example.ts.net/auth/google/callback"),
+        allowedEmails: Array.from({ length: userCount }, (_, index) => `user-${index}@example.com`),
+      };
+      const allWorktreesStarted = yield* Deferred.make<void>();
+      let activeWorktreeCreates = 0;
+      let maxConcurrentWorktreeCreates = 0;
+      let nextSequence = 0;
+      const dispatched: Array<{
+        readonly actor: OrchestrationEventActor | undefined;
+        readonly command: OrchestrationCommand;
+      }> = [];
+      const worktreePaths: string[] = [];
+
+      const createWorktree = vi.fn(
+        (input: Parameters<GitVcsDriver.GitVcsDriver["Service"]["createWorktree"]>[0]) => {
+          const refName = input.newRefName ?? input.refName;
+          const worktreePath = `/tmp/${refName.replaceAll("/", "-")}`;
+          return Effect.acquireUseRelease(
+            Effect.gen(function* () {
+              activeWorktreeCreates += 1;
+              maxConcurrentWorktreeCreates = Math.max(
+                maxConcurrentWorktreeCreates,
+                activeWorktreeCreates,
+              );
+              if (activeWorktreeCreates === userCount) {
+                yield* Deferred.succeed(allWorktreesStarted, undefined);
+              }
+            }),
+            () =>
+              Deferred.await(allWorktreesStarted).pipe(
+                Effect.andThen(
+                  Effect.sync(() => {
+                    worktreePaths.push(worktreePath);
+                    return {
+                      worktree: { refName, path: worktreePath },
+                    };
+                  }),
+                ),
+              ),
+            () =>
+              Effect.sync(() => {
+                activeWorktreeCreates -= 1;
+              }),
+          );
+        },
+      );
+
+      const config = yield* buildAppUnderTest({
+        config: { mode: "web", googleOidc: googleConfig },
+        layers: {
+          gitVcsDriver: { createWorktree },
+          vcsStatusBroadcaster: {
+            refreshStatus: (cwd) =>
+              Effect.succeed({
+                isRepo: true,
+                hasPrimaryRemote: true,
+                isDefaultRef: false,
+                refName: cwd.replace("/tmp/", "").replace("campfire-", "campfire/"),
+                hasWorkingTreeChanges: false,
+                workingTree: { files: [], insertions: 0, deletions: 0 },
+                hasUpstream: false,
+                aheadCount: 0,
+                behindCount: 0,
+                pr: null,
+              }),
+          },
+          orchestrationEngine: {
+            dispatch: (command, actor) =>
+              Effect.sync(() => {
+                nextSequence += 1;
+                dispatched.push({ command, actor });
+                return { sequence: nextSequence };
+              }),
+            readEvents: () => Stream.empty,
+          },
+        },
+      });
+      const flow = yield* GoogleOidc.makeGoogleOidcFlow(googleConfig, {
+        exchangeAndVerify: ({ code }) => {
+          const index = Number(code.replace("authorization-code-user-", ""));
+          return Effect.succeed({
+            subject: `google:user-${index}-stable-subject`,
+            googleSubject: `user-${index}-stable-subject`,
+            email: `user-${index}@example.com`,
+            displayName: `User ${index}`,
+          });
+        },
+      });
+      GoogleOidc.setGoogleOidcFlowForTesting(config.googleOidc!, flow);
+
+      const login = (index: number) =>
+        Effect.gen(function* () {
+          const loginUrl = yield* getHttpServerUrl("/auth/google/login?returnTo=%2F");
+          const loginResponse = yield* fetchEffect(loginUrl, { redirect: "manual" });
+          const state = new URL(loginResponse.headers.location!).searchParams.get("state");
+          const transactionCookie = loginResponse.headers["set-cookie"]?.match(
+            /campfire_google_oidc=[^;]+/,
+          )?.[0];
+          assert.isNotNull(state);
+          assert.isDefined(transactionCookie);
+
+          const callbackUrl = yield* getHttpServerUrl(
+            `/auth/google/callback?code=authorization-code-user-${index}&state=${encodeURIComponent(state!)}`,
+          );
+          const callbackResponse = yield* fetchEffect(callbackUrl, {
+            redirect: "manual",
+            headers: { cookie: transactionCookie! },
+          });
+          const token = Cookies.toRecord(callbackResponse.cookies).t3_session;
+          assert.equal(callbackResponse.status, 302);
+          assert.isDefined(token);
+          return `t3_session=${token}`;
+        });
+
+      const sessionCookies = yield* Effect.forEach(
+        Array.from({ length: userCount }, (_, index) => index),
+        login,
+        { concurrency: userCount },
+      );
+      const server = yield* HttpServer.HttpServer;
+      const address = server.address as HttpServer.TcpAddress;
+      const ackLatencies: number[] = [];
+      const createdAt = "2026-01-01T00:00:00.000Z";
+
+      yield* Effect.forEach(
+        sessionCookies,
+        (sessionCookie, index) => {
+          const threadId = ThreadId.make(`thread-five-user-${index}`);
+          const branch = `campfire/user-${index}`;
+          const wsUrl = appendSessionCookieToWsUrl(
+            `ws://127.0.0.1:${address.port}/ws`,
+            sessionCookie,
+          );
+          return Effect.scoped(
+            withWsRpcClient(wsUrl, (client) =>
+              Effect.gen(function* () {
+                const startedAt = yield* Clock.currentTimeMillis;
+                yield* client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+                  type: "thread.turn.start",
+                  commandId: CommandId.make(`cmd-five-user-${index}`),
+                  threadId,
+                  message: {
+                    messageId: MessageId.make(`message-five-user-${index}`),
+                    role: "user",
+                    text: `hello from user ${index}`,
+                    attachments: [],
+                  },
+                  modelSelection: defaultModelSelection,
+                  runtimeMode: "full-access",
+                  interactionMode: "default",
+                  bootstrap: {
+                    createThread: {
+                      projectId: defaultProjectId,
+                      title: `User ${index} task`,
+                      modelSelection: defaultModelSelection,
+                      runtimeMode: "full-access",
+                      interactionMode: "default",
+                      branch: "main",
+                      worktreePath: null,
+                      createdAt,
+                    },
+                    prepareWorktree: {
+                      projectCwd: "/tmp/project",
+                      baseBranch: "main",
+                      branch,
+                    },
+                    runSetupScript: false,
+                  },
+                  createdAt,
+                });
+                const finishedAt = yield* Clock.currentTimeMillis;
+                ackLatencies.push(finishedAt - startedAt);
+              }),
+            ),
+          ).pipe(Effect.timeout("3 seconds"));
+        },
+        { concurrency: userCount },
+      );
+
+      const sortedLatencies = ackLatencies.toSorted((left, right) => left - right);
+      const p95 = sortedLatencies[Math.ceil(sortedLatencies.length * 0.95) - 1] ?? Infinity;
+      const finalTurns = dispatched.filter((entry) => entry.command.type === "thread.turn.start");
+      const actorSubjects = new Set(finalTurns.map((entry) => entry.actor?.subject));
+      const actorSessions = new Set(finalTurns.map((entry) => entry.actor?.sessionId));
+
+      assert.equal(maxConcurrentWorktreeCreates, userCount);
+      assert.equal(new Set(worktreePaths).size, userCount);
+      assert.equal(finalTurns.length, userCount);
+      assert.equal(actorSubjects.size, userCount);
+      assert.equal(actorSessions.size, userCount);
+      assert.isAtMost(p95, 500);
+      for (let index = 0; index < userCount; index += 1) {
+        const finalTurn = finalTurns.find(
+          (entry) =>
+            entry.command.type === "thread.turn.start" &&
+            entry.command.threadId === ThreadId.make(`thread-five-user-${index}`),
+        );
+        assert.equal(finalTurn?.actor?.subject, `google:user-${index}-stable-subject`);
+        const meta = dispatched.find(
+          (entry) =>
+            entry.command.type === "thread.meta.update" &&
+            entry.command.threadId === ThreadId.make(`thread-five-user-${index}`),
+        );
+        assert.equal(
+          meta?.command.type === "thread.meta.update" ? meta.command.worktreePath : null,
+          `/tmp/campfire-user-${index}`,
+        );
+      }
+    }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
   );
 
   it.effect("records setup-script failures without aborting bootstrap turn start", () =>

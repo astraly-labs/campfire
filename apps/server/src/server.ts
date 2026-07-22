@@ -15,6 +15,8 @@ import {
   staticAndDevRouteLayer,
   browserApiCorsLayer,
   httpCompressionLayer,
+  livenessRouteLayer,
+  readinessRouteLayer,
 } from "./http.ts";
 import { fixPath } from "./os-jank.ts";
 import { websocketRpcRouteLayer } from "./ws.ts";
@@ -410,6 +412,8 @@ export const makeRoutesLayer = Layer.mergeAll(
       Layer.provide(environmentAuthenticatedAuthLayer),
     ),
     otlpTracesProxyRouteLayer,
+    livenessRouteLayer,
+    readinessRouteLayer,
     assetRouteLayer,
     staticAndDevRouteLayer,
     googleOidcRoutesLayer,

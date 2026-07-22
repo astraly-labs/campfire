@@ -4,6 +4,7 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -105,6 +106,12 @@ import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as PresenceService from "./presence/Presence.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
+import {
+  orchestrationResumeAttemptsTotal,
+  orchestrationResumeReplayEventsTotal,
+  websocketConnectionsActive,
+  websocketConnectionsTotal,
+} from "./observability/Metrics.ts";
 import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as AzureDevOpsCli from "./sourceControl/AzureDevOpsCli.ts";
@@ -1186,6 +1193,7 @@ const makeWsRpcLayer = (
               >({
                 capacity: SHELL_LIVE_BUFFER_CAPACITY,
                 label: "orchestration.shell",
+                metricLabel: "shell",
                 onOverflow: () =>
                   new OrchestrationGetSnapshotError({
                     message: "Shell subscription fell behind; resynchronization required",
@@ -1248,12 +1256,29 @@ const makeWsRpcLayer = (
                 // followed by the buffered live tail, exactly as the
                 // no-afterSequence path does.
                 if (replayGap < 0 || replayGap > SHELL_RESUME_MAX_GAP) {
+                  yield* Metric.update(
+                    Metric.withAttributes(orchestrationResumeAttemptsTotal, [
+                      ["stream", "shell"],
+                      ["outcome", "snapshot"],
+                      ["reason", replayGap < 0 ? "cursor_ahead" : "gap_too_large"],
+                    ]),
+                    1,
+                  );
                   const snapshot = yield* loadSnapshot;
                   return Stream.concat(
                     Stream.make({ kind: "snapshot" as const, snapshot }),
                     synchronizedThenLive,
                   );
                 }
+                yield* Metric.update(
+                  Metric.withAttributes(orchestrationResumeAttemptsTotal, [
+                    ["stream", "shell"],
+                    ["outcome", "replay"],
+                    ["reason", "bounded_gap"],
+                  ]),
+                  1,
+                );
+                yield* Metric.update(orchestrationResumeReplayEventsTotal, replayGap);
                 const catchUpStream = coalesceShellStream(
                   // Replay only through the head captured above. Newer events
                   // are already covered by the live subscription, so this bound
@@ -1325,6 +1350,7 @@ const makeWsRpcLayer = (
               >({
                 capacity: THREAD_LIVE_BUFFER_CAPACITY,
                 label: `orchestration.thread:${input.threadId}`,
+                metricLabel: "thread",
                 onOverflow: () =>
                   new OrchestrationGetSnapshotError({
                     message: `Thread ${input.threadId} subscription fell behind; resynchronization required`,
@@ -1387,12 +1413,29 @@ const makeWsRpcLayer = (
                 const headSequence = yield* orchestrationEngine.latestSequence;
                 const replayGap = headSequence - afterSequence;
                 if (replayGap < 0 || replayGap > THREAD_RESUME_MAX_GAP) {
+                  yield* Metric.update(
+                    Metric.withAttributes(orchestrationResumeAttemptsTotal, [
+                      ["stream", "thread"],
+                      ["outcome", "snapshot"],
+                      ["reason", replayGap < 0 ? "cursor_ahead" : "gap_too_large"],
+                    ]),
+                    1,
+                  );
                   const snapshot = yield* loadThreadSnapshot;
                   return Stream.concat(
                     Stream.make({ kind: "snapshot" as const, snapshot }),
                     synchronizedThenLive,
                   );
                 }
+                yield* Metric.update(
+                  Metric.withAttributes(orchestrationResumeAttemptsTotal, [
+                    ["stream", "thread"],
+                    ["outcome", "replay"],
+                    ["reason", "bounded_gap"],
+                  ]),
+                  1,
+                );
+                yield* Metric.update(orchestrationResumeReplayEventsTotal, replayGap);
                 const catchUpStream = orchestrationEngine
                   // Stop at the captured head. Events published after it are
                   // already in the live buffer attached above.
@@ -2169,11 +2212,20 @@ export const websocketRpcRouteLayer = Layer.unwrap(
           ),
         );
         return yield* Effect.acquireUseRelease(
-          sessions.markConnected(session.sessionId),
+          sessions
+            .markConnected(session.sessionId)
+            .pipe(
+              Effect.andThen(Metric.modify(websocketConnectionsActive, 1)),
+              Effect.andThen(Metric.update(websocketConnectionsTotal, 1)),
+            ),
           () => rpcWebSocketHttpEffect,
           () =>
             Effect.all(
-              [sessions.markDisconnected(session.sessionId), presence.drop(presenceConnectionId)],
+              [
+                sessions.markDisconnected(session.sessionId),
+                presence.drop(presenceConnectionId),
+                Metric.modify(websocketConnectionsActive, -1),
+              ],
               { discard: true },
             ),
         );
