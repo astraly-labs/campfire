@@ -39,6 +39,7 @@ import {
   formatHostForUrl,
   isWildcardHost,
   issueHeadlessServeAccessInfo,
+  resolveGoogleOidcStartupUrl,
 } from "./startupAccess.ts";
 
 export class ServerRuntimeStartupError extends Schema.TaggedErrorClass<ServerRuntimeStartupError>()(
@@ -258,7 +259,11 @@ const resolveStartupBrowserTarget = Effect.gen(function* () {
       ? `http://${formatHostForUrl(serverConfig.host)}:${serverConfig.port}`
       : localUrl;
   const baseTarget = serverConfig.devUrl?.toString() ?? bindUrl;
-  return yield* Effect.succeed(serverConfig.mode === "desktop" ? baseTarget : undefined).pipe(
+  const startupTarget =
+    serverConfig.mode === "desktop"
+      ? baseTarget
+      : resolveGoogleOidcStartupUrl(serverConfig.mode, serverConfig.googleOidc?.redirectUri);
+  return yield* Effect.succeed(startupTarget).pipe(
     Effect.flatMap((target) =>
       target ? Effect.succeed(target) : serverAuth.issueStartupPairingUrl(baseTarget),
     ),
