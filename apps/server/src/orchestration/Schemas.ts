@@ -29,6 +29,9 @@ import {
   ThreadSessionStopRequestedPayload as ContractsThreadSessionStopRequestedPayloadSchema,
   SideThreadCreatedPayload as ContractsSideThreadCreatedPayloadSchema,
   SideThreadMessagePostedPayload as ContractsSideThreadMessagePostedPayloadSchema,
+  SideThreadMessageReactedPayload as ContractsSideThreadMessageReactedPayloadSchema,
+  SideThreadMessageEditedPayload as ContractsSideThreadMessageEditedPayloadSchema,
+  SideThreadMarkedReadPayload as ContractsSideThreadMarkedReadPayloadSchema,
   SideThreadArchivedPayload as ContractsSideThreadArchivedPayloadSchema,
 } from "@t3tools/contracts";
 
@@ -69,4 +72,7 @@ export const ThreadCheckpointRevertRequestedPayload =
 export const ThreadSessionStopRequestedPayload = ContractsThreadSessionStopRequestedPayloadSchema;
 export const SideThreadCreatedPayload = ContractsSideThreadCreatedPayloadSchema;
 export const SideThreadMessagePostedPayload = ContractsSideThreadMessagePostedPayloadSchema;
+export const SideThreadMessageReactedPayload = ContractsSideThreadMessageReactedPayloadSchema;
+export const SideThreadMessageEditedPayload = ContractsSideThreadMessageEditedPayloadSchema;
+export const SideThreadMarkedReadPayload = ContractsSideThreadMarkedReadPayloadSchema;
 export const SideThreadArchivedPayload = ContractsSideThreadArchivedPayloadSchema;

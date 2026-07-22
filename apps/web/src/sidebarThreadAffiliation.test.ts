@@ -73,4 +73,20 @@ describe("partitionSidebarProjectsByGoogleOwner", () => {
     expect(result.mine[0]?.threads.map((entry) => entry.id)).toEqual(["mine"]);
     expect(result.others[0]?.threads.map((entry) => entry.id)).toEqual(["theirs"]);
   });
+
+  it("lets a user pin a teammate thread locally without changing Google ownership", () => {
+    const teammateThread = thread("theirs", "google:bob");
+    const result = partitionSidebarProjectsByGoogleOwner({
+      snapshots: [snapshot],
+      threadsByProjectKey: new Map([[snapshot.projectKey, [teammateThread]]]),
+      currentGoogleSubject: "google:alice",
+      primaryEnvironmentId: environmentId,
+      overrideByThreadKey: {
+        [`${environmentId}:${teammateThread.id}`]: "mine",
+      },
+    });
+
+    expect(result.mine[0]?.threads.map((entry) => entry.id)).toEqual(["theirs"]);
+    expect(result.others).toEqual([]);
+  });
 });
