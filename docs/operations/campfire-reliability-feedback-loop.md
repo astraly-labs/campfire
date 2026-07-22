@@ -600,3 +600,65 @@ Next:
 
 - Exercise the exact Google staging origin through Tailscale Serve port 10000 and retain the audit
   result with the promoted release record.
+
+### H16: An executable release gate prevents unsafe manual promotion
+
+Status: confirmed
+
+The remaining non-Google deployment risk is operational: the runbook describes safe staging and
+rollback, but the operator can still source an insecure environment file, run an unsupported Node
+version, point staging at production data, or move the release symlink without a durable gate
+record. A fail-closed preflight and atomic release switch should make those mistakes mechanically
+detectable before the real Google/five-user gate.
+
+Expected signal:
+
+- Environment validation rejects insecure permissions, missing builds, unsupported Node versions,
+  malformed Google callbacks, invalid allowlists, unsafe ports, and staging/production data reuse.
+- Staging evidence is emitted as an append-only machine-readable record containing the commit,
+  upstream relation, health/readiness, deterministic soak result, and explicit human-gate status.
+- Promotion and rollback change only an explicit `current` symlink, preserve the previous target,
+  and refuse unbuilt or ambiguous release paths.
+
+Validation:
+
+- Command/query: focused POSIX-shell fixtures, `sh -n`, `plutil -lint`, one short deterministic soak
+  cycle, and temporary release/config/database directories.
+- Dataset/window: secure/insecure env files, fake Node 24/25 executables, distinct/colliding data
+  directories, two built release fixtures, and one backup/restore fixture.
+- Control/baseline: H14 runbook plus launch/backup scripts with manual preflight, promotion, and
+  evidence capture.
+
+Result:
+
+- Added a fail-closed environment preflight that checks mode/owner before sourcing, requires a built
+  release and Node 24.13.1+, validates one-to-five unique Google identities and the exact Tailnet
+  callback/Serve-port pair, rejects overlapping code/data paths, and prevents staging from reusing
+  production data or ports.
+- Added guarded atomic promotion/rollback. Temporary symlinks are renamed in the same directory,
+  only built absolute releases are accepted, a non-symlink `current` is refused, and the displaced
+  target is retained as `current.previous`.
+- Hardened online backup against source/destination overlap and made SQLite integrity a hard gate.
+  Added restore-to-new-directory with archive path validation, temporary extraction, and SQLite
+  verification before the restored directory becomes visible.
+- Extended the deterministic soak summary with commit, Node version, upstream relation, human-gate
+  status, and promotion eligibility. An optional JSONL target is mode `0600`; the machine gate
+  always records `humanGateStatus: "pending"` and `eligibleForPromotion: false`.
+- Temporary fixtures passed secure/insecure env validation, Node 24/25 discrimination, callback and
+  data-isolation failures, two-release promote/rollback, live SQLite backup/restore, plist parsing,
+  POSIX syntax, and ShellCheck. A real one-cycle focused soak passed three five-client server cases
+  plus the zero-browser provider case under Node 24.18.0 and emitted a mode-0600 non-promotable
+  record for commit `3ff4616cf` at upstream relation `0/13`.
+- Installed Homebrew Node 24.18.0 at its keg-only path and enabled the pnpm 11.10.0 Corepack shim on
+  the Mac mini. The existing Tailscale handlers on 8443/8444 were not changed.
+
+Decision:
+
+- Use the executable preflight, evidence writer, release switch, and restore command as mandatory
+  operator gates. Machine tests may prove deterministic readiness but may never authorize promotion
+  without the separate real-Google/five-person record.
+
+Next:
+
+- Install the Google client/allowlist in the mode-0600 env file, run staging on ports 3774/10000,
+  complete the real 60-minute five-person gate, then promote and merge.

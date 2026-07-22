@@ -1,5 +1,6 @@
 #!/bin/sh
 set -eu
+unset CDPATH
 
 if [ "$#" -ne 1 ]; then
   echo "usage: $0 /absolute/path/to/server.env" >&2
@@ -7,10 +8,8 @@ if [ "$#" -ne 1 ]; then
 fi
 
 campfire_env_file=$1
-if [ ! -f "$campfire_env_file" ]; then
-  echo "Campfire environment file not found: $campfire_env_file" >&2
-  exit 66
-fi
+campfire_script_dir=$(cd -- "$(dirname -- "$0")" && pwd)
+"$campfire_script_dir/campfire-preflight.sh" "$campfire_env_file"
 
 set -a
 # shellcheck disable=SC1090

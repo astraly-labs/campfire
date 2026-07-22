@@ -28,6 +28,7 @@
     "test": "vp run -r test",
     "test:resource-monitor": "cargo test --locked --manifest-path native/resource-monitor/Cargo.toml",
     "test:desktop-smoke": "vp run --filter @t3tools/desktop smoke-test",
+    "test:campfire-ops": "sh ops/macos/campfire-ops.test.sh",
     "soak:campfire": "sh scripts/campfire-soak.sh",
     "audit:prod": "corepack pnpm audit --prod",
     "fmt": "vp fmt",
