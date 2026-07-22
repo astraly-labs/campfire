@@ -81,21 +81,25 @@ Expected signal:
 
 Validation:
 
-- Command/query: to be added as a focused server integration test and an opt-in soak command.
+- Command/query: focused server integration tests plus the opt-in `pnpm soak:campfire` command.
 - Dataset/window: five authenticated clients, independent threads, at least 1,000 catch-up events for the narrow test and 60 minutes for soak validation.
 - Control/baseline: one-client run using the same command mix.
 
 Result:
 
-- Pending.
+- Added a production-WebSocket-boundary fixture with five concurrent clients over a 1,000-event durable global catch-up. Each client disconnected after 100 thread events, resumed from its last applied cursor, received the remaining 100 plus a synchronization marker, and ended with the exact expected 200 strictly ordered sequences, no duplicates, and no cross-thread events.
+- One resumed client consumed every item with an artificial delay while the other four completed independently. Every event-store read remained capped at the captured head (`limit <= 1,000`); no live buffer or moving-tail scan was allowed to grow without bound.
+- Added a five-user Google OIDC fixture that establishes five distinct authenticated WebSockets and forces five first-send worktree creations to overlap. It proved five unique worktree paths, five server-derived Google subjects, five distinct revocable session IDs, and p95 local acknowledgement below the 500 ms acceptance threshold.
+- Added a zero-browser provider fixture that starts five independent Codex sessions from five worktree paths without creating any WebSocket or browser subscriber.
+- Added `pnpm soak:campfire [seconds]`, which repeats the five-client reconnect/worktree and zero-browser provider gates and emits a machine-readable JSON completion summary. A one-cycle validation passed all four selected gates.
 
 Decision:
 
-- Pending.
+- Keep five clients as a first-class release oracle. The deterministic harness is required in CI/release validation; the 60-minute real-Google/real-Codex run remains a staging promotion gate because it requires the Mac mini, Tailnet identities, and production OAuth credentials.
 
 Next:
 
-- Implement after H1 identifies the exact coverage gap.
+- Run the 60-minute command on the staged Mac mini and attach real network/resource measurements before replacing the existing deployment.
 
 ### H3: Server-derived identity prevents spoofed authorship
 
@@ -134,7 +138,7 @@ Next:
 
 ### H4: Google OIDC plus Tailscale reduces onboarding risk without coupling agent lifetime to login
 
-Status: confirmed
+Status: implemented; live staging pending
 
 Google OIDC can replace shared pairing credentials while preserving long-lived, revocable server sessions. Tailscale remains the network gate; OIDC authenticates the human at the application layer; neither browser token refresh nor browser disconnect owns Codex process lifetime.
 
@@ -416,7 +420,7 @@ Next:
 
 ### H12: SideThreads can reuse the durable orchestration aggregate without a second runtime
 
-Status: running
+Status: confirmed
 
 A side conversation anchored to an agent message can be modeled as commands and events on its parent orchestration thread. Reusing the existing bounded command mailbox, SQLite event log, projection pipeline, detail snapshots, and fail-and-resume stream should make collaboration durable without restoring v0's independent unbounded queues, full-log bootstrap, or client-authored identity.
 
@@ -450,3 +454,97 @@ Decision:
 Next:
 
 - Exercise the complete system with five authenticated concurrent clients, independent worktree threads, slow/reconnecting consumers, and zero-browser agent continuation under measurable latency/resource thresholds.
+
+### H13: Production signals make regressions diagnosable before users report frozen threads
+
+Status: confirmed
+
+The bounded architecture is operationally useful only if the Mac mini reports command pressure,
+client catch-up decisions, slow-consumer failures, scheduler stalls, and the complete provider
+process tree.
+
+Expected signal:
+
+- Operators can distinguish a slow network client, an overloaded command worker, a stalled event
+  loop, a provider process leak, and a failed resume from metrics/traces without reproducing the UI.
+- Connection/resource gauges return to baseline after the corresponding work ends.
+
+Validation:
+
+- Command/query: deterministic metric updates, live WebSocket acquire/release, bounded replay, and
+  subscription overflow fixtures.
+- Dataset/window: server plus Codex descendant samples, 25 ms synthetic scheduler lag, one bounded
+  overflow, one incremental resume, and one complete WebSocket lifecycle.
+- Control/baseline: the pre-Campfire metrics set, which had command/provider timers but no
+  WebSocket, resume, event-loop, or process-tree signals.
+
+Result:
+
+- Added authenticated active/total WebSocket metrics with scope-safe decrement on disconnect.
+- Added labeled resume decisions (`replay` vs `snapshot`, bounded gap vs cursor ahead/too large),
+  replay span counts, and bounded subscription overflow counters without thread-ID metric
+  cardinality.
+- Extended the existing five-second process monitor with server RSS/heap and combined descendant
+  RSS/CPU/process-count gauges. Added a one-second event-loop drift sampler.
+- Focused fixtures observed the WebSocket gauge return to baseline, exactly one incremental resume
+  over ten durable events, exactly one thread-buffer overflow, RSS/heap/tree values from synthetic
+  server+Codex rows, and 25 ms event-loop lag.
+- Added `/healthz` for liveness and `/readyz` for command-startup plus projection-query readiness;
+  both are no-store and the latter returns 503 without leaking a cause.
+
+Decision:
+
+- Export these metrics through the existing optional OTLP path and retain traces locally. Alert
+  thresholds start conservative and must be tuned from the staged 60-minute run.
+
+Next:
+
+- Capture p50/p95/p99, maximum lag/queue/RSS, and reconnect outcomes on the actual Mac mini.
+
+### H14: Immutable staged releases plus online backups make Mac mini promotion recoverable
+
+Status: implemented; live staging pending
+
+An additive migration is not a safe deployment plan by itself. An immutable release layout,
+secondary Tailscale Serve port, exact Google callback, readiness gate, transactional backup, and
+fresh-directory rollback can prevent a failed candidate from corrupting the currently deployed
+service.
+
+Expected signal:
+
+- A candidate can run on an unoccupied secondary Serve port without moving production port 443 or
+  its data directory.
+- A live SQLite backup passes `PRAGMA integrity_check` and restores independently.
+- launchd restarts the pinned release without exposing the backend beyond loopback.
+
+Validation:
+
+- Command/query: shell syntax, plist validation, temporary SQLite backup/restore, and health-route
+  integration tests.
+- Dataset/window: one live WAL-capable database, runtime state, worktree directory, and immutable
+  release template.
+- Control/baseline: ad-hoc development server against the user's existing `~/.t3` database.
+
+Result:
+
+- Added a loopback-only launch wrapper with required secret/config validation and a launchd template
+  pinned to an immutable `current` release symlink.
+- Added a live backup script using SQLite's online backup operation, non-log runtime/worktree copy,
+  integrity manifest, and mode-0600 archive. A temporary archive restored `durable` from the copied
+  database and reported `database_integrity=ok`.
+- Added the complete Mac mini runbook: dedicated account/FileVault, Google web client and exact
+  callbacks, Tailscale Serve/no Funnel, isolated staging port, five-client promotion gate, health/alerts,
+  encrypted backups, application/database rollback, and the explicit trusted-superadmin threat
+  model.
+- Verified the plist with `plutil`, both shell scripts with `sh -n`, and the health/readiness routes
+  through the real HTTP router seam.
+
+Decision:
+
+- Never migrate or replace the existing deployment directly. Stage against a separate base
+  directory and Serve port, then promote only the immutable symlink after real Google/Codex soak.
+
+Next:
+
+- Supply production Google credentials/MagicDNS and run the documented staging gate; no code path
+  should bypass that external validation.
