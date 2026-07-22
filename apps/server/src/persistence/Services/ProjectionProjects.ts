@@ -7,6 +7,7 @@
  * @module ProjectionProjectRepository
  */
 import {
+  CollaborationUser,
   IsoDateTime,
   ModelSelection,
   ProjectId,
@@ -31,6 +32,7 @@ export const ProjectionProject = Schema.Struct({
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   deletedAt: Schema.NullOr(IsoDateTime),
+  createdBy: Schema.NullOr(CollaborationUser),
 });
 export type ProjectionProject = typeof ProjectionProject.Type;
 

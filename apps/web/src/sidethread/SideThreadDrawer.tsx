@@ -1,13 +1,13 @@
 import {
-  MessageId,
-  SideThreadId,
   SideThreadMessageId,
   type EnvironmentId,
+  type MessageId,
   type OrchestrationThread,
   type ThreadId,
 } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { ArchiveIcon, CornerUpLeftIcon, SendIcon } from "lucide-react";
+import { sideThreadIdForThread } from "@t3tools/shared/sideThread";
+import { MessageCircleIcon, SendIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { randomUUID } from "~/lib/utils";
@@ -24,32 +24,26 @@ import {
   SheetTitle,
 } from "../components/ui/sheet";
 
-export function sideThreadIdForMessage(messageId: MessageId): SideThreadId {
-  return SideThreadId.make(`message:${messageId}`);
-}
-
 export function SideThreadDrawer(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly thread: OrchestrationThread;
-  readonly anchorMessageId: MessageId | null;
+  readonly open: boolean;
+  readonly contextMessageId: MessageId | null;
   readonly onClose: () => void;
 }) {
-  const { environmentId, threadId, thread, anchorMessageId, onClose } = props;
-  const sideThreadId = anchorMessageId ? sideThreadIdForMessage(anchorMessageId) : null;
+  const { environmentId, threadId, thread, open, contextMessageId, onClose } = props;
+  const sideThreadId = sideThreadIdForThread(threadId);
   const sideThread = useMemo(
-    () =>
-      sideThreadId === null
-        ? null
-        : ((thread.sideThreads ?? []).find((entry) => entry.id === sideThreadId) ?? null),
+    () => (thread.sideThreads ?? []).find((entry) => entry.id === sideThreadId) ?? null,
     [sideThreadId, thread.sideThreads],
   );
-  const anchor = useMemo(
+  const contextMessage = useMemo(
     () =>
-      anchorMessageId === null
+      contextMessageId === null
         ? null
-        : (thread.messages.find((message) => message.id === anchorMessageId) ?? null),
-    [anchorMessageId, thread.messages],
+        : (thread.messages.find((message) => message.id === contextMessageId) ?? null),
+    [contextMessageId, thread.messages],
   );
   const create = useAtomCommand(threadEnvironment.createSideThread, {
     reportDefect: false,
@@ -59,17 +53,13 @@ export function SideThreadDrawer(props: {
     reportDefect: false,
     reportFailure: false,
   });
-  const archive = useAtomCommand(threadEnvironment.archiveSideThread, {
-    reportDefect: false,
-    reportFailure: false,
-  });
   const createPending = useRef<string | null>(null);
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
 
   useEffect(() => {
-    if (anchorMessageId === null || sideThreadId === null || sideThread !== null) {
+    if (!open || sideThread !== null) {
       if (sideThread !== null) setError(null);
       return;
     }
@@ -77,7 +67,11 @@ export function SideThreadDrawer(props: {
     createPending.current = sideThreadId;
     void create({
       environmentId,
-      input: { threadId, sideThreadId, anchorMessageId },
+      input: {
+        threadId,
+        sideThreadId,
+        ...(contextMessageId !== null ? { anchorMessageId: contextMessageId } : {}),
+      },
     }).then((result) => {
       createPending.current = null;
       if (result._tag === "Failure") {
@@ -85,11 +79,11 @@ export function SideThreadDrawer(props: {
         setError(cause instanceof Error ? cause.message : String(cause));
       }
     });
-  }, [anchorMessageId, create, environmentId, sideThread, sideThreadId, threadId]);
+  }, [contextMessageId, create, environmentId, open, sideThread, sideThreadId, threadId]);
 
   const send = async () => {
     const text = draft.trim();
-    if (!text || sideThreadId === null || sideThread === null || sending) return;
+    if (!text || sideThread === null || sending) return;
     setSending(true);
     setError(null);
     const result = await post({
@@ -110,27 +104,16 @@ export function SideThreadDrawer(props: {
     setError(cause instanceof Error ? cause.message : String(cause));
   };
 
-  const archiveCurrent = async () => {
-    if (sideThreadId === null || sideThread === null) return;
-    const result = await archive({ environmentId, input: { threadId, sideThreadId } });
-    if (result._tag === "Success") {
-      onClose();
-      return;
-    }
-    const cause = squashAtomCommandFailure(result);
-    setError(cause instanceof Error ? cause.message : String(cause));
-  };
-
   return (
-    <Sheet open={anchorMessageId !== null} onOpenChange={(open) => !open && onClose()}>
+    <Sheet open={open} onOpenChange={(nextOpen) => !nextOpen && onClose()}>
       <SheetPopup side="right" className="sm:max-w-[420px]">
         <SheetHeader className="border-b pb-4">
           <div className="flex items-center gap-2 pr-8">
-            <CornerUpLeftIcon className="size-4 text-muted-foreground" />
-            <SheetTitle className="text-base">Team discussion</SheetTitle>
+            <MessageCircleIcon className="size-4 text-muted-foreground" />
+            <SheetTitle className="text-base">Side thread</SheetTitle>
           </div>
           <SheetDescription className="line-clamp-3">
-            {anchor?.text || "Discussion attached to this message"}
+            {contextMessage?.text || "One shared team discussion for this agent thread"}
           </SheetDescription>
         </SheetHeader>
         <SheetPanel className="flex min-h-0 flex-1 flex-col gap-4 py-4">
@@ -181,16 +164,7 @@ export function SideThreadDrawer(props: {
                 className="w-full resize-none rounded-xl border bg-background p-3 text-sm outline-none focus:ring-2 focus:ring-ring"
               />
               <div className="flex items-center justify-between gap-2">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  disabled={sideThread === null}
-                  onClick={() => void archiveCurrent()}
-                >
-                  <ArchiveIcon className="size-3.5" />
-                  Archive
-                </Button>
+                <span className="text-[11px] text-muted-foreground">⌘/Ctrl + Enter to send</span>
                 <Button
                   type="button"
                   size="sm"

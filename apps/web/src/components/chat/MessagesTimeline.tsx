@@ -145,6 +145,9 @@ import {
   parseReviewCommentMessageSegments,
   type ReviewCommentContext,
 } from "../../reviewCommentContext";
+import type { GoogleTeamMember } from "../../collaboration/googleTeam";
+import { TakeALookButton } from "../../sidethread/TakeALookButton";
+import { CollaborationAvatar } from "../../collaboration/CollaborationAvatar";
 
 // ---------------------------------------------------------------------------
 // Context — shared state consumed by every row component via Context.
@@ -165,6 +168,8 @@ interface TimelineRowSharedState {
   onRevertUserMessage: (messageId: MessageId) => void;
   onUseArtifactTemplate: (template: CodexArtifactTemplate) => void;
   onOpenSideThread: (messageId: MessageId) => void;
+  googleTeam: ReadonlyArray<GoogleTeamMember>;
+  currentGoogleSubject: string | null;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onFileOpen: (attachment: ChatFileAttachment) => void;
   openingVideoAttachmentId: string | null;
@@ -248,6 +253,8 @@ interface MessagesTimelineProps {
   onRevertUserMessage: (messageId: MessageId) => void;
   onUseArtifactTemplate?: (template: CodexArtifactTemplate) => void;
   onOpenSideThread?: (messageId: MessageId) => void;
+  googleTeam?: ReadonlyArray<GoogleTeamMember>;
+  currentGoogleSubject?: string | null;
   isRevertingCheckpoint: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onFileOpen?: (attachment: ChatFileAttachment) => void;
@@ -297,6 +304,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onRevertUserMessage,
   onUseArtifactTemplate = NOOP_USE_ARTIFACT_TEMPLATE,
   onOpenSideThread = IGNORE_SIDE_THREAD_OPEN,
+  googleTeam = [],
+  currentGoogleSubject = null,
   isRevertingCheckpoint,
   onImageExpand,
   onFileOpen = NOOP_OPEN_ATTACHMENT,
@@ -563,6 +572,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onRevertUserMessage,
       onUseArtifactTemplate,
       onOpenSideThread,
+      googleTeam,
+      currentGoogleSubject,
       onImageExpand,
       onFileOpen,
       openingVideoAttachmentId,
@@ -583,6 +594,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onRevertUserMessage,
       onUseArtifactTemplate,
       onOpenSideThread,
+      googleTeam,
+      currentGoogleSubject,
       onImageExpand,
       onFileOpen,
       openingVideoAttachmentId,
@@ -1211,6 +1224,9 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           </div>
         </div>
       </div>
+      {row.message.author ? (
+        <CollaborationAvatar user={row.message.author} labelPrefix="Sent by" className="mt-1" />
+      ) : null}
     </div>
   );
 }
@@ -1308,6 +1324,16 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
         {row.showAssistantMeta ? (
           <div className="mt-1.5 flex items-center gap-2 text-xs tabular-nums opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover/assistant:opacity-100">
             <SideThreadButton messageId={row.message.id} />
+            {ctx.threadRef ? (
+              <TakeALookButton
+                environmentId={ctx.activeThreadEnvironmentId}
+                threadId={ctx.threadRef.threadId}
+                messageId={row.message.id}
+                team={ctx.googleTeam}
+                currentSubject={ctx.currentGoogleSubject}
+                onOpenSideThread={ctx.onOpenSideThread}
+              />
+            ) : null}
             <AssistantCopyButton row={row} />
             {!row.message.streaming && (
               <Tooltip>

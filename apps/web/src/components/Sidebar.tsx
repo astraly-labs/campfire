@@ -120,6 +120,7 @@ import {
 import { formatRelativeTimeLabel, parseTimestampDate } from "../timestampFormat";
 import type { SidebarThreadSummary } from "../types";
 import { cn } from "~/lib/utils";
+import { CollaborationAvatar } from "../collaboration/CollaborationAvatar";
 import { buildThreadActionMenuItems } from "./threadActionMenu.logic";
 import {
   animatePinnedLayoutChanges,
@@ -1275,6 +1276,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 fallbackIcon={MessageSquareIcon}
               />
             </span>
+            {thread.createdBy ? <CollaborationAvatar user={thread.createdBy} size="xs" /> : null}
             {title}
             {pinIndicator}
             {terminalStatusIcon}
@@ -1548,6 +1550,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               </span>
             </div>
             <div className="mt-1 flex min-w-0">
+              {thread.createdBy ? (
+                <CollaborationAvatar user={thread.createdBy} size="xs" className="mr-1.5" />
+              ) : null}
               {title}
               {isRegeneratingTitle ? (
                 <span role="status" className="sr-only">

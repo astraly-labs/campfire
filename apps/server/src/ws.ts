@@ -483,18 +483,8 @@ const makeWsRpcLayer = (
       const analytics = yield* AnalyticsService.AnalyticsService;
       const authenticatedActor = {
         kind: "client",
-        subject: currentSession.subject.startsWith("google:")
-          ? currentSession.subject
-          : currentSession.tailscaleIdentity
-            ? `tailscale:${currentSession.tailscaleIdentity.login}`
-            : currentSession.subject,
-        displayName:
-          currentSession.displayName ??
-          currentSession.tailscaleIdentity?.displayName ??
-          currentSession.subject,
-        ...(currentSession.tailscaleIdentity
-          ? { networkLogin: currentSession.tailscaleIdentity.login }
-          : {}),
+        subject: currentSession.subject,
+        displayName: currentSession.displayName ?? currentSession.subject,
         sessionId: currentSession.sessionId,
       } satisfies OrchestrationEventActor;
       // Every command dispatched on this connection carries the connecting
@@ -590,9 +580,6 @@ const makeWsRpcLayer = (
       const presenceUser = {
         subject: authenticatedActor.subject,
         displayName: authenticatedActor.displayName ?? authenticatedActor.subject,
-        ...(authenticatedActor.networkLogin !== undefined
-          ? { networkLogin: authenticatedActor.networkLogin }
-          : {}),
       };
       const authorizationError = (requiredScope: AuthEnvironmentScope) =>
         new EnvironmentAuthorizationError({

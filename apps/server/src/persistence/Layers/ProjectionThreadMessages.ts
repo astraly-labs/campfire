@@ -5,7 +5,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Struct from "effect/Struct";
-import { ChatAttachment } from "@t3tools/contracts";
+import { ChatAttachment, CollaborationUser } from "@t3tools/contracts";
 
 import { toPersistenceSqlError } from "../Errors.ts";
 import {
@@ -22,6 +22,7 @@ const ProjectionThreadMessageDbRowSchema = ProjectionThreadMessage.mapFields(
   Struct.assign({
     isStreaming: Schema.Number,
     attachments: Schema.NullOr(Schema.fromJsonString(Schema.Array(ChatAttachment))),
+    author: Schema.NullOr(Schema.fromJsonString(CollaborationUser)),
   }),
 );
 
@@ -37,6 +38,7 @@ function toProjectionThreadMessage(
     isStreaming: row.isStreaming === 1,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
+    author: row.author,
     ...(row.attachments !== null ? { attachments: row.attachments } : {}),
   };
 }
@@ -59,7 +61,8 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
           attachments_json,
           is_streaming,
           created_at,
-          updated_at
+          updated_at,
+          author_json
         )
         VALUES (
           ${row.messageId},
@@ -77,7 +80,8 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
           ),
           ${row.isStreaming ? 1 : 0},
           ${row.createdAt},
-          ${row.updatedAt}
+          ${row.updatedAt},
+          ${row.author !== null ? JSON.stringify(row.author) : null}
         )
         ON CONFLICT (message_id)
         DO UPDATE SET
@@ -91,7 +95,8 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
           ),
           is_streaming = excluded.is_streaming,
           created_at = excluded.created_at,
-          updated_at = excluded.updated_at
+          updated_at = excluded.updated_at,
+          author_json = COALESCE(projection_thread_messages.author_json, excluded.author_json)
       `;
     },
   });
@@ -154,7 +159,8 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
           attachments_json AS "attachments",
           is_streaming AS "isStreaming",
           created_at AS "createdAt",
-          updated_at AS "updatedAt"
+          updated_at AS "updatedAt",
+          author_json AS "author"
         FROM projection_thread_messages
         WHERE message_id = ${messageId}
         LIMIT 1
@@ -175,7 +181,8 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
           attachments_json AS "attachments",
           is_streaming AS "isStreaming",
           created_at AS "createdAt",
-          updated_at AS "updatedAt"
+          updated_at AS "updatedAt",
+          author_json AS "author"
         FROM projection_thread_messages
         WHERE thread_id = ${threadId}
         ORDER BY created_at ASC, message_id ASC
