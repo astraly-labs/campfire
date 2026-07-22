@@ -1311,6 +1311,7 @@ function ChatViewContent(props: ChatViewProps) {
   const [sideThreadAnchorMessageId, setSideThreadAnchorMessageId] = useState<MessageId | null>(
     null,
   );
+  const [sideThreadDraftPrefill, setSideThreadDraftPrefill] = useState("");
   const routeThreadRef = useMemo(
     () => scopeThreadRef(environmentId, threadId),
     [environmentId, threadId],
@@ -1321,6 +1322,7 @@ function ChatViewContent(props: ChatViewProps) {
   useEffect(() => {
     setSideThreadOpen(false);
     setSideThreadAnchorMessageId(null);
+    setSideThreadDraftPrefill("");
   }, [routeThreadKey]);
   useEffect(() => {
     if (requestedSideThreadKey !== routeThreadKey) return;
@@ -1330,6 +1332,12 @@ function ChatViewContent(props: ChatViewProps) {
   }, [consumeSideThreadOpenRequest, requestedSideThreadKey, routeThreadKey]);
   const openSideThread = useCallback((messageId?: MessageId) => {
     setSideThreadAnchorMessageId(messageId ?? null);
+    setSideThreadDraftPrefill("");
+    setSideThreadOpen(true);
+  }, []);
+  const quoteSideThread = useCallback((messageId: MessageId, quote: string) => {
+    setSideThreadAnchorMessageId(messageId);
+    setSideThreadDraftPrefill(quote);
     setSideThreadOpen(true);
   }, []);
   const updateProject = useAtomCommand(projectEnvironment.update, { reportFailure: false });
@@ -7155,6 +7163,20 @@ function ChatViewContent(props: ChatViewProps) {
     setDragActive: setIsWorkspaceFileDragActive,
     addFiles: (files) => composerRef.current?.addDroppedFiles(files),
   });
+  const activeSideThread = activeThread.sideThreads?.find(
+    (sideThread) => sideThread.id === sideThreadIdForThread(activeThread.id),
+  );
+  const activeSideThreadLatestMessage = activeSideThread?.messages.at(-1) ?? null;
+  const activeSideThreadReadAt = activeSideThread?.readBy?.find(
+    (marker) => marker.user.subject === googleTeam.current?.subject,
+  )?.lastReadAt;
+  const sideThreadUnread =
+    !sideThreadOpen &&
+    googleTeam.current !== null &&
+    activeSideThreadLatestMessage !== null &&
+    activeSideThreadLatestMessage.author.subject !== googleTeam.current.subject &&
+    (activeSideThreadReadAt === undefined ||
+      activeSideThreadReadAt < activeSideThreadLatestMessage.createdAt);
 
   return (
     <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background">
@@ -7195,11 +7217,8 @@ function ChatViewContent(props: ChatViewProps) {
             availableEditors={availableEditors}
             rightPanelOpen={rightPanelOpen}
             sideThreadOpen={sideThreadOpen}
-            sideThreadMessageCount={
-              activeThread.sideThreads?.find(
-                (sideThread) => sideThread.id === sideThreadIdForThread(activeThread.id),
-              )?.messages.length ?? 0
-            }
+            sideThreadMessageCount={activeSideThread?.messages.length ?? 0}
+            sideThreadUnread={sideThreadUnread}
             onToggleSideThread={() => {
               if (sideThreadOpen) {
                 setSideThreadOpen(false);
@@ -7278,6 +7297,7 @@ function ChatViewContent(props: ChatViewProps) {
                 onRevertUserMessage={onRevertUserMessage}
                 onUseArtifactTemplate={useArtifactTemplate}
                 onOpenSideThread={openSideThread}
+                onQuoteSideThread={quoteSideThread}
                 googleTeam={googleTeam.members}
                 currentGoogleSubject={googleTeam.current?.subject ?? null}
                 isRevertingCheckpoint={isRevertingCheckpoint}
@@ -7678,9 +7698,11 @@ function ChatViewContent(props: ChatViewProps) {
           currentSubject={googleTeam.current?.subject ?? null}
           open={sideThreadOpen}
           contextMessageId={sideThreadAnchorMessageId}
+          draftPrefill={sideThreadDraftPrefill}
           onClose={() => {
             setSideThreadOpen(false);
             setSideThreadAnchorMessageId(null);
+            setSideThreadDraftPrefill("");
           }}
         />
       ) : null}

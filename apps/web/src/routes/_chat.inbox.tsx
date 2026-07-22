@@ -1,6 +1,6 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { AtSignIcon, CheckCheckIcon, InboxIcon, MessageCircleIcon } from "lucide-react";
+import { AtSignIcon, BellIcon, CheckCheckIcon, InboxIcon, MessageCircleIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { CollaborationAvatar } from "../collaboration/CollaborationAvatar";
@@ -16,6 +16,10 @@ import { threadEnvironment } from "../state/threads";
 import { useAtomCommand } from "../state/use-atom-command";
 import { buildThreadRouteParams } from "../threadRoutes";
 import { formatRelativeTimeLabel } from "../timestampFormat";
+import {
+  requestTeamNotificationPermission,
+  teamNotificationPermission,
+} from "../notifications/teamInboxNotifications";
 
 function TeamInboxRouteView() {
   const navigate = useNavigate();
@@ -28,6 +32,9 @@ function TeamInboxRouteView() {
     reportFailure: false,
   });
   const [markingAll, setMarkingAll] = useState(false);
+  const [notificationPermission, setNotificationPermission] = useState(() =>
+    teamNotificationPermission(),
+  );
   const items = useMemo(
     () =>
       deriveTeamInboxItems({
@@ -74,10 +81,23 @@ function TeamInboxRouteView() {
           <InboxIcon className="size-4 text-muted-foreground" />
           <span className="text-sm font-medium">Inbox</span>
           <span className="text-xs text-muted-foreground">{unreadItems.length} unread</span>
+          {notificationPermission === "default" ? (
+            <Button
+              size="xs"
+              variant="ghost"
+              className="ml-auto"
+              onClick={() =>
+                void requestTeamNotificationPermission().then(setNotificationPermission)
+              }
+            >
+              <BellIcon className="size-3.5" />
+              Enable notifications
+            </Button>
+          ) : null}
           <Button
             size="xs"
             variant="ghost"
-            className="ml-auto"
+            className={notificationPermission === "default" ? undefined : "ml-auto"}
             disabled={unreadItems.length === 0 || markingAll}
             onClick={() => void markAllRead()}
           >

@@ -148,6 +148,7 @@ import {
 import type { GoogleTeamMember } from "../../collaboration/googleTeam";
 import { TakeALookButton } from "../../sidethread/TakeALookButton";
 import { CollaborationAvatar } from "../../collaboration/CollaborationAvatar";
+import { QuoteOnSelection } from "../../sidethread/QuoteOnSelection";
 
 // ---------------------------------------------------------------------------
 // Context — shared state consumed by every row component via Context.
@@ -168,6 +169,7 @@ interface TimelineRowSharedState {
   onRevertUserMessage: (messageId: MessageId) => void;
   onUseArtifactTemplate: (template: CodexArtifactTemplate) => void;
   onOpenSideThread: (messageId: MessageId) => void;
+  onQuoteSideThread: (messageId: MessageId, quote: string) => void;
   googleTeam: ReadonlyArray<GoogleTeamMember>;
   currentGoogleSubject: string | null;
   onImageExpand: (preview: ExpandedImagePreview) => void;
@@ -231,6 +233,7 @@ const TIMELINE_MAINTAIN_SCROLL_AT_END = {
   },
 } as const;
 const IGNORE_SIDE_THREAD_OPEN = (_messageId: MessageId) => {};
+const IGNORE_SIDE_THREAD_QUOTE = (_messageId: MessageId, _quote: string) => {};
 
 // ---------------------------------------------------------------------------
 // Props (public API)
@@ -253,6 +256,7 @@ interface MessagesTimelineProps {
   onRevertUserMessage: (messageId: MessageId) => void;
   onUseArtifactTemplate?: (template: CodexArtifactTemplate) => void;
   onOpenSideThread?: (messageId: MessageId) => void;
+  onQuoteSideThread?: (messageId: MessageId, quote: string) => void;
   googleTeam?: ReadonlyArray<GoogleTeamMember>;
   currentGoogleSubject?: string | null;
   isRevertingCheckpoint: boolean;
@@ -304,6 +308,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onRevertUserMessage,
   onUseArtifactTemplate = NOOP_USE_ARTIFACT_TEMPLATE,
   onOpenSideThread = IGNORE_SIDE_THREAD_OPEN,
+  onQuoteSideThread = IGNORE_SIDE_THREAD_QUOTE,
   googleTeam = [],
   currentGoogleSubject = null,
   isRevertingCheckpoint,
@@ -572,6 +577,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onRevertUserMessage,
       onUseArtifactTemplate,
       onOpenSideThread,
+      onQuoteSideThread,
       googleTeam,
       currentGoogleSubject,
       onImageExpand,
@@ -594,6 +600,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onRevertUserMessage,
       onUseArtifactTemplate,
       onOpenSideThread,
+      onQuoteSideThread,
       googleTeam,
       currentGoogleSubject,
       onImageExpand,
@@ -1305,16 +1312,18 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
   return (
     <>
       <div className="relative min-w-0 px-1 py-0.5">
-        <ChatMarkdown
-          text={messageText}
-          cwd={ctx.markdownCwd}
-          threadRef={ctx.threadRef ?? undefined}
-          isStreaming={Boolean(row.message.streaming)}
-          lineBreaks={shouldPreserveAssistantLineBreaks(messageText)}
-          skills={ctx.skills}
-          onUseArtifactTemplate={ctx.onUseArtifactTemplate}
-          onImageExpand={ctx.onImageExpand}
-        />
+        <QuoteOnSelection onQuote={(quote) => ctx.onQuoteSideThread(row.message.id, quote)}>
+          <ChatMarkdown
+            text={messageText}
+            cwd={ctx.markdownCwd}
+            threadRef={ctx.threadRef ?? undefined}
+            isStreaming={Boolean(row.message.streaming)}
+            lineBreaks={shouldPreserveAssistantLineBreaks(messageText)}
+            skills={ctx.skills}
+            onUseArtifactTemplate={ctx.onUseArtifactTemplate}
+            onImageExpand={ctx.onImageExpand}
+          />
+        </QuoteOnSelection>
         <AssistantChangedFilesSection
           turnSummary={row.assistantTurnDiffSummary}
           routeThreadKey={ctx.routeThreadKey}
