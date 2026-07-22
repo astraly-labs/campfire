@@ -720,3 +720,51 @@ Next:
 
 - Fill the three Google fields in the staging env, pass preflight, and start this artifact only on
   backend 3774 / Serve 10000 for the real acceptance gate.
+
+### H18: A new upstream rebase invalidates the previously packaged candidate
+
+Status: confirmed
+
+An immutable artifact remains internally correct after upstream advances, but it no longer proves
+that Campfire is based on the current T3 Code head. Fetching and rebasing immediately before the
+external gate must therefore invalidate and rebuild the inactive candidate, even when application
+checksums happen to remain unchanged.
+
+Expected signal:
+
+- After upstream advances, the branch returns to zero commits behind before staging.
+- The new artifact manifest names the rebased H17 commit and independently passes the Node 24 CLI,
+  read-only permission, checksum, and zero-escaping-symlink gates.
+- The inactive staging env points only at the rebased artifact; existing Serve handlers do not
+  change.
+
+Validation:
+
+- Command/query: fetch/rebase, `git rev-list --left-right --count`, standalone packaging, recursive
+  symlink closure, manifest/permission inspection, CLI version, and `tailscale serve status`.
+- Dataset/window: all 15 Campfire commits replayed onto the new upstream head, then the rebased H17
+  commit `efe577b7d`.
+- Control/baseline: the valid pre-rebase artifact for `7cd0b4029` was zero commits behind only before
+  the upstream update.
+
+Result:
+
+- The rebase replayed all 15 Campfire commits without conflict and restored relation `0/15`.
+- Packaged
+  `/Users/jeffbezos/services/campfire/releases/efe577b7d9799d90102f7717251255fa686e0b28`
+  under Node 24.18.0/pnpm 11.10.0. The 1.6 GB artifact is read-only, reports `t3 v0.0.28`, contains
+  545 internal and zero broken/external symlinks, and records commit/lockfile/server checksums.
+- The server binary and lockfile checksums matched the pre-rebase artifact, showing that upstream's
+  intervening change did not alter those runtime bytes; the artifact was still rebuilt because
+  ancestry itself is a release invariant.
+- The mode-0600 staging env now points at the rebased artifact. Ports 8443/8444 remain on the old
+  `127.0.0.1:13773` backend, and port 10000 remains unused.
+
+Decision:
+
+- Treat any rebase as candidate invalidation regardless of identical build hashes. Package only
+  after the final upstream sync used by the staging gate.
+
+Next:
+
+- Supply the three Google values, run preflight, then start the isolated H17 artifact on 3774/10000.
