@@ -27,11 +27,15 @@ export interface PersistedUiState {
   defaultAdvertisedEndpointKey?: string | null;
   threadChangedFilesExpansionVersion?: typeof THREAD_CHANGED_FILES_EXPANSION_VERSION;
   threadChangedFilesExpandedById?: Record<string, Record<string, boolean>>;
+  threadAffiliationOverrideByThreadKey?: Record<string, ThreadAffiliationOverride>;
 }
+
+export type ThreadAffiliationOverride = "mine" | "other";
 
 export interface UiProjectState {
   projectExpandedById: Record<string, boolean>;
   projectOrder: string[];
+  threadAffiliationOverrideByThreadKey: Record<string, ThreadAffiliationOverride>;
 }
 
 export interface UiThreadState {
@@ -48,6 +52,7 @@ export interface UiState extends UiProjectState, UiThreadState, UiEndpointState 
 const initialState: UiState = {
   projectExpandedById: {},
   projectOrder: [],
+  threadAffiliationOverrideByThreadKey: {},
   threadLastVisitedAtById: {},
   threadChangedFilesExpandedById: {},
   defaultAdvertisedEndpointKey: null,
@@ -98,6 +103,18 @@ function sanitizeTimestampRecord(value: unknown): Record<string, string> {
   );
 }
 
+function sanitizeThreadAffiliationOverrides(
+  value: PersistedUiState["threadAffiliationOverrideByThreadKey"],
+): Record<string, ThreadAffiliationOverride> {
+  if (!value || typeof value !== "object") return {};
+  return Object.fromEntries(
+    Object.entries(value).filter(
+      (entry): entry is [string, ThreadAffiliationOverride] =>
+        entry[0].length > 0 && (entry[1] === "mine" || entry[1] === "other"),
+    ),
+  );
+}
+
 export function parsePersistedState(parsed: PersistedUiState): UiState {
   const projectExpandedById =
     parsed.projectExpandedById === undefined
@@ -125,6 +142,9 @@ export function parsePersistedState(parsed: PersistedUiState): UiState {
   return {
     projectExpandedById,
     projectOrder,
+    threadAffiliationOverrideByThreadKey: sanitizeThreadAffiliationOverrides(
+      parsed.threadAffiliationOverrideByThreadKey,
+    ),
     threadLastVisitedAtById: sanitizeTimestampRecord(parsed.threadLastVisitedAtById),
     threadChangedFilesExpandedById:
       parsed.threadChangedFilesExpansionVersion === THREAD_CHANGED_FILES_EXPANSION_VERSION
@@ -203,6 +223,7 @@ export function persistState(state: UiState): void {
       JSON.stringify({
         projectExpandedById,
         projectOrder: state.projectOrder,
+        threadAffiliationOverrideByThreadKey: state.threadAffiliationOverrideByThreadKey,
         threadLastVisitedAtById: state.threadLastVisitedAtById,
         defaultAdvertisedEndpointKey: state.defaultAdvertisedEndpointKey,
         threadChangedFilesExpansionVersion: THREAD_CHANGED_FILES_EXPANSION_VERSION,
@@ -266,6 +287,26 @@ export function markThreadUnread(
     threadLastVisitedAtById: {
       ...state.threadLastVisitedAtById,
       [threadId]: unreadVisitedAt,
+    },
+  };
+}
+
+export function setThreadAffiliation(
+  state: UiState,
+  threadKey: string,
+  override: ThreadAffiliationOverride | null,
+): UiState {
+  if ((state.threadAffiliationOverrideByThreadKey[threadKey] ?? null) === override) return state;
+  if (override === null) {
+    const next = { ...state.threadAffiliationOverrideByThreadKey };
+    delete next[threadKey];
+    return { ...state, threadAffiliationOverrideByThreadKey: next };
+  }
+  return {
+    ...state,
+    threadAffiliationOverrideByThreadKey: {
+      ...state.threadAffiliationOverrideByThreadKey,
+      [threadKey]: override,
     },
   };
 }
@@ -386,6 +427,7 @@ interface UiStateStore extends UiState {
   markThreadUnread: (threadId: string, latestTurnCompletedAt: string | null | undefined) => void;
   setThreadChangedFilesExpanded: (threadId: string, turnId: string, expanded: boolean) => void;
   setDefaultAdvertisedEndpointKey: (key: string | null) => void;
+  setThreadAffiliation: (threadKey: string, override: ThreadAffiliationOverride | null) => void;
   setProjectExpanded: (projectIds: string | readonly string[], expanded: boolean) => void;
   reorderProjects: (
     currentProjectOrder: readonly string[],
@@ -404,6 +446,8 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
     set((state) => setThreadChangedFilesExpanded(state, threadId, turnId, expanded)),
   setDefaultAdvertisedEndpointKey: (key) =>
     set((state) => setDefaultAdvertisedEndpointKey(state, key)),
+  setThreadAffiliation: (threadKey, override) =>
+    set((state) => setThreadAffiliation(state, threadKey, override)),
   setProjectExpanded: (projectIds, expanded) =>
     set((state) => setProjectExpanded(state, projectIds, expanded)),
   reorderProjects: (currentProjectOrder, draggedProjectIds, targetProjectIds) =>

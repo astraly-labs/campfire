@@ -162,6 +162,7 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./u
 import { SidebarContent, SidebarGroup, SidebarMenuButton, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
+import { TeamInboxNav } from "./sidebar/TeamInboxNav";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import { useComposerDraftStore } from "../composerDraftStore";
 
@@ -1133,6 +1134,10 @@ export default function SidebarV2() {
   const toggleThreadSelection = useThreadSelectionStore((s) => s.toggleThread);
   const rangeSelectTo = useThreadSelectionStore((s) => s.rangeSelectTo);
   const markThreadUnread = useUiStateStore((s) => s.markThreadUnread);
+  const threadAffiliationOverrideByThreadKey = useUiStateStore(
+    (s) => s.threadAffiliationOverrideByThreadKey,
+  );
+  const setThreadAffiliation = useUiStateStore((s) => s.setThreadAffiliation);
   const routeTarget = useParams({
     strict: false,
     select: (params) => resolveThreadRouteTarget(params),
@@ -1605,6 +1610,12 @@ export default function SidebarV2() {
   const mineThreadKeys = useMemo(() => {
     const mine = new Set<string>();
     for (const thread of chronologicallyOrderedThreads) {
+      const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+      const override = threadAffiliationOverrideByThreadKey[threadKey];
+      if (override !== undefined) {
+        if (override === "mine") mine.add(threadKey);
+        continue;
+      }
       const project = projectByKey.get(`${thread.environmentId}:${thread.projectId}`);
       if (
         isGoogleOwnedByCurrentAccount({
@@ -1624,6 +1635,7 @@ export default function SidebarV2() {
     googleTeam.current?.subject,
     primaryEnvironmentId,
     projectByKey,
+    threadAffiliationOverrideByThreadKey,
   ]);
   const orderedThreads = useMemo(
     () => {
@@ -2139,6 +2151,10 @@ export default function SidebarV2() {
                     },
                   ]
                 : []),
+              {
+                id: "affiliation",
+                label: mineThreadKeys.has(threadKey) ? "Move to Projects" : "Pin to My Projects",
+              },
               ...(supportsSettlement
                 ? [
                     isSettled
@@ -2202,6 +2218,9 @@ export default function SidebarV2() {
             }
             return;
           }
+          case "affiliation":
+            setThreadAffiliation(threadKey, mineThreadKeys.has(threadKey) ? "other" : "mine");
+            return;
           case "settle":
             attemptSettle(threadRef);
             return;
@@ -2278,7 +2297,9 @@ export default function SidebarV2() {
       handleMultiSelectContextMenu,
       markThreadUnread,
       projectCwdByKey,
+      mineThreadKeys,
       serverConfigs,
+      setThreadAffiliation,
       startThreadRename,
     ],
   );
@@ -2534,6 +2555,7 @@ export default function SidebarV2() {
           </SidebarGroup>
         }
       >
+        <TeamInboxNav />
         <SidebarGroup className="px-2 pb-1 pt-0">
           <TooltipProvider
             key="sidebar-thread-tooltips-150"

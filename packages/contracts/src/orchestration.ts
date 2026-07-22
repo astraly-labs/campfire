@@ -142,13 +142,13 @@ export type ProviderUserInputAnswers = typeof ProviderUserInputAnswers.Type;
 export const PROVIDER_SEND_TURN_MAX_INPUT_CHARS = 120_000;
 export const PROVIDER_SEND_TURN_MAX_ATTACHMENTS = 8;
 export const PROVIDER_SEND_TURN_MAX_IMAGE_BYTES = 10 * 1024 * 1024;
-const PROVIDER_SEND_TURN_MAX_IMAGE_DATA_URL_CHARS = 14_000_000;
+export const PROVIDER_SEND_TURN_MAX_IMAGE_DATA_URL_CHARS = 14_000_000;
 const CHAT_ATTACHMENT_ID_MAX_CHARS = 128;
 // Correlation id is command id by design in this model.
 export const CorrelationId = CommandId;
 export type CorrelationId = typeof CorrelationId.Type;
 
-const ChatAttachmentId = TrimmedNonEmptyString.check(
+export const ChatAttachmentId = TrimmedNonEmptyString.check(
   Schema.isMaxLength(CHAT_ATTACHMENT_ID_MAX_CHARS),
   Schema.isPattern(/^[a-z0-9_-]+$/i),
 );
@@ -163,7 +163,7 @@ export const ChatImageAttachment = Schema.Struct({
 });
 export type ChatImageAttachment = typeof ChatImageAttachment.Type;
 
-const UploadChatImageAttachment = Schema.Struct({
+export const UploadChatImageAttachment = Schema.Struct({
   type: Schema.Literal("image"),
   name: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
   mimeType: TrimmedNonEmptyString.check(Schema.isMaxLength(100), Schema.isPattern(/^image\//i)),
@@ -254,13 +254,56 @@ export type SideThreadMessageId = typeof SideThreadMessageId.Type;
 export const SideThreadAuthor = CollaborationUser;
 export type SideThreadAuthor = typeof SideThreadAuthor.Type;
 
+export const SideThreadGifAttachment = Schema.Struct({
+  type: Schema.Literal("gif"),
+  url: TrimmedNonEmptyString,
+  previewUrl: TrimmedNonEmptyString,
+  width: NonNegativeInt,
+  height: NonNegativeInt,
+  providerId: Schema.optional(TrimmedNonEmptyString),
+});
+export type SideThreadGifAttachment = typeof SideThreadGifAttachment.Type;
+
+export const SideThreadAttachment = Schema.Union([ChatImageAttachment, SideThreadGifAttachment]);
+export type SideThreadAttachment = typeof SideThreadAttachment.Type;
+
+export const SideThreadPostAttachment = Schema.Union([
+  UploadChatImageAttachment,
+  SideThreadGifAttachment,
+]);
+export type SideThreadPostAttachment = typeof SideThreadPostAttachment.Type;
+
+export const SideThreadLinkedRef = Schema.Struct({
+  kind: Schema.Literal("agent-thread"),
+  threadId: ThreadId,
+});
+export type SideThreadLinkedRef = typeof SideThreadLinkedRef.Type;
+
+export const SideThreadMessageReaction = Schema.Struct({
+  emoji: TrimmedNonEmptyString.check(Schema.isMaxLength(32)),
+  users: Schema.Array(SideThreadAuthor),
+});
+export type SideThreadMessageReaction = typeof SideThreadMessageReaction.Type;
+
+export const SideThreadReadMarker = Schema.Struct({
+  user: SideThreadAuthor,
+  lastReadAt: IsoDateTime,
+});
+export type SideThreadReadMarker = typeof SideThreadReadMarker.Type;
+
 export const SideThreadMessage = Schema.Struct({
   id: SideThreadMessageId,
   author: SideThreadAuthor,
-  text: TrimmedNonEmptyString.check(Schema.isMaxLength(20_000)),
+  text: Schema.String.check(Schema.isMaxLength(20_000)),
   mentions: Schema.optional(Schema.Array(SideThreadAuthor)),
   quotedMessageId: Schema.optional(MessageId),
+  attachments: Schema.optional(Schema.Array(SideThreadAttachment)),
+  reactions: Schema.optional(Schema.Array(SideThreadMessageReaction)),
+  linkedRef: Schema.optional(SideThreadLinkedRef),
+  replyToSideThreadMessageId: Schema.optional(SideThreadMessageId),
   createdAt: IsoDateTime,
+  updatedAt: Schema.optional(IsoDateTime),
+  editedAt: Schema.optional(IsoDateTime),
 });
 export type SideThreadMessage = typeof SideThreadMessage.Type;
 
@@ -272,8 +315,35 @@ export const SideThread = Schema.Struct({
   updatedAt: IsoDateTime,
   archivedAt: Schema.NullOr(IsoDateTime),
   messages: Schema.Array(SideThreadMessage),
+  readBy: Schema.optional(Schema.Array(SideThreadReadMarker)),
 });
 export type SideThread = typeof SideThread.Type;
+
+export const SideThreadShellMessagePreview = Schema.Struct({
+  id: SideThreadMessageId,
+  author: SideThreadAuthor,
+  text: Schema.String.check(Schema.isMaxLength(500)),
+  mentions: Schema.Array(SideThreadAuthor),
+  hasAttachments: Schema.Boolean,
+  createdAt: IsoDateTime,
+  editedAt: Schema.optional(IsoDateTime),
+});
+export type SideThreadShellMessagePreview = typeof SideThreadShellMessagePreview.Type;
+
+/** Bounded collaboration metadata carried by thread-shell snapshots. */
+export const SideThreadShellSummary = Schema.Struct({
+  id: SideThreadId,
+  anchorMessageId: Schema.optional(MessageId),
+  createdBy: SideThreadAuthor,
+  updatedAt: IsoDateTime,
+  archivedAt: Schema.NullOr(IsoDateTime),
+  messageCount: NonNegativeInt,
+  latestMessage: Schema.NullOr(SideThreadShellMessagePreview),
+  latestMentions: Schema.Array(SideThreadShellMessagePreview),
+  participants: Schema.Array(SideThreadAuthor),
+  readBy: Schema.Array(SideThreadReadMarker),
+});
+export type SideThreadShellSummary = typeof SideThreadShellSummary.Type;
 
 export const OrchestrationProposedPlanId = TrimmedNonEmptyString;
 export type OrchestrationProposedPlanId = typeof OrchestrationProposedPlanId.Type;
@@ -466,6 +536,7 @@ export const OrchestrationThreadShell = Schema.Struct({
   hasPendingUserInput: Schema.Boolean,
   hasActionableProposedPlan: Schema.Boolean,
   createdBy: Schema.optionalKey(Schema.NullOr(CollaborationUser)),
+  teamDiscussion: Schema.optional(SideThreadShellSummary),
 });
 export type OrchestrationThreadShell = typeof OrchestrationThreadShell.Type;
 
@@ -797,15 +868,53 @@ const SideThreadCreateCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
-const SideThreadMessagePostCommand = Schema.Struct({
+const ClientSideThreadMessagePostCommand = Schema.Struct({
   type: Schema.Literal("sidethread.message.post"),
   commandId: CommandId,
   threadId: ThreadId,
   sideThreadId: SideThreadId,
   messageId: SideThreadMessageId,
-  text: TrimmedNonEmptyString.check(Schema.isMaxLength(20_000)),
+  text: Schema.String.check(Schema.isMaxLength(20_000)),
   mentions: Schema.optional(Schema.Array(SideThreadAuthor)),
   quotedMessageId: Schema.optional(MessageId),
+  attachments: Schema.optional(Schema.Array(SideThreadPostAttachment)),
+  linkedRef: Schema.optional(SideThreadLinkedRef),
+  replyToSideThreadMessageId: Schema.optional(SideThreadMessageId),
+  createdAt: IsoDateTime,
+});
+
+const SideThreadMessagePostCommand = ClientSideThreadMessagePostCommand.mapFields(
+  Struct.assign({
+    attachments: Schema.optional(Schema.Array(SideThreadAttachment)),
+  }),
+);
+
+const SideThreadMessageReactCommand = Schema.Struct({
+  type: Schema.Literal("sidethread.message.react"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  sideThreadId: SideThreadId,
+  messageId: SideThreadMessageId,
+  emoji: TrimmedNonEmptyString.check(Schema.isMaxLength(32)),
+  createdAt: IsoDateTime,
+});
+
+const SideThreadMessageEditCommand = Schema.Struct({
+  type: Schema.Literal("sidethread.message.edit"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  sideThreadId: SideThreadId,
+  messageId: SideThreadMessageId,
+  text: TrimmedNonEmptyString.check(Schema.isMaxLength(20_000)),
+  createdAt: IsoDateTime,
+});
+
+const SideThreadMarkReadCommand = Schema.Struct({
+  type: Schema.Literal("sidethread.mark-read"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  sideThreadId: SideThreadId,
+  lastReadAt: IsoDateTime,
   createdAt: IsoDateTime,
 });
 
@@ -840,6 +949,9 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadSessionStopCommand,
   SideThreadCreateCommand,
   SideThreadMessagePostCommand,
+  SideThreadMessageReactCommand,
+  SideThreadMessageEditCommand,
+  SideThreadMarkReadCommand,
   SideThreadArchiveCommand,
 ]);
 export type DispatchableClientOrchestrationCommand =
@@ -867,7 +979,10 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadCheckpointRevertCommand,
   ThreadSessionStopCommand,
   SideThreadCreateCommand,
-  SideThreadMessagePostCommand,
+  ClientSideThreadMessagePostCommand,
+  SideThreadMessageReactCommand,
+  SideThreadMessageEditCommand,
+  SideThreadMarkReadCommand,
   SideThreadArchiveCommand,
 ]);
 export type ClientOrchestrationCommand = typeof ClientOrchestrationCommand.Type;
@@ -983,6 +1098,9 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.activity-appended",
   "sidethread.created",
   "sidethread.message-posted",
+  "sidethread.message-reacted",
+  "sidethread.message-edited",
+  "sidethread.marked-read",
   "sidethread.archived",
 ]);
 export type OrchestrationEventType = typeof OrchestrationEventType.Type;
@@ -1210,9 +1328,39 @@ export const SideThreadMessagePostedPayload = Schema.Struct({
   sideThreadId: SideThreadId,
   messageId: SideThreadMessageId,
   author: SideThreadAuthor,
-  text: TrimmedNonEmptyString.check(Schema.isMaxLength(20_000)),
+  text: Schema.String.check(Schema.isMaxLength(20_000)),
   mentions: Schema.optional(Schema.Array(SideThreadAuthor)),
   quotedMessageId: Schema.optional(MessageId),
+  attachments: Schema.optional(Schema.Array(SideThreadAttachment)),
+  linkedRef: Schema.optional(SideThreadLinkedRef),
+  replyToSideThreadMessageId: Schema.optional(SideThreadMessageId),
+  createdAt: IsoDateTime,
+});
+
+export const SideThreadMessageReactedPayload = Schema.Struct({
+  threadId: ThreadId,
+  sideThreadId: SideThreadId,
+  messageId: SideThreadMessageId,
+  user: SideThreadAuthor,
+  emoji: TrimmedNonEmptyString.check(Schema.isMaxLength(32)),
+  action: Schema.Literals(["added", "removed"]),
+  createdAt: IsoDateTime,
+});
+
+export const SideThreadMessageEditedPayload = Schema.Struct({
+  threadId: ThreadId,
+  sideThreadId: SideThreadId,
+  messageId: SideThreadMessageId,
+  editor: SideThreadAuthor,
+  text: TrimmedNonEmptyString.check(Schema.isMaxLength(20_000)),
+  editedAt: IsoDateTime,
+});
+
+export const SideThreadMarkedReadPayload = Schema.Struct({
+  threadId: ThreadId,
+  sideThreadId: SideThreadId,
+  user: SideThreadAuthor,
+  lastReadAt: IsoDateTime,
   createdAt: IsoDateTime,
 });
 
@@ -1384,6 +1532,21 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("sidethread.message-posted"),
     payload: SideThreadMessagePostedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("sidethread.message-reacted"),
+    payload: SideThreadMessageReactedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("sidethread.message-edited"),
+    payload: SideThreadMessageEditedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("sidethread.marked-read"),
+    payload: SideThreadMarkedReadPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,

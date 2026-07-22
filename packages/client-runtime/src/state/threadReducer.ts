@@ -578,7 +578,19 @@ export function applyThreadDetailEvent(
                       ...(event.payload.quotedMessageId !== undefined
                         ? { quotedMessageId: event.payload.quotedMessageId }
                         : {}),
+                      ...(event.payload.attachments !== undefined
+                        ? { attachments: event.payload.attachments }
+                        : {}),
+                      ...(event.payload.linkedRef !== undefined
+                        ? { linkedRef: event.payload.linkedRef }
+                        : {}),
+                      ...(event.payload.replyToSideThreadMessageId !== undefined
+                        ? {
+                            replyToSideThreadMessageId: event.payload.replyToSideThreadMessageId,
+                          }
+                        : {}),
                       createdAt: event.payload.createdAt,
+                      updatedAt: event.payload.createdAt,
                     },
                   ],
                   updatedAt: event.payload.createdAt,
@@ -586,6 +598,94 @@ export function applyThreadDetailEvent(
               : sideThread,
           ),
           updatedAt: event.payload.createdAt,
+        },
+      };
+
+    case "sidethread.message-reacted":
+      return {
+        kind: "updated",
+        thread: {
+          ...thread,
+          sideThreads: (thread.sideThreads ?? []).map((sideThread) =>
+            sideThread.id !== event.payload.sideThreadId
+              ? sideThread
+              : {
+                  ...sideThread,
+                  messages: sideThread.messages.map((message) => {
+                    if (message.id !== event.payload.messageId) return message;
+                    const reactions = [...(message.reactions ?? [])];
+                    const index = reactions.findIndex(
+                      (reaction) => reaction.emoji === event.payload.emoji,
+                    );
+                    const currentUsers = index === -1 ? [] : reactions[index]!.users;
+                    const users =
+                      event.payload.action === "added"
+                        ? [
+                            ...currentUsers.filter(
+                              (user) => user.subject !== event.payload.user.subject,
+                            ),
+                            event.payload.user,
+                          ]
+                        : currentUsers.filter(
+                            (user) => user.subject !== event.payload.user.subject,
+                          );
+                    if (users.length === 0 && index !== -1) reactions.splice(index, 1);
+                    else if (index === -1) reactions.push({ emoji: event.payload.emoji, users });
+                    else reactions[index] = { emoji: event.payload.emoji, users };
+                    return { ...message, reactions };
+                  }),
+                  updatedAt: event.payload.createdAt,
+                },
+          ),
+          updatedAt: event.payload.createdAt,
+        },
+      };
+
+    case "sidethread.message-edited":
+      return {
+        kind: "updated",
+        thread: {
+          ...thread,
+          sideThreads: (thread.sideThreads ?? []).map((sideThread) =>
+            sideThread.id === event.payload.sideThreadId
+              ? {
+                  ...sideThread,
+                  messages: sideThread.messages.map((message) =>
+                    message.id === event.payload.messageId
+                      ? {
+                          ...message,
+                          text: event.payload.text,
+                          updatedAt: event.payload.editedAt,
+                          editedAt: event.payload.editedAt,
+                        }
+                      : message,
+                  ),
+                  updatedAt: event.payload.editedAt,
+                }
+              : sideThread,
+          ),
+          updatedAt: event.payload.editedAt,
+        },
+      };
+
+    case "sidethread.marked-read":
+      return {
+        kind: "updated",
+        thread: {
+          ...thread,
+          sideThreads: (thread.sideThreads ?? []).map((sideThread) =>
+            sideThread.id === event.payload.sideThreadId
+              ? {
+                  ...sideThread,
+                  readBy: [
+                    ...(sideThread.readBy ?? []).filter(
+                      (marker) => marker.user.subject !== event.payload.user.subject,
+                    ),
+                    { user: event.payload.user, lastReadAt: event.payload.lastReadAt },
+                  ],
+                }
+              : sideThread,
+          ),
         },
       };
 

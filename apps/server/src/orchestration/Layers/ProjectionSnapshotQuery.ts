@@ -23,10 +23,12 @@ import {
   type OrchestrationSession,
   type OrchestrationThreadActivity,
   type OrchestrationThreadShell,
+  type SideThreadShellSummary,
   ModelSelection,
   ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
+import { sideThreadIdForThread } from "@t3tools/shared/sideThread";
 import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -114,6 +116,57 @@ const ProjectionCountsRowSchema = Schema.Struct({
   projectCount: Schema.Number,
   threadCount: Schema.Number,
 });
+
+const mapSideThreadShellSummary = (
+  threadId: ThreadId,
+  sideThreads: ReadonlyArray<SideThread>,
+): SideThreadShellSummary | undefined => {
+  const sideThread =
+    sideThreads.find((candidate) => candidate.id === sideThreadIdForThread(threadId)) ??
+    sideThreads[0];
+  if (!sideThread) return undefined;
+
+  const participants = new Map<string, CollaborationUser>();
+  const addParticipant = (user: CollaborationUser) => participants.set(user.subject, user);
+  addParticipant(sideThread.createdBy);
+  for (const message of sideThread.messages) {
+    addParticipant(message.author);
+    for (const mention of message.mentions ?? []) addParticipant(mention);
+    for (const reaction of message.reactions ?? []) {
+      for (const user of reaction.users) addParticipant(user);
+    }
+  }
+  for (const marker of sideThread.readBy ?? []) addParticipant(marker.user);
+
+  const previewMessage = (message: SideThread["messages"][number]) => ({
+    id: message.id,
+    author: message.author,
+    text: message.text.slice(0, 500),
+    mentions: [...(message.mentions ?? [])],
+    hasAttachments: (message.attachments?.length ?? 0) > 0,
+    createdAt: message.createdAt,
+    ...(message.editedAt ? { editedAt: message.editedAt } : {}),
+  });
+  const latestMentionBySubject = new Map<string, SideThread["messages"][number]>();
+  for (const message of sideThread.messages) {
+    for (const mention of message.mentions ?? []) {
+      latestMentionBySubject.set(mention.subject, message);
+    }
+  }
+
+  return {
+    id: sideThread.id,
+    ...(sideThread.anchorMessageId ? { anchorMessageId: sideThread.anchorMessageId } : {}),
+    createdBy: sideThread.createdBy,
+    updatedAt: sideThread.updatedAt,
+    archivedAt: sideThread.archivedAt,
+    messageCount: sideThread.messages.length,
+    latestMessage: sideThread.messages.at(-1) ? previewMessage(sideThread.messages.at(-1)!) : null,
+    latestMentions: [...latestMentionBySubject.values()].map(previewMessage),
+    participants: [...participants.values()],
+    readBy: [...(sideThread.readBy ?? [])],
+  };
+};
 const WorkspaceRootLookupInput = Schema.Struct({
   workspaceRoot: Schema.String,
 });
@@ -1572,6 +1625,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                       hasPendingUserInput: row.pendingUserInputCount > 0,
                       hasActionableProposedPlan: row.hasActionableProposedPlan > 0,
                       createdBy: row.createdBy,
+                      teamDiscussion: mapSideThreadShellSummary(row.threadId, row.sideThreads),
                     } satisfies OrchestrationThreadShell)
                   : Result.failVoid,
               ),
@@ -1957,6 +2011,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         hasPendingUserInput: threadRow.value.pendingUserInputCount > 0,
         hasActionableProposedPlan: threadRow.value.hasActionableProposedPlan > 0,
         createdBy: threadRow.value.createdBy,
+        teamDiscussion: mapSideThreadShellSummary(
+          threadRow.value.threadId,
+          threadRow.value.sideThreads,
+        ),
       } satisfies OrchestrationThreadShell);
     });
 

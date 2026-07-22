@@ -179,6 +179,66 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
       });
 
       yield* eventStore.append({
+        type: "sidethread.message-reacted",
+        eventId: EventId.make("evt-5-react"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        occurredAt: "2026-01-01T00:00:02.100Z",
+        commandId: CommandId.make("cmd-5-react"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-5-react"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          sideThreadId: SideThreadId.make("side-thread-1"),
+          messageId: SideThreadMessageId.make("side-message-1"),
+          user: { subject: "google:alice", displayName: "Alice" },
+          emoji: "👀",
+          action: "added",
+          createdAt: "2026-01-01T00:00:02.100Z",
+        },
+      });
+
+      yield* eventStore.append({
+        type: "sidethread.message-edited",
+        eventId: EventId.make("evt-5-edit"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        occurredAt: "2026-01-01T00:00:02.200Z",
+        commandId: CommandId.make("cmd-5-edit"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-5-edit"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          sideThreadId: SideThreadId.make("side-thread-1"),
+          messageId: SideThreadMessageId.make("side-message-1"),
+          editor: { subject: "google:bob", displayName: "Bob" },
+          text: "Ship this very safely",
+          editedAt: "2026-01-01T00:00:02.200Z",
+        },
+      });
+
+      yield* eventStore.append({
+        type: "sidethread.marked-read",
+        eventId: EventId.make("evt-5-read"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        occurredAt: "2026-01-01T00:00:02.300Z",
+        commandId: CommandId.make("cmd-5-read"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-5-read"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          sideThreadId: SideThreadId.make("side-thread-1"),
+          user: { subject: "google:alice", displayName: "Alice" },
+          lastReadAt: "2026-01-01T00:00:02.200Z",
+          createdAt: "2026-01-01T00:00:02.300Z",
+        },
+      });
+
+      yield* eventStore.append({
         type: "sidethread.archived",
         eventId: EventId.make("evt-6"),
         aggregateKind: "thread",
@@ -268,8 +328,22 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
             {
               id: SideThreadMessageId.make("side-message-1"),
               author: { subject: "google:bob", displayName: "Bob" },
-              text: "Ship this safely",
+              text: "Ship this very safely",
               createdAt: "2026-01-01T00:00:02.000Z",
+              updatedAt: "2026-01-01T00:00:02.200Z",
+              editedAt: "2026-01-01T00:00:02.200Z",
+              reactions: [
+                {
+                  emoji: "👀",
+                  users: [{ subject: "google:alice", displayName: "Alice" }],
+                },
+              ],
+            },
+          ],
+          readBy: [
+            {
+              user: { subject: "google:alice", displayName: "Alice" },
+              lastReadAt: "2026-01-01T00:00:02.200Z",
             },
           ],
         },
@@ -287,7 +361,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
       `;
       assert.equal(stateRows.length, Object.keys(ORCHESTRATION_PROJECTOR_NAMES).length);
       for (const row of stateRows) {
-        assert.equal(row.lastAppliedSequence, 6);
+        assert.equal(row.lastAppliedSequence, 9);
       }
 
       // Settled lifecycle through the DB pipeline: thread.settled writes the

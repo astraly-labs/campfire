@@ -37,6 +37,9 @@ import {
   SideThreadArchivedPayload,
   SideThreadCreatedPayload,
   SideThreadMessagePostedPayload,
+  SideThreadMessageReactedPayload,
+  SideThreadMessageEditedPayload,
+  SideThreadMarkedReadPayload,
   ThreadTurnDiffCompletedPayload,
 } from "./Schemas.ts";
 
@@ -824,7 +827,19 @@ export function projectEvent(
                           ...(payload.quotedMessageId !== undefined
                             ? { quotedMessageId: payload.quotedMessageId }
                             : {}),
+                          ...(payload.attachments !== undefined
+                            ? { attachments: payload.attachments }
+                            : {}),
+                          ...(payload.linkedRef !== undefined
+                            ? { linkedRef: payload.linkedRef }
+                            : {}),
+                          ...(payload.replyToSideThreadMessageId !== undefined
+                            ? {
+                                replyToSideThreadMessageId: payload.replyToSideThreadMessageId,
+                              }
+                            : {}),
                           createdAt: payload.createdAt,
+                          updatedAt: payload.createdAt,
                         },
                       ],
                       updatedAt: payload.createdAt,
@@ -832,6 +847,122 @@ export function projectEvent(
                   : sideThread,
               ),
               updatedAt: payload.createdAt,
+            }),
+          };
+        }),
+      );
+
+    case "sidethread.message-reacted":
+      return decodeForEvent(
+        SideThreadMessageReactedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread) return nextBase;
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              sideThreads: (thread.sideThreads ?? []).map((sideThread) =>
+                sideThread.id !== payload.sideThreadId
+                  ? sideThread
+                  : {
+                      ...sideThread,
+                      messages: sideThread.messages.map((message) => {
+                        if (message.id !== payload.messageId) return message;
+                        const reactions = [...(message.reactions ?? [])];
+                        const reactionIndex = reactions.findIndex(
+                          (reaction) => reaction.emoji === payload.emoji,
+                        );
+                        const currentUsers =
+                          reactionIndex === -1 ? [] : reactions[reactionIndex]!.users;
+                        const users =
+                          payload.action === "added"
+                            ? [
+                                ...currentUsers.filter(
+                                  (user) => user.subject !== payload.user.subject,
+                                ),
+                                payload.user,
+                              ]
+                            : currentUsers.filter((user) => user.subject !== payload.user.subject);
+                        if (users.length === 0 && reactionIndex !== -1) {
+                          reactions.splice(reactionIndex, 1);
+                        } else if (reactionIndex === -1) {
+                          reactions.push({ emoji: payload.emoji, users });
+                        } else {
+                          reactions[reactionIndex] = { emoji: payload.emoji, users };
+                        }
+                        return { ...message, reactions };
+                      }),
+                      updatedAt: payload.createdAt,
+                    },
+              ),
+              updatedAt: payload.createdAt,
+            }),
+          };
+        }),
+      );
+
+    case "sidethread.message-edited":
+      return decodeForEvent(
+        SideThreadMessageEditedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread) return nextBase;
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              sideThreads: (thread.sideThreads ?? []).map((sideThread) =>
+                sideThread.id === payload.sideThreadId
+                  ? {
+                      ...sideThread,
+                      messages: sideThread.messages.map((message) =>
+                        message.id === payload.messageId
+                          ? {
+                              ...message,
+                              text: payload.text,
+                              updatedAt: payload.editedAt,
+                              editedAt: payload.editedAt,
+                            }
+                          : message,
+                      ),
+                      updatedAt: payload.editedAt,
+                    }
+                  : sideThread,
+              ),
+              updatedAt: payload.editedAt,
+            }),
+          };
+        }),
+      );
+
+    case "sidethread.marked-read":
+      return decodeForEvent(SideThreadMarkedReadPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread) return nextBase;
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              sideThreads: (thread.sideThreads ?? []).map((sideThread) =>
+                sideThread.id === payload.sideThreadId
+                  ? {
+                      ...sideThread,
+                      readBy: [
+                        ...(sideThread.readBy ?? []).filter(
+                          (marker) => marker.user.subject !== payload.user.subject,
+                        ),
+                        { user: payload.user, lastReadAt: payload.lastReadAt },
+                      ],
+                    }
+                  : sideThread,
+              ),
             }),
           };
         }),

@@ -89,6 +89,7 @@ import {
 } from "../session-logic";
 import { type LegendListRef } from "@legendapp/list/react";
 import { SideThreadDrawer } from "../sidethread/SideThreadDrawer";
+import { useSideThreadUiStore } from "../sidethread/sideThreadUiStore";
 import { useGoogleTeam } from "../collaboration/googleTeam";
 import { getAnchoredTurnMetrics, type TimelineScrollMode } from "./chat/timelineScrollAnchoring";
 import {
@@ -1154,10 +1155,18 @@ function ChatViewContent(props: ChatViewProps) {
     [environmentId, threadId],
   );
   const routeThreadKey = useMemo(() => scopedThreadKey(routeThreadRef), [routeThreadRef]);
+  const requestedSideThreadKey = useSideThreadUiStore((state) => state.requestedThreadKey);
+  const consumeSideThreadOpenRequest = useSideThreadUiStore((state) => state.consumeOpenRequest);
   useEffect(() => {
     setSideThreadOpen(false);
     setSideThreadAnchorMessageId(null);
   }, [routeThreadKey]);
+  useEffect(() => {
+    if (requestedSideThreadKey !== routeThreadKey) return;
+    setSideThreadAnchorMessageId(null);
+    setSideThreadOpen(true);
+    consumeSideThreadOpenRequest(routeThreadKey);
+  }, [consumeSideThreadOpenRequest, requestedSideThreadKey, routeThreadKey]);
   const openSideThread = useCallback((messageId?: MessageId) => {
     setSideThreadAnchorMessageId(messageId ?? null);
     setSideThreadOpen(true);
@@ -6141,6 +6150,8 @@ function ChatViewContent(props: ChatViewProps) {
           environmentId={activeThread.environmentId}
           threadId={activeThread.id}
           thread={activeThread}
+          team={googleTeam.members}
+          currentSubject={googleTeam.current?.subject ?? null}
           open={sideThreadOpen}
           contextMessageId={sideThreadAnchorMessageId}
           onClose={() => {

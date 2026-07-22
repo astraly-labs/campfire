@@ -1,4 +1,9 @@
-import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
+import {
+  scopedProjectKey,
+  scopedThreadKey,
+  scopeProjectRef,
+  scopeThreadRef,
+} from "@t3tools/client-runtime/environment";
 import type { CollaborationUser, EnvironmentId } from "@t3tools/contracts";
 
 import type { SidebarProjectSnapshot } from "./sidebarProjectGrouping";
@@ -44,7 +49,11 @@ export function isThreadOwnedByGoogleAccount(input: {
   readonly thread: SidebarThreadSummary;
   readonly currentGoogleSubject: string | null;
   readonly primaryEnvironmentId: EnvironmentId | null;
+  readonly overrideByThreadKey?: Readonly<Record<string, "mine" | "other">>;
 }): boolean {
+  const threadKey = scopedThreadKey(scopeThreadRef(input.thread.environmentId, input.thread.id));
+  const override = input.overrideByThreadKey?.[threadKey];
+  if (override !== undefined) return override === "mine";
   const project = owningProject(input.snapshot, input.thread);
   return isGoogleOwnedByCurrentAccount({
     createdBy: input.thread.createdBy,
@@ -60,6 +69,7 @@ export function partitionSidebarProjectsByGoogleOwner(input: {
   readonly threadsByProjectKey: ReadonlyMap<string, ReadonlyArray<SidebarThreadSummary>>;
   readonly currentGoogleSubject: string | null;
   readonly primaryEnvironmentId: EnvironmentId | null;
+  readonly overrideByThreadKey?: Readonly<Record<string, "mine" | "other">>;
 }): {
   readonly mine: ReadonlyArray<SidebarProjectSectionInstance>;
   readonly others: ReadonlyArray<SidebarProjectSectionInstance>;
@@ -77,6 +87,9 @@ export function partitionSidebarProjectsByGoogleOwner(input: {
         thread,
         currentGoogleSubject: input.currentGoogleSubject,
         primaryEnvironmentId: input.primaryEnvironmentId,
+        ...(input.overrideByThreadKey !== undefined
+          ? { overrideByThreadKey: input.overrideByThreadKey }
+          : {}),
       })
         ? mineThreads
         : otherThreads

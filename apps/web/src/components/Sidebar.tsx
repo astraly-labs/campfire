@@ -122,6 +122,7 @@ import {
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { SettingsSidebarNav } from "./settings/SettingsSidebarNav";
+import { TeamInboxNav } from "./sidebar/TeamInboxNav";
 import { Kbd } from "./ui/kbd";
 import {
   getArm64IntelBuildWarningDescription,
@@ -1061,6 +1062,8 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
 interface SidebarProjectItemProps {
   project: SidebarProjectSnapshot;
   projectThreads: readonly SidebarThreadSummary[];
+  section: "mine" | "other";
+  onChangeThreadAffiliation: (threadKey: string, override: "mine" | "other") => void;
   isThreadListExpanded: boolean;
   activeRouteThreadKey: string | null;
   newThreadShortcutLabel: string | null;
@@ -1082,6 +1085,8 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   const {
     project,
     projectThreads,
+    section,
+    onChangeThreadAffiliation,
     isThreadListExpanded,
     activeRouteThreadKey,
     newThreadShortcutLabel,
@@ -2122,6 +2127,10 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           ...(thread.branch
             ? [{ id: "new-thread-on-branch", label: `New thread on ${thread.branch}` }]
             : []),
+          {
+            id: "affiliation",
+            label: section === "mine" ? "Move to Projects" : "Pin to My Projects",
+          },
           { id: "rename", label: "Rename thread" },
           { id: "mark-unread", label: "Mark unread" },
           { id: "copy-path", label: "Copy Path" },
@@ -2152,6 +2161,11 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
             }),
           );
         }
+        return;
+      }
+
+      if (clicked === "affiliation") {
+        onChangeThreadAffiliation(threadKey, section === "mine" ? "other" : "mine");
         return;
       }
 
@@ -2214,7 +2228,9 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       handleNewThread,
       markThreadUnread,
       memberProjectByScopedKey,
+      onChangeThreadAffiliation,
       project.workspaceRoot,
+      section,
       startThreadRename,
     ],
   );
@@ -2767,6 +2783,7 @@ interface SidebarProjectsContentProps {
   suppressProjectClickForContextMenuRef: React.RefObject<boolean>;
   attachProjectListAutoAnimateRef: (node: HTMLElement | null) => void;
   projectsLength: number;
+  onChangeThreadAffiliation: (threadKey: string, override: "mine" | "other") => void;
 }
 
 const SidebarProjectsContent = memo(function SidebarProjectsContent(
@@ -2806,6 +2823,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     suppressProjectClickForContextMenuRef,
     attachProjectListAutoAnimateRef,
     projectsLength,
+    onChangeThreadAffiliation,
   } = props;
 
   const handleProjectSortOrderChange = useCallback(
@@ -2842,6 +2860,8 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
       <SidebarProjectItem
         project={project}
         projectThreads={threads}
+        section={instance.section}
+        onChangeThreadAffiliation={onChangeThreadAffiliation}
         isThreadListExpanded={expandedThreadListsByProject.has(project.projectKey)}
         activeRouteThreadKey={activeThreadBelongsToInstance ? routeThreadKey : null}
         newThreadShortcutLabel={newThreadShortcutLabel}
@@ -2873,6 +2893,8 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                 key={key}
                 project={instance.snapshot}
                 projectThreads={instance.threads}
+                section={instance.section}
+                onChangeThreadAffiliation={onChangeThreadAffiliation}
                 isThreadListExpanded={expandedThreadListsByProject.has(
                   instance.snapshot.projectKey,
                 )}
@@ -2959,6 +2981,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
         </SidebarGroup>
       }
     >
+      <TeamInboxNav />
       {showArm64IntelBuildWarning && arm64IntelBuildWarningDescription ? (
         <SidebarGroup className="px-2 pt-2 pb-0">
           <Alert variant="warning" className="rounded-2xl border-warning/40 bg-warning/8">
@@ -3045,6 +3068,10 @@ export default function Sidebar() {
   const projectExpandedById = useUiStateStore((store) => store.projectExpandedById);
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const reorderProjects = useUiStateStore((store) => store.reorderProjects);
+  const threadAffiliationOverrideByThreadKey = useUiStateStore(
+    (store) => store.threadAffiliationOverrideByThreadKey,
+  );
+  const setThreadAffiliation = useUiStateStore((store) => store.setThreadAffiliation);
   const navigate = useNavigate();
   const pathname = useLocation({ select: (loc) => loc.pathname });
   const isOnSettings = pathname.startsWith("/settings");
@@ -3345,8 +3372,15 @@ export default function Sidebar() {
         threadsByProjectKey,
         currentGoogleSubject: googleTeam.current?.subject ?? null,
         primaryEnvironmentId,
+        overrideByThreadKey: threadAffiliationOverrideByThreadKey,
       }),
-    [googleTeam.current?.subject, primaryEnvironmentId, sortedProjects, threadsByProjectKey],
+    [
+      googleTeam.current?.subject,
+      primaryEnvironmentId,
+      sortedProjects,
+      threadAffiliationOverrideByThreadKey,
+      threadsByProjectKey,
+    ],
   );
   const visibleProjectInstances = useMemo(
     () => [...projectSections.mine, ...projectSections.others],
@@ -3686,6 +3720,7 @@ export default function Sidebar() {
             suppressProjectClickForContextMenuRef={suppressProjectClickForContextMenuRef}
             attachProjectListAutoAnimateRef={attachProjectListAutoAnimateRef}
             projectsLength={projects.length}
+            onChangeThreadAffiliation={setThreadAffiliation}
           />
 
           <SidebarSeparator />

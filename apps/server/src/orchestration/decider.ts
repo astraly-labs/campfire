@@ -203,6 +203,14 @@ function requireSideThreadAuthor(
   );
 }
 
+function isHttpsUrl(value: string): boolean {
+  try {
+    return new URL(value).protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 const decideCommandSequence = Effect.fn("decideCommandSequence")(function* ({
   commands,
   readModel,
@@ -331,6 +339,29 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           detail: `SideThread '${command.sideThreadId}' reached the 500 message limit.`,
         });
       }
+      if (command.text.trim().length === 0 && (command.attachments?.length ?? 0) === 0) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "A SideThread message needs text or an attachment.",
+        });
+      }
+      if ((command.attachments?.length ?? 0) > 8) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "A SideThread message cannot contain more than 8 attachments.",
+        });
+      }
+      const unsafeGif = (command.attachments ?? []).find(
+        (attachment) =>
+          attachment.type === "gif" &&
+          (!isHttpsUrl(attachment.url) || !isHttpsUrl(attachment.previewUrl)),
+      );
+      if (unsafeGif?.type === "gif") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "SideThread GIF attachments must use HTTPS URLs.",
+        });
+      }
       const mentions = [
         ...new Map((command.mentions ?? []).map((user) => [user.subject, user])).values(),
       ];
@@ -347,6 +378,27 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         return yield* new OrchestrationCommandInvariantError({
           commandType: command.type,
           detail: `Quoted message '${command.quotedMessageId}' does not exist.`,
+        });
+      }
+      if (
+        command.replyToSideThreadMessageId !== undefined &&
+        !sideThread.messages.some((message) => message.id === command.replyToSideThreadMessageId)
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Reply target '${command.replyToSideThreadMessageId}' does not exist.`,
+        });
+      }
+      if (
+        command.linkedRef !== undefined &&
+        !readModel.threads.some(
+          (candidate) =>
+            candidate.id === command.linkedRef?.threadId && candidate.deletedAt === null,
+        )
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Linked thread '${command.linkedRef.threadId}' does not exist.`,
         });
       }
       return {
@@ -367,6 +419,124 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           ...(command.quotedMessageId !== undefined
             ? { quotedMessageId: command.quotedMessageId }
             : {}),
+          ...(command.attachments !== undefined ? { attachments: command.attachments } : {}),
+          ...(command.linkedRef !== undefined ? { linkedRef: command.linkedRef } : {}),
+          ...(command.replyToSideThreadMessageId !== undefined
+            ? { replyToSideThreadMessageId: command.replyToSideThreadMessageId }
+            : {}),
+          createdAt: command.createdAt,
+        },
+      };
+    }
+
+    case "sidethread.message.react": {
+      const user = yield* requireSideThreadAuthor(actor, command.type);
+      const thread = yield* requireThread({ readModel, command, threadId: command.threadId });
+      const sideThread = (thread.sideThreads ?? []).find(
+        (entry) => entry.id === command.sideThreadId,
+      );
+      const message = sideThread?.messages.find((entry) => entry.id === command.messageId);
+      if (sideThread === undefined || message === undefined || sideThread.archivedAt !== null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `SideThread message '${command.messageId}' cannot be reacted to.`,
+        });
+      }
+      const alreadyReacted = (message.reactions ?? []).some(
+        (reaction) =>
+          reaction.emoji === command.emoji &&
+          reaction.users.some((candidate) => candidate.subject === user.subject),
+      );
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "sidethread.message-reacted",
+        payload: {
+          threadId: command.threadId,
+          sideThreadId: command.sideThreadId,
+          messageId: command.messageId,
+          user,
+          emoji: command.emoji,
+          action: alreadyReacted ? "removed" : "added",
+          createdAt: command.createdAt,
+        },
+      };
+    }
+
+    case "sidethread.message.edit": {
+      const editor = yield* requireSideThreadAuthor(actor, command.type);
+      const thread = yield* requireThread({ readModel, command, threadId: command.threadId });
+      const sideThread = (thread.sideThreads ?? []).find(
+        (entry) => entry.id === command.sideThreadId,
+      );
+      const message = sideThread?.messages.find((entry) => entry.id === command.messageId);
+      if (sideThread === undefined || message === undefined || sideThread.archivedAt !== null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `SideThread message '${command.messageId}' cannot be edited.`,
+        });
+      }
+      if (message.author.subject !== editor.subject) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "Only the original Google account can edit this message.",
+        });
+      }
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "sidethread.message-edited",
+        payload: {
+          threadId: command.threadId,
+          sideThreadId: command.sideThreadId,
+          messageId: command.messageId,
+          editor,
+          text: command.text,
+          editedAt: command.createdAt,
+        },
+      };
+    }
+
+    case "sidethread.mark-read": {
+      const user = yield* requireSideThreadAuthor(actor, command.type);
+      const thread = yield* requireThread({ readModel, command, threadId: command.threadId });
+      const sideThread = (thread.sideThreads ?? []).find(
+        (entry) => entry.id === command.sideThreadId,
+      );
+      if (sideThread === undefined) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `SideThread '${command.sideThreadId}' does not exist.`,
+        });
+      }
+      const previous = (sideThread.readBy ?? []).find(
+        (marker) => marker.user.subject === user.subject,
+      );
+      const lastReadAt =
+        previous !== undefined && previous.lastReadAt >= command.lastReadAt
+          ? previous.lastReadAt
+          : command.lastReadAt;
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "sidethread.marked-read",
+        payload: {
+          threadId: command.threadId,
+          sideThreadId: command.sideThreadId,
+          user,
+          lastReadAt,
           createdAt: command.createdAt,
         },
       };

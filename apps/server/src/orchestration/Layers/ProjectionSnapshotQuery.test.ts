@@ -282,6 +282,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           createdAt: "2026-02-24T00:00:00.000Z",
           updatedAt: "2026-02-24T00:00:01.000Z",
           deletedAt: null,
+          createdBy: null,
         },
       ]);
       assert.deepEqual(snapshot.threads, [
@@ -326,6 +327,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
               streaming: false,
               createdAt: "2026-02-24T00:00:04.000Z",
               updatedAt: "2026-02-24T00:00:05.000Z",
+              author: null,
             },
           ],
           sideThreads: [
@@ -388,6 +390,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             lastError: null,
             updatedAt: "2026-02-24T00:00:07.000Z",
           },
+          createdBy: null,
         },
       ]);
 
@@ -414,6 +417,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           ],
           createdAt: "2026-02-24T00:00:00.000Z",
           updatedAt: "2026-02-24T00:00:01.000Z",
+          createdBy: null,
         },
       ]);
       assert.deepEqual(shellSnapshot.threads, [
@@ -461,6 +465,29 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           hasPendingApprovals: true,
           hasPendingUserInput: false,
           hasActionableProposedPlan: false,
+          createdBy: null,
+          teamDiscussion: {
+            id: SideThreadId.make("side-thread-1"),
+            anchorMessageId: asMessageId("message-1"),
+            createdBy: { subject: "google:alice", displayName: "Alice" },
+            updatedAt: "2026-02-24T00:00:06.000Z",
+            archivedAt: null,
+            messageCount: 1,
+            latestMessage: {
+              id: SideThreadMessageId.make("side-message-1"),
+              author: { subject: "google:bob", displayName: "Bob" },
+              text: "Looks good",
+              mentions: [],
+              hasAttachments: false,
+              createdAt: "2026-02-24T00:00:06.000Z",
+            },
+            latestMentions: [],
+            participants: [
+              { subject: "google:alice", displayName: "Alice" },
+              { subject: "google:bob", displayName: "Bob" },
+            ],
+            readBy: [],
+          },
         },
       ]);
 

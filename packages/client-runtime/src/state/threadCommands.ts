@@ -22,6 +22,9 @@ import {
   type UpdateThreadMetadataInput,
   type CreateSideThreadInput,
   type PostSideThreadMessageInput,
+  type ReactToSideThreadMessageInput,
+  type EditSideThreadMessageInput,
+  type MarkSideThreadReadInput,
   type ArchiveSideThreadInput,
   archiveThread,
   createThread,
@@ -42,6 +45,9 @@ import {
   updateThreadMetadata,
   createSideThread,
   postSideThreadMessage,
+  reactToSideThreadMessage,
+  editSideThreadMessage,
+  markSideThreadRead,
   archiveSideThread,
 } from "../operations/commands.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
@@ -66,6 +72,9 @@ export type {
   UpdateThreadMetadataInput,
   CreateSideThreadInput,
   PostSideThreadMessageInput,
+  ReactToSideThreadMessageInput,
+  EditSideThreadMessageInput,
+  MarkSideThreadReadInput,
   ArchiveSideThreadInput,
 } from "../operations/commands.ts";
 
@@ -190,6 +199,24 @@ export function createThreadEnvironmentAtoms<R, E>(
     postSideThreadMessage: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:sidethread:post-message",
       execute: (input: PostSideThreadMessageInput) => postSideThreadMessage(input),
+      scheduler,
+      concurrency,
+    }),
+    reactToSideThreadMessage: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:sidethread:react-message",
+      execute: (input: ReactToSideThreadMessageInput) => reactToSideThreadMessage(input),
+      scheduler,
+      concurrency,
+    }),
+    editSideThreadMessage: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:sidethread:edit-message",
+      execute: (input: EditSideThreadMessageInput) => editSideThreadMessage(input),
+      scheduler,
+      concurrency,
+    }),
+    markSideThreadRead: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:sidethread:mark-read",
+      execute: (input: MarkSideThreadReadInput) => markSideThreadRead(input),
       scheduler,
       concurrency,
     }),

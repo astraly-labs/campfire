@@ -50,6 +50,9 @@ export type RevertThreadCheckpointInput = CommandInput<"thread.checkpoint.revert
 export type StopThreadSessionInput = CommandInput<"thread.session.stop">;
 export type CreateSideThreadInput = CommandInput<"sidethread.create">;
 export type PostSideThreadMessageInput = CommandInput<"sidethread.message.post">;
+export type ReactToSideThreadMessageInput = CommandInput<"sidethread.message.react">;
+export type EditSideThreadMessageInput = CommandInput<"sidethread.message.edit">;
+export type MarkSideThreadReadInput = CommandInput<"sidethread.mark-read">;
 export type ArchiveSideThreadInput = CommandInput<"sidethread.archive">;
 
 type DispatchTag = typeof ORCHESTRATION_WS_METHODS.dispatchCommand;
@@ -324,6 +327,40 @@ export const postSideThreadMessage: (input: PostSideThreadMessageInput) => Comma
       createdAt: metadata.createdAt,
     });
   });
+
+export const reactToSideThreadMessage: (input: ReactToSideThreadMessageInput) => CommandEffect =
+  Effect.fn("EnvironmentCommands.reactToSideThreadMessage")(function* (input) {
+    const metadata = yield* timestampedCommandMetadata(input);
+    return yield* dispatch({
+      ...input,
+      type: "sidethread.message.react",
+      commandId: metadata.commandId,
+      createdAt: metadata.createdAt,
+    });
+  });
+
+export const editSideThreadMessage: (input: EditSideThreadMessageInput) => CommandEffect =
+  Effect.fn("EnvironmentCommands.editSideThreadMessage")(function* (input) {
+    const metadata = yield* timestampedCommandMetadata(input);
+    return yield* dispatch({
+      ...input,
+      type: "sidethread.message.edit",
+      commandId: metadata.commandId,
+      createdAt: metadata.createdAt,
+    });
+  });
+
+export const markSideThreadRead: (input: MarkSideThreadReadInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.markSideThreadRead",
+)(function* (input) {
+  const metadata = yield* timestampedCommandMetadata(input);
+  return yield* dispatch({
+    ...input,
+    type: "sidethread.mark-read",
+    commandId: metadata.commandId,
+    createdAt: metadata.createdAt,
+  });
+});
 
 export const archiveSideThread: (input: ArchiveSideThreadInput) => CommandEffect = Effect.fn(
   "EnvironmentCommands.archiveSideThread",
