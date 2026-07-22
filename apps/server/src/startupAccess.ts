@@ -7,11 +7,22 @@ import { HttpServer } from "effect/unstable/http";
 import { ServerConfig } from "./config.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 
-export interface HeadlessServeAccessInfo {
+export interface PairingHeadlessServeAccessInfo {
+  readonly authentication: "pairing-token";
   readonly connectionString: string;
   readonly token: string;
   readonly pairingUrl: string;
 }
+
+export interface GoogleOidcHeadlessServeAccessInfo {
+  readonly authentication: "google-oidc";
+  readonly connectionString: string;
+  readonly signInUrl: string;
+}
+
+export type HeadlessServeAccessInfo =
+  | PairingHeadlessServeAccessInfo
+  | GoogleOidcHeadlessServeAccessInfo;
 
 type NetworkInterfacesMap = ReturnType<typeof NodeOS.networkInterfaces>;
 
@@ -97,6 +108,12 @@ export const buildPairingUrl = (connectionString: string, token: string): string
   return url.toString();
 };
 
+export const resolveGoogleOidcStartupUrl = (
+  mode: ServerConfig["Service"]["mode"],
+  redirectUri: URL | undefined,
+): string | undefined =>
+  mode === "web" && redirectUri !== undefined ? new URL("/", redirectUri).toString() : undefined;
+
 export const renderTerminalQrCode = (value: string, margin = 2): string => {
   const qrCode = QrCode.encodeText(value, QrCode.Ecc.MEDIUM);
   const rows: Array<string> = [];
@@ -119,8 +136,20 @@ export const renderTerminalQrCode = (value: string, margin = 2): string => {
   return rows.join("\n");
 };
 
-export const formatHeadlessServeOutput = (accessInfo: HeadlessServeAccessInfo): string =>
-  [
+export const formatHeadlessServeOutput = (accessInfo: HeadlessServeAccessInfo): string => {
+  if (accessInfo.authentication === "google-oidc") {
+    return [
+      "T3 Code server is ready.",
+      `Connection string: ${accessInfo.connectionString}`,
+      "Authentication: Google",
+      `Campfire URL: ${accessInfo.signInUrl}`,
+      "",
+      renderTerminalQrCode(accessInfo.signInUrl),
+      "",
+    ].join("\n");
+  }
+
+  return [
     "T3 Code server is ready.",
     `Connection string: ${accessInfo.connectionString}`,
     `Token: ${accessInfo.token}`,
@@ -129,6 +158,7 @@ export const formatHeadlessServeOutput = (accessInfo: HeadlessServeAccessInfo): 
     renderTerminalQrCode(accessInfo.pairingUrl),
     "",
   ].join("\n");
+};
 
 export const issueHeadlessServeAccessInfo = Effect.fn("issueHeadlessServeAccessInfo")(function* () {
   const serverConfig = yield* ServerConfig;
@@ -138,11 +168,23 @@ export const issueHeadlessServeAccessInfo = Effect.fn("issueHeadlessServeAccessI
     serverConfig.host,
     resolveListeningPort(httpServer.address, serverConfig.port),
   );
+  const googleOidcStartupUrl = resolveGoogleOidcStartupUrl(
+    serverConfig.mode,
+    serverConfig.googleOidc?.redirectUri,
+  );
+  if (googleOidcStartupUrl !== undefined) {
+    return {
+      authentication: "google-oidc",
+      connectionString,
+      signInUrl: googleOidcStartupUrl,
+    } satisfies GoogleOidcHeadlessServeAccessInfo;
+  }
   const issued = yield* serverAuth.issueStartupPairingCredential();
 
   return {
+    authentication: "pairing-token",
     connectionString,
     token: issued.credential,
     pairingUrl: buildPairingUrl(connectionString, issued.credential),
-  } satisfies HeadlessServeAccessInfo;
+  } satisfies PairingHeadlessServeAccessInfo;
 });

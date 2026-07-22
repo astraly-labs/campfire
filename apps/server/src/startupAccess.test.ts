@@ -4,6 +4,7 @@ import {
   buildPairingUrl,
   formatHeadlessServeOutput,
   renderTerminalQrCode,
+  resolveGoogleOidcStartupUrl,
   resolveHeadlessConnectionHost,
   resolveHeadlessConnectionString,
   resolveListeningPort,
@@ -58,6 +59,22 @@ it("builds a pairing URL that embeds the token in the hash", () => {
   );
 });
 
+it("uses the Google callback origin as the hosted web startup URL", () => {
+  expect(
+    resolveGoogleOidcStartupUrl(
+      "web",
+      new URL("https://campfire.tail.example:10000/auth/google/callback"),
+    ),
+  ).toBe("https://campfire.tail.example:10000/");
+  expect(
+    resolveGoogleOidcStartupUrl(
+      "desktop",
+      new URL("https://campfire.tail.example:10000/auth/google/callback"),
+    ),
+  ).toBeUndefined();
+  expect(resolveGoogleOidcStartupUrl("web", undefined)).toBeUndefined();
+});
+
 it("renders terminal QR codes as a multi-line unicode block grid", () => {
   const qrCode = renderTerminalQrCode("http://192.168.1.42:3773/pair#token=PAIRCODE");
 
@@ -67,6 +84,7 @@ it("renders terminal QR codes as a multi-line unicode block grid", () => {
 
 it("formats headless serve output with the connection string, token, pairing url, and qr code", () => {
   const output = formatHeadlessServeOutput({
+    authentication: "pairing-token",
     connectionString: "http://192.168.1.42:3773",
     token: "PAIRCODE",
     pairingUrl: "http://192.168.1.42:3773/pair#token=PAIRCODE",
@@ -75,5 +93,19 @@ it("formats headless serve output with the connection string, token, pairing url
   expect(output).toContain("Connection string: http://192.168.1.42:3773");
   expect(output).toContain("Token: PAIRCODE");
   expect(output).toContain("Pairing URL: http://192.168.1.42:3773/pair#token=PAIRCODE");
+  assert.isTrue(output.includes("█") || output.includes("▀") || output.includes("▄"));
+});
+
+it("formats Google-only headless output without creating pairing instructions", () => {
+  const output = formatHeadlessServeOutput({
+    authentication: "google-oidc",
+    connectionString: "http://127.0.0.1:3774",
+    signInUrl: "https://campfire.tail.example:10000/",
+  });
+
+  expect(output).toContain("Authentication: Google");
+  expect(output).toContain("Campfire URL: https://campfire.tail.example:10000/");
+  expect(output).not.toContain("Token:");
+  expect(output).not.toContain("Pairing URL:");
   assert.isTrue(output.includes("█") || output.includes("▀") || output.includes("▄"));
 });

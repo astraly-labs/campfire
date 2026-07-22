@@ -88,6 +88,9 @@ https://<mac-mini-magicdns>.<tailnet>.ts.net:10000/auth/google/callback
 The scheme, host, port, path, case, and trailing slash must match exactly. Campfire requests only
 `openid profile email`, verifies issuer/signature/audience/nonce, requires `email_verified`, and
 then applies the explicit email allowlist. It never persists Google's access or refresh token.
+When Google OIDC is configured in web mode, startup prints the Campfire URL and does not create or
+print an automatic pairing credential. An authenticated administrator may still explicitly create
+a short-lived pairing link for a mobile or bot client when needed.
 
 Create `/Users/campfire/.config/campfire/server.env`, owned by `campfire` and mode `0600`:
 
