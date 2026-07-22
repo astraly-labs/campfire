@@ -260,3 +260,39 @@ Decision:
 Next:
 
 - Expose overflow counters and investigate the engine-wide unbounded event PubSub separately.
+
+### H8: A bounded command mailbox gives overload a finite, explicit outcome
+
+Status: confirmed
+
+Replacing the engine's unbounded command queue with a fixed-capacity mailbox and a finite enqueue deadline prevents request bursts from retaining unlimited command/deferred state. Normal commands remain serialized and durable; sustained overload fails before acceptance with a typed retryable error rather than waiting forever or silently discarding a command.
+
+Expected signal:
+
+- Up to 256 waiting commands preserve FIFO order and existing receipt deduplication behavior.
+- A command that cannot enter the mailbox within two seconds fails explicitly and is never processed later.
+- Cancelling a timed-out offer removes it from the queue safely.
+- Queue depth is exported as a gauge and returns to zero after the worker drains.
+
+Validation:
+
+- Command/query: deterministic capacity-one mailbox tests with a virtual clock, then the focused orchestration-engine suite.
+- Dataset/window: one accepted item, one timed-out offer, and existing storage-failure/deduplication/metrics fixtures; production capacity 256 and enqueue timeout two seconds.
+- Control/baseline: current unbounded command `Queue`.
+
+Result:
+
+- Added a reusable bounded FIFO command mailbox. A capacity-one deterministic fixture proved that a waiting producer preserves FIFO order when capacity frees, while a second fixture advanced the virtual clock through the admission deadline and proved the rejected item was never processed later.
+- The first mailbox test invocation failed before executing tests because Effect v4 exposes `TestClock` from `effect/testing`, not `effect/TestClock`; correcting the import made the intended deterministic test run.
+- The orchestration engine now admits at most 256 waiting command envelopes. An offer still blocked after two seconds fails with `OrchestrationCommandQueueFullError`, including the real command ID, capacity, and timeout; the worker remains serialized and existing durable receipt semantics are unchanged.
+- Added `t3_orchestration_command_queue_depth` and `t3_orchestration_command_queue_rejections_total`. The focused engine metric fixture observed queue depth return to zero after dispatch.
+- `corepack pnpm exec vp test run apps/server/src/orchestration/commandMailbox.test.ts apps/server/src/orchestration/Layers/OrchestrationEngine.test.ts apps/server/src/server.test.ts packages/client-runtime/src/rpc/client.test.ts packages/client-runtime/src/connection/supervisor.test.ts packages/client-runtime/src/state/threads-sync.test.ts`: 6 files and 179 tests passed in 4.50 seconds.
+- Targeted lint passed with zero warnings or errors; server typecheck passed with only the three pre-existing Effect suggestions in `decider.ts`.
+
+Decision:
+
+- Keep the 256-item/two-second admission boundary and explicit pre-acceptance error. It bounds retained command state and makes overload safely retryable with the same command ID rather than silently dropping or executing a timed-out offer later.
+
+Next:
+
+- Replace the unbounded event PubSub with a bounded durable wake-up feed rather than dropping domain events.

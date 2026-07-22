@@ -17,7 +17,6 @@ import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
-import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -25,6 +24,8 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import {
   metricAttributes,
   orchestrationCommandAckDuration,
+  orchestrationCommandQueueDepth,
+  orchestrationCommandQueueRejectionsTotal,
   orchestrationCommandsTotal,
   orchestrationCommandDuration,
 } from "../../observability/Metrics.ts";
@@ -34,10 +35,12 @@ import { OrchestrationCommandReceiptRepository } from "../../persistence/Service
 import {
   OrchestrationCommandInvariantError,
   OrchestrationCommandPreviouslyRejectedError,
+  OrchestrationCommandQueueFullError,
   type OrchestrationDispatchError,
   type OrchestrationProjectorDecodeError,
 } from "../Errors.ts";
 import { decideOrchestrationCommand } from "../decider.ts";
+import { makeCommandMailbox } from "../commandMailbox.ts";
 import { createEmptyReadModel, projectEvent } from "../projector.ts";
 import { OrchestrationProjectionPipeline } from "../Services/ProjectionPipeline.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
@@ -49,6 +52,9 @@ const isOrchestrationCommandPreviouslyRejectedError = Schema.is(
   OrchestrationCommandPreviouslyRejectedError,
 );
 const isOrchestrationCommandInvariantError = Schema.is(OrchestrationCommandInvariantError);
+
+const COMMAND_QUEUE_CAPACITY = 256;
+const COMMAND_QUEUE_OFFER_TIMEOUT = Duration.seconds(2);
 
 interface CommandEnvelope {
   command: OrchestrationCommand;
@@ -87,7 +93,19 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
   let commandReadModel = createEmptyReadModel(yield* nowIso);
 
-  const commandQueue = yield* Queue.unbounded<CommandEnvelope>();
+  const commandQueue = yield* makeCommandMailbox<
+    CommandEnvelope,
+    OrchestrationCommandQueueFullError
+  >({
+    capacity: COMMAND_QUEUE_CAPACITY,
+    offerTimeout: COMMAND_QUEUE_OFFER_TIMEOUT,
+    onOfferTimeout: (envelope) =>
+      new OrchestrationCommandQueueFullError({
+        commandId: envelope.command.commandId,
+        capacity: COMMAND_QUEUE_CAPACITY,
+        timeoutMs: Duration.toMillis(COMMAND_QUEUE_OFFER_TIMEOUT),
+      }),
+  });
   const eventPubSub = yield* PubSub.unbounded<OrchestrationEvent>();
 
   const projectEventsOntoReadModel = (
@@ -300,7 +318,15 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   yield* projectionPipeline.bootstrap;
   commandReadModel = yield* projectionSnapshotQuery.getCommandReadModel();
 
-  const worker = Effect.forever(Queue.take(commandQueue).pipe(Effect.flatMap(processEnvelope)));
+  const updateCommandQueueDepth = commandQueue.size.pipe(
+    Effect.flatMap((size) => Metric.update(orchestrationCommandQueueDepth, size)),
+  );
+  const worker = Effect.forever(
+    commandQueue.take.pipe(
+      Effect.tap(() => updateCommandQueueDepth),
+      Effect.flatMap(processEnvelope),
+    ),
+  );
   yield* Effect.forkScoped(worker);
   yield* Effect.logDebug("orchestration engine started").pipe(
     Effect.annotateLogs({ sequence: commandReadModel.snapshotSequence }),
@@ -312,11 +338,15 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   const dispatch: OrchestrationEngineShape["dispatch"] = (command) =>
     Effect.gen(function* () {
       const result = yield* Deferred.make<{ sequence: number }, OrchestrationDispatchError>();
-      yield* Queue.offer(commandQueue, {
+      const envelope = {
         command,
         result,
         startedAtMs: yield* Clock.currentTimeMillis,
-      });
+      };
+      yield* commandQueue
+        .offer(envelope)
+        .pipe(Effect.tapError(() => Metric.update(orchestrationCommandQueueRejectionsTotal, 1)));
+      yield* updateCommandQueueDepth;
       return yield* Deferred.await(result);
     });
 

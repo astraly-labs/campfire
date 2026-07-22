@@ -35,6 +35,17 @@ export const orchestrationCommandAckDuration = Metric.timer(
   },
 );
 
+export const orchestrationCommandQueueDepth = Metric.gauge("t3_orchestration_command_queue_depth", {
+  description: "Number of orchestration commands waiting for the serialized engine worker.",
+});
+
+export const orchestrationCommandQueueRejectionsTotal = Metric.counter(
+  "t3_orchestration_command_queue_rejections_total",
+  {
+    description: "Commands rejected before acceptance because the engine mailbox stayed full.",
+  },
+);
+
 export const orchestrationEventsProcessedTotal = Metric.counter(
   "t3_orchestration_events_processed_total",
   {

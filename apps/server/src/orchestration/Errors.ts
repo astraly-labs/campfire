@@ -53,6 +53,19 @@ export class OrchestrationCommandPreviouslyRejectedError extends Schema.TaggedEr
   }
 }
 
+export class OrchestrationCommandQueueFullError extends Schema.TaggedErrorClass<OrchestrationCommandQueueFullError>()(
+  "OrchestrationCommandQueueFullError",
+  {
+    commandId: Schema.String,
+    capacity: Schema.Int,
+    timeoutMs: Schema.Int,
+  },
+) {
+  override get message(): string {
+    return `Orchestration command queue is full after ${this.timeoutMs}ms (${this.capacity} waiting; command ${this.commandId} was not accepted).`;
+  }
+}
+
 export class OrchestrationProjectorDecodeError extends Schema.TaggedErrorClass<OrchestrationProjectorDecodeError>()(
   "OrchestrationProjectorDecodeError",
   {
@@ -83,6 +96,7 @@ export type OrchestrationDispatchError =
   | ProjectionRepositoryError
   | OrchestrationCommandInvariantError
   | OrchestrationCommandPreviouslyRejectedError
+  | OrchestrationCommandQueueFullError
   | OrchestrationProjectorDecodeError
   | OrchestrationListenerCallbackError;
 
