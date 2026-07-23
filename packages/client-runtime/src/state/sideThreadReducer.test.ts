@@ -68,6 +68,7 @@ describe("SideThread detail reduction", () => {
     } satisfies OrchestrationEvent);
     expect(created.kind).toBe("updated");
     if (created.kind !== "updated") return;
+    expect(created.thread.sideThreads?.[0]?.id).toBe("thread:thread-side-reducer");
 
     const posted = applyThreadDetailEvent(created.thread, {
       ...baseEvent,

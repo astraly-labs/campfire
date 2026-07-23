@@ -6,6 +6,7 @@ import {
   type OrchestrationSessionStatus,
   ThreadId,
 } from "@t3tools/contracts";
+import { canonicalizeSideThreads, sideThreadIdForThread } from "@t3tools/shared/sideThread";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -803,7 +804,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           }
           yield* projectionThreadRepository.upsert({
             ...existingRow.value,
-            sideThreads: [
+            sideThreads: canonicalizeSideThreads(event.payload.threadId, [
               ...(existingRow.value.sideThreads ?? []),
               {
                 id: event.payload.sideThreadId,
@@ -816,7 +817,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
                 archivedAt: null,
                 messages: [],
               },
-            ],
+            ]),
             updatedAt: event.occurredAt,
           });
           return;
@@ -829,10 +830,14 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           if (Option.isNone(existingRow)) {
             return;
           }
+          const sideThreadId = sideThreadIdForThread(event.payload.threadId);
           yield* projectionThreadRepository.upsert({
             ...existingRow.value,
-            sideThreads: (existingRow.value.sideThreads ?? []).map((sideThread) =>
-              sideThread.id === event.payload.sideThreadId
+            sideThreads: canonicalizeSideThreads(
+              event.payload.threadId,
+              existingRow.value.sideThreads ?? [],
+            ).map((sideThread) =>
+              sideThread.id === sideThreadId
                 ? {
                     ...sideThread,
                     messages: [
@@ -876,10 +881,14 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             threadId: event.payload.threadId,
           });
           if (Option.isNone(existingRow)) return;
+          const sideThreadId = sideThreadIdForThread(event.payload.threadId);
           yield* projectionThreadRepository.upsert({
             ...existingRow.value,
-            sideThreads: (existingRow.value.sideThreads ?? []).map((sideThread) =>
-              sideThread.id !== event.payload.sideThreadId
+            sideThreads: canonicalizeSideThreads(
+              event.payload.threadId,
+              existingRow.value.sideThreads ?? [],
+            ).map((sideThread) =>
+              sideThread.id !== sideThreadId
                 ? sideThread
                 : {
                     ...sideThread,
@@ -919,10 +928,14 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             threadId: event.payload.threadId,
           });
           if (Option.isNone(existingRow)) return;
+          const sideThreadId = sideThreadIdForThread(event.payload.threadId);
           yield* projectionThreadRepository.upsert({
             ...existingRow.value,
-            sideThreads: (existingRow.value.sideThreads ?? []).map((sideThread) =>
-              sideThread.id === event.payload.sideThreadId
+            sideThreads: canonicalizeSideThreads(
+              event.payload.threadId,
+              existingRow.value.sideThreads ?? [],
+            ).map((sideThread) =>
+              sideThread.id === sideThreadId
                 ? {
                     ...sideThread,
                     messages: sideThread.messages.map((message) =>
@@ -949,10 +962,14 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             threadId: event.payload.threadId,
           });
           if (Option.isNone(existingRow)) return;
+          const sideThreadId = sideThreadIdForThread(event.payload.threadId);
           yield* projectionThreadRepository.upsert({
             ...existingRow.value,
-            sideThreads: (existingRow.value.sideThreads ?? []).map((sideThread) =>
-              sideThread.id === event.payload.sideThreadId
+            sideThreads: canonicalizeSideThreads(
+              event.payload.threadId,
+              existingRow.value.sideThreads ?? [],
+            ).map((sideThread) =>
+              sideThread.id === sideThreadId
                 ? {
                     ...sideThread,
                     readBy: [
@@ -976,10 +993,14 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           if (Option.isNone(existingRow)) {
             return;
           }
+          const sideThreadId = sideThreadIdForThread(event.payload.threadId);
           yield* projectionThreadRepository.upsert({
             ...existingRow.value,
-            sideThreads: (existingRow.value.sideThreads ?? []).map((sideThread) =>
-              sideThread.id === event.payload.sideThreadId
+            sideThreads: canonicalizeSideThreads(
+              event.payload.threadId,
+              existingRow.value.sideThreads ?? [],
+            ).map((sideThread) =>
+              sideThread.id === sideThreadId
                 ? {
                     ...sideThread,
                     archivedAt: event.payload.archivedAt,

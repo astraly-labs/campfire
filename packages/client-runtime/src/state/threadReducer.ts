@@ -13,6 +13,7 @@ import type {
   OrchestrationThreadActivity,
   TurnId,
 } from "@t3tools/contracts";
+import { canonicalizeSideThreads, sideThreadIdForThread } from "@t3tools/shared/sideThread";
 
 function googleUserFromEvent(event: OrchestrationEvent): CollaborationUser | null {
   const actor = event.metadata.actor;
@@ -539,7 +540,7 @@ export function applyThreadDetailEvent(
         kind: "updated",
         thread: {
           ...thread,
-          sideThreads: [
+          sideThreads: canonicalizeSideThreads(thread.id, [
             ...(thread.sideThreads ?? []),
             {
               id: event.payload.sideThreadId,
@@ -552,160 +553,175 @@ export function applyThreadDetailEvent(
               archivedAt: null,
               messages: [],
             },
-          ],
+          ]),
           updatedAt: event.payload.createdAt,
         },
       };
 
-    case "sidethread.message-posted":
+    case "sidethread.message-posted": {
+      const sideThreadId = sideThreadIdForThread(thread.id);
       return {
         kind: "updated",
         thread: {
           ...thread,
-          sideThreads: (thread.sideThreads ?? []).map((sideThread) =>
-            sideThread.id === event.payload.sideThreadId
-              ? {
-                  ...sideThread,
-                  messages: [
-                    ...sideThread.messages,
-                    {
-                      id: event.payload.messageId,
-                      author: event.payload.author,
-                      text: event.payload.text,
-                      ...(event.payload.mentions !== undefined
-                        ? { mentions: event.payload.mentions }
-                        : {}),
-                      ...(event.payload.quotedMessageId !== undefined
-                        ? { quotedMessageId: event.payload.quotedMessageId }
-                        : {}),
-                      ...(event.payload.attachments !== undefined
-                        ? { attachments: event.payload.attachments }
-                        : {}),
-                      ...(event.payload.linkedRef !== undefined
-                        ? { linkedRef: event.payload.linkedRef }
-                        : {}),
-                      ...(event.payload.replyToSideThreadMessageId !== undefined
-                        ? {
-                            replyToSideThreadMessageId: event.payload.replyToSideThreadMessageId,
-                          }
-                        : {}),
-                      createdAt: event.payload.createdAt,
-                      updatedAt: event.payload.createdAt,
-                    },
-                  ],
-                  updatedAt: event.payload.createdAt,
-                }
-              : sideThread,
+          sideThreads: canonicalizeSideThreads(thread.id, thread.sideThreads ?? []).map(
+            (sideThread) =>
+              sideThread.id === sideThreadId
+                ? {
+                    ...sideThread,
+                    messages: [
+                      ...sideThread.messages,
+                      {
+                        id: event.payload.messageId,
+                        author: event.payload.author,
+                        text: event.payload.text,
+                        ...(event.payload.mentions !== undefined
+                          ? { mentions: event.payload.mentions }
+                          : {}),
+                        ...(event.payload.quotedMessageId !== undefined
+                          ? { quotedMessageId: event.payload.quotedMessageId }
+                          : {}),
+                        ...(event.payload.attachments !== undefined
+                          ? { attachments: event.payload.attachments }
+                          : {}),
+                        ...(event.payload.linkedRef !== undefined
+                          ? { linkedRef: event.payload.linkedRef }
+                          : {}),
+                        ...(event.payload.replyToSideThreadMessageId !== undefined
+                          ? {
+                              replyToSideThreadMessageId: event.payload.replyToSideThreadMessageId,
+                            }
+                          : {}),
+                        createdAt: event.payload.createdAt,
+                        updatedAt: event.payload.createdAt,
+                      },
+                    ],
+                    updatedAt: event.payload.createdAt,
+                  }
+                : sideThread,
           ),
           updatedAt: event.payload.createdAt,
         },
       };
+    }
 
-    case "sidethread.message-reacted":
+    case "sidethread.message-reacted": {
+      const sideThreadId = sideThreadIdForThread(thread.id);
       return {
         kind: "updated",
         thread: {
           ...thread,
-          sideThreads: (thread.sideThreads ?? []).map((sideThread) =>
-            sideThread.id !== event.payload.sideThreadId
-              ? sideThread
-              : {
-                  ...sideThread,
-                  messages: sideThread.messages.map((message) => {
-                    if (message.id !== event.payload.messageId) return message;
-                    const reactions = [...(message.reactions ?? [])];
-                    const index = reactions.findIndex(
-                      (reaction) => reaction.emoji === event.payload.emoji,
-                    );
-                    const currentUsers = index === -1 ? [] : reactions[index]!.users;
-                    const users =
-                      event.payload.action === "added"
-                        ? [
-                            ...currentUsers.filter(
+          sideThreads: canonicalizeSideThreads(thread.id, thread.sideThreads ?? []).map(
+            (sideThread) =>
+              sideThread.id !== sideThreadId
+                ? sideThread
+                : {
+                    ...sideThread,
+                    messages: sideThread.messages.map((message) => {
+                      if (message.id !== event.payload.messageId) return message;
+                      const reactions = [...(message.reactions ?? [])];
+                      const index = reactions.findIndex(
+                        (reaction) => reaction.emoji === event.payload.emoji,
+                      );
+                      const currentUsers = index === -1 ? [] : reactions[index]!.users;
+                      const users =
+                        event.payload.action === "added"
+                          ? [
+                              ...currentUsers.filter(
+                                (user) => user.subject !== event.payload.user.subject,
+                              ),
+                              event.payload.user,
+                            ]
+                          : currentUsers.filter(
                               (user) => user.subject !== event.payload.user.subject,
-                            ),
-                            event.payload.user,
-                          ]
-                        : currentUsers.filter(
-                            (user) => user.subject !== event.payload.user.subject,
-                          );
-                    if (users.length === 0 && index !== -1) reactions.splice(index, 1);
-                    else if (index === -1) reactions.push({ emoji: event.payload.emoji, users });
-                    else reactions[index] = { emoji: event.payload.emoji, users };
-                    return { ...message, reactions };
-                  }),
-                  updatedAt: event.payload.createdAt,
-                },
+                            );
+                      if (users.length === 0 && index !== -1) reactions.splice(index, 1);
+                      else if (index === -1) reactions.push({ emoji: event.payload.emoji, users });
+                      else reactions[index] = { emoji: event.payload.emoji, users };
+                      return { ...message, reactions };
+                    }),
+                    updatedAt: event.payload.createdAt,
+                  },
           ),
           updatedAt: event.payload.createdAt,
         },
       };
+    }
 
-    case "sidethread.message-edited":
+    case "sidethread.message-edited": {
+      const sideThreadId = sideThreadIdForThread(thread.id);
       return {
         kind: "updated",
         thread: {
           ...thread,
-          sideThreads: (thread.sideThreads ?? []).map((sideThread) =>
-            sideThread.id === event.payload.sideThreadId
-              ? {
-                  ...sideThread,
-                  messages: sideThread.messages.map((message) =>
-                    message.id === event.payload.messageId
-                      ? {
-                          ...message,
-                          text: event.payload.text,
-                          updatedAt: event.payload.editedAt,
-                          editedAt: event.payload.editedAt,
-                        }
-                      : message,
-                  ),
-                  updatedAt: event.payload.editedAt,
-                }
-              : sideThread,
+          sideThreads: canonicalizeSideThreads(thread.id, thread.sideThreads ?? []).map(
+            (sideThread) =>
+              sideThread.id === sideThreadId
+                ? {
+                    ...sideThread,
+                    messages: sideThread.messages.map((message) =>
+                      message.id === event.payload.messageId
+                        ? {
+                            ...message,
+                            text: event.payload.text,
+                            updatedAt: event.payload.editedAt,
+                            editedAt: event.payload.editedAt,
+                          }
+                        : message,
+                    ),
+                    updatedAt: event.payload.editedAt,
+                  }
+                : sideThread,
           ),
           updatedAt: event.payload.editedAt,
         },
       };
+    }
 
-    case "sidethread.marked-read":
+    case "sidethread.marked-read": {
+      const sideThreadId = sideThreadIdForThread(thread.id);
       return {
         kind: "updated",
         thread: {
           ...thread,
-          sideThreads: (thread.sideThreads ?? []).map((sideThread) =>
-            sideThread.id === event.payload.sideThreadId
-              ? {
-                  ...sideThread,
-                  readBy: [
-                    ...(sideThread.readBy ?? []).filter(
-                      (marker) => marker.user.subject !== event.payload.user.subject,
-                    ),
-                    { user: event.payload.user, lastReadAt: event.payload.lastReadAt },
-                  ],
-                }
-              : sideThread,
+          sideThreads: canonicalizeSideThreads(thread.id, thread.sideThreads ?? []).map(
+            (sideThread) =>
+              sideThread.id === sideThreadId
+                ? {
+                    ...sideThread,
+                    readBy: [
+                      ...(sideThread.readBy ?? []).filter(
+                        (marker) => marker.user.subject !== event.payload.user.subject,
+                      ),
+                      { user: event.payload.user, lastReadAt: event.payload.lastReadAt },
+                    ],
+                  }
+                : sideThread,
           ),
         },
       };
+    }
 
-    case "sidethread.archived":
+    case "sidethread.archived": {
+      const sideThreadId = sideThreadIdForThread(thread.id);
       return {
         kind: "updated",
         thread: {
           ...thread,
-          sideThreads: (thread.sideThreads ?? []).map((sideThread) =>
-            sideThread.id === event.payload.sideThreadId
-              ? {
-                  ...sideThread,
-                  archivedAt: event.payload.archivedAt,
-                  updatedAt: event.payload.archivedAt,
-                }
-              : sideThread,
+          sideThreads: canonicalizeSideThreads(thread.id, thread.sideThreads ?? []).map(
+            (sideThread) =>
+              sideThread.id === sideThreadId
+                ? {
+                    ...sideThread,
+                    archivedAt: event.payload.archivedAt,
+                    updatedAt: event.payload.archivedAt,
+                  }
+                : sideThread,
           ),
           updatedAt: event.payload.archivedAt,
         },
       };
+    }
 
     // ── Events that don't mutate thread state directly ──────────────
     case "thread.approval-response-requested":

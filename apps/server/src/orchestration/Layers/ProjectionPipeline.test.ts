@@ -318,7 +318,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
       const sideThreads = yield* decodeSideThreads(sideThreadRows[0]?.sideThreadsJson);
       assert.deepEqual(sideThreads, [
         {
-          id: SideThreadId.make("side-thread-1"),
+          id: SideThreadId.make("thread:thread-1"),
           anchorMessageId: MessageId.make("message-1"),
           createdBy: { subject: "google:alice", displayName: "Alice" },
           createdAt: "2026-01-01T00:00:01.000Z",
