@@ -101,6 +101,7 @@ describe("orchestration projector", () => {
         activities: [],
         checkpoints: [],
         session: null,
+        createdBy: null,
       },
     ]);
   });
