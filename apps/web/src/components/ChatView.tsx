@@ -258,6 +258,7 @@ import {
   buildLocalDraftThread,
   buildLoadingThreadFromShell,
   buildThreadTurnInterruptInput,
+  attachServerAttachmentPreviewUrls,
   collectUserMessageBlobPreviewUrls,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
@@ -2190,19 +2191,7 @@ function ChatViewContent(props: ChatViewProps) {
     [serverAttachmentIds, serverAttachmentUrls],
   );
   const displayServerMessages = useMemo<ReadonlyArray<ChatMessage>>(() => {
-    if (!serverMessages) return [];
-    return serverMessages.map((message) => {
-      if (!message.attachments || message.attachments.length === 0) {
-        return message;
-      }
-      return {
-        ...message,
-        attachments: message.attachments.map((attachment) => {
-          const previewUrl = serverAttachmentUrlById.get(attachment.id);
-          return previewUrl ? { ...attachment, previewUrl } : attachment;
-        }),
-      };
-    });
+    return attachServerAttachmentPreviewUrls(serverMessages ?? [], serverAttachmentUrlById);
   }, [serverAttachmentUrlById, serverMessages]);
   useEffect(() => {
     if (typeof Image === "undefined" || displayServerMessages.length === 0) {

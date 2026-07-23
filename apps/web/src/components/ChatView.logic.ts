@@ -215,6 +215,23 @@ export function collectUserMessageBlobPreviewUrls(message: ChatMessage): string[
   return previewUrls;
 }
 
+export function attachServerAttachmentPreviewUrls(
+  messages: ReadonlyArray<ChatMessage>,
+  previewUrlByAttachmentId: ReadonlyMap<string, string>,
+): ReadonlyArray<ChatMessage> {
+  return messages.map((message) =>
+    !message.attachments?.length
+      ? message
+      : {
+          ...message,
+          attachments: message.attachments.map((attachment) => {
+            const previewUrl = previewUrlByAttachmentId.get(attachment.id);
+            return previewUrl ? { ...attachment, previewUrl } : attachment;
+          }),
+        },
+  );
+}
+
 export interface PullRequestDialogState {
   initialReference: string | null;
   key: number;

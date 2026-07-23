@@ -13,6 +13,7 @@ import {
   MAX_HIDDEN_MOUNTED_PREVIEW_THREADS,
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
   branchMismatchKey,
+  attachServerAttachmentPreviewUrls,
   buildExpiredTerminalContextToastCopy,
   buildLoadingThreadFromShell,
   buildThreadTurnInterruptInput,
@@ -128,6 +129,42 @@ describe("buildLoadingThreadFromShell", () => {
       activities: [],
       checkpoints: [],
     });
+  });
+});
+
+describe("attachServerAttachmentPreviewUrls", () => {
+  it("makes another user's persisted image visible through its server asset URL", () => {
+    const attachmentId = "thread-1-shared-image";
+    const messages = [
+      {
+        id: MessageId.make("message-with-shared-image"),
+        role: "user" as const,
+        text: "Take a look",
+        attachments: [
+          {
+            type: "image" as const,
+            id: attachmentId,
+            name: "image.png",
+            mimeType: "image/png",
+            sizeBytes: 128,
+          },
+        ],
+        turnId: null,
+        streaming: false,
+        createdAt: now,
+        updatedAt: now,
+        author: {
+          subject: "google:other-user",
+          displayName: "Other User",
+        },
+      },
+    ];
+    const sharedUrl = "https://campfire.example/api/assets/signed/image.png";
+
+    expect(
+      attachServerAttachmentPreviewUrls(messages, new Map([[attachmentId, sharedUrl]]))[0]
+        ?.attachments?.[0]?.previewUrl,
+    ).toBe(sharedUrl);
   });
 });
 
