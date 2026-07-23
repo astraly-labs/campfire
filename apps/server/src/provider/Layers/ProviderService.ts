@@ -885,6 +885,12 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       const currentAdapters = yield* getAdapterEntries;
       const sessionsByProvider = yield* Effect.forEach(currentAdapters, ([instanceId, adapter]) =>
         adapter.listSessions().pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("provider.sessions.list-failed", {
+              providerInstanceId: instanceId,
+              cause,
+            }).pipe(Effect.as([] as const)),
+          ),
           Effect.map((sessions) =>
             sessions.map((session) => ({
               ...session,
@@ -1017,7 +1023,16 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const runStopAll = Effect.fn("runStopAll")(function* () {
     const threadIds = yield* directory.listThreadIds();
     const currentAdapters = yield* getAdapterEntries;
-    const activeSessions = yield* Effect.forEach(currentAdapters, ([instanceId, adapter]) =>
+    const detachedAdapters = currentAdapters.filter(
+      ([, adapter]) => adapter.capabilities.processOwnership === "external",
+    );
+    const adaptersToStop =
+      detachedAdapters.length > 0
+        ? currentAdapters.filter(
+            ([, adapter]) => adapter.capabilities.processOwnership !== "external",
+          )
+        : currentAdapters;
+    const activeSessions = yield* Effect.forEach(adaptersToStop, ([instanceId, adapter]) =>
       adapter.listSessions().pipe(
         Effect.map((sessions) =>
           sessions.map((session) => ({
@@ -1035,31 +1050,52 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         }),
       ),
     ).pipe(Effect.asVoid);
-    yield* Effect.forEach(currentAdapters, ([, adapter]) => adapter.stopAll()).pipe(Effect.asVoid);
-    yield* McpSessionRegistry.revokeAllActiveMcpCredentials();
-    McpProviderSession.clearAllMcpProviderSessions();
+    yield* Effect.forEach(adaptersToStop, ([, adapter]) => adapter.stopAll()).pipe(Effect.asVoid);
+    if (detachedAdapters.length === 0) {
+      yield* McpSessionRegistry.revokeAllActiveMcpCredentials();
+      McpProviderSession.clearAllMcpProviderSessions();
+    } else {
+      yield* Effect.forEach(
+        activeSessions,
+        (session) =>
+          McpSessionRegistry.revokeActiveMcpThread(session.threadId).pipe(
+            Effect.tap(() =>
+              Effect.sync(() => McpProviderSession.clearMcpProviderSession(session.threadId)),
+            ),
+          ),
+        { discard: true },
+      );
+    }
+    const stoppedThreadIds =
+      detachedAdapters.length === 0
+        ? new Set(threadIds)
+        : new Set(activeSessions.map((session) => session.threadId));
     const bindings = yield* directory.listBindings().pipe(Effect.orElseSucceed(() => []));
     yield* Effect.forEach(bindings, (binding) =>
-      Effect.gen(function* () {
-        const providerInstanceId = dieOnMissingBindingInstanceId(
-          "ProviderService.stopAll",
-          binding,
-        );
-        return yield* directory.upsert({
-          threadId: binding.threadId,
-          provider: binding.provider,
-          providerInstanceId,
-          status: "stopped",
-          runtimePayload: {
-            activeTurnId: null,
-            lastRuntimeEvent: "provider.stopAll",
-            lastRuntimeEventAt: yield* nowIso,
-          },
-        });
-      }),
+      stoppedThreadIds.has(binding.threadId)
+        ? Effect.gen(function* () {
+            const providerInstanceId = dieOnMissingBindingInstanceId(
+              "ProviderService.stopAll",
+              binding,
+            );
+            return yield* directory.upsert({
+              threadId: binding.threadId,
+              provider: binding.provider,
+              providerInstanceId,
+              status: "stopped",
+              runtimePayload: {
+                activeTurnId: null,
+                lastRuntimeEvent: "provider.stopAll",
+                lastRuntimeEventAt: yield* nowIso,
+              },
+            });
+          })
+        : Effect.void,
     ).pipe(Effect.asVoid);
     yield* analytics.record("provider.sessions.stopped_all", {
-      sessionCount: threadIds.length,
+      sessionCount: stoppedThreadIds.size,
+      detachedSessionCount:
+        detachedAdapters.length > 0 ? threadIds.length - stoppedThreadIds.size : 0,
     });
     yield* analytics.flush;
   });

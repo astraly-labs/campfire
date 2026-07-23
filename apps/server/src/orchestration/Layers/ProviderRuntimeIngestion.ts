@@ -91,6 +91,8 @@ const BUFFERED_PROPOSED_PLAN_BY_ID_CACHE_CAPACITY = 10_000;
 const BUFFERED_PROPOSED_PLAN_BY_ID_TTL = Duration.minutes(120);
 const TASK_DESCRIPTION_BY_TASK_CACHE_CAPACITY = 10_000;
 const TASK_DESCRIPTION_BY_TASK_TTL = Duration.minutes(120);
+const SEEN_RUNTIME_EVENT_CACHE_CAPACITY = 100_000;
+const SEEN_RUNTIME_EVENT_TTL = Duration.minutes(120);
 const MAX_BUFFERED_ASSISTANT_CHARS = 24_000;
 const STRICT_PROVIDER_LIFECYCLE_GUARD = process.env.T3CODE_STRICT_PROVIDER_LIFECYCLE_GUARD !== "0";
 
@@ -693,9 +695,9 @@ const make = Effect.gen(function* () {
   const providerService = yield* ProviderService;
   const projectionTurnRepository = yield* ProjectionTurnRepository;
   const serverSettingsService = yield* ServerSettingsService;
-  const providerCommandId = (event: ProviderRuntimeEvent, tag: string) =>
-    crypto.randomUUIDv4.pipe(
-      Effect.map((uuid) => CommandId.make(`provider:${event.eventId}:${tag}:${uuid}`)),
+  const providerCommandId = (event: ProviderRuntimeEvent, tag: string, discriminator?: string) =>
+    Effect.succeed(
+      CommandId.make(`provider:${event.eventId}:${tag}${discriminator ? `:${discriminator}` : ""}`),
     );
 
   const turnMessageIdsByTurnKey = yield* Cache.make<string, Set<MessageId>>({
@@ -731,6 +733,11 @@ const make = Effect.gen(function* () {
     capacity: TASK_DESCRIPTION_BY_TASK_CACHE_CAPACITY,
     timeToLive: TASK_DESCRIPTION_BY_TASK_TTL,
     lookup: () => Effect.succeed(""),
+  });
+  const seenRuntimeEventIds = yield* Cache.make<string, true>({
+    capacity: SEEN_RUNTIME_EVENT_CACHE_CAPACITY,
+    timeToLive: SEEN_RUNTIME_EVENT_TTL,
+    lookup: () => Effect.succeed(true),
   });
 
   const rememberTaskDescription = (threadId: ThreadId, taskId: string, description: string) =>
@@ -954,7 +961,7 @@ const make = Effect.gen(function* () {
 
       yield* orchestrationEngine.dispatch({
         type: "thread.message.assistant.delta",
-        commandId: yield* providerCommandId(input.event, input.commandTag),
+        commandId: yield* providerCommandId(input.event, input.commandTag, input.messageId),
         threadId: input.threadId,
         messageId: input.messageId,
         delta: bufferedText,
@@ -1021,7 +1028,11 @@ const make = Effect.gen(function* () {
       if (hasRenderableText) {
         yield* orchestrationEngine.dispatch({
           type: "thread.message.assistant.delta",
-          commandId: yield* providerCommandId(input.event, input.finalDeltaCommandTag),
+          commandId: yield* providerCommandId(
+            input.event,
+            input.finalDeltaCommandTag,
+            input.messageId,
+          ),
           threadId: input.threadId,
           messageId: input.messageId,
           delta: text,
@@ -1033,7 +1044,7 @@ const make = Effect.gen(function* () {
       if (input.hasProjectedMessage || hasRenderableText) {
         yield* orchestrationEngine.dispatch({
           type: "thread.message.assistant.complete",
-          commandId: yield* providerCommandId(input.event, input.commandTag),
+          commandId: yield* providerCommandId(input.event, input.commandTag, input.messageId),
           threadId: input.threadId,
           messageId: input.messageId,
           ...(input.turnId ? { turnId: input.turnId } : {}),
@@ -1109,7 +1120,7 @@ const make = Effect.gen(function* () {
       const existingPlan = findProposedPlanById(input.threadProposedPlans, input.planId);
       yield* orchestrationEngine.dispatch({
         type: "thread.proposed-plan.upsert",
-        commandId: yield* providerCommandId(input.event, "proposed-plan-upsert"),
+        commandId: yield* providerCommandId(input.event, "proposed-plan-upsert", input.planId),
         threadId: input.threadId,
         proposedPlan: {
           id: input.planId,
@@ -1480,7 +1491,11 @@ const make = Effect.gen(function* () {
           if (spillChunk.length > 0) {
             yield* orchestrationEngine.dispatch({
               type: "thread.message.assistant.delta",
-              commandId: yield* providerCommandId(event, "assistant-delta-buffer-spill"),
+              commandId: yield* providerCommandId(
+                event,
+                "assistant-delta-buffer-spill",
+                assistantMessageId,
+              ),
               threadId: thread.id,
               messageId: assistantMessageId,
               delta: spillChunk,
@@ -1491,7 +1506,7 @@ const make = Effect.gen(function* () {
         } else {
           yield* orchestrationEngine.dispatch({
             type: "thread.message.assistant.delta",
-            commandId: yield* providerCommandId(event, "assistant-delta"),
+            commandId: yield* providerCommandId(event, "assistant-delta", assistantMessageId),
             threadId: thread.id,
             messageId: assistantMessageId,
             delta: assistantDelta,
@@ -1765,8 +1780,8 @@ const make = Effect.gen(function* () {
       }
 
       const activities = runtimeEventToActivities(event, taskTitle);
-      yield* Effect.forEach(activities, (activity) =>
-        providerCommandId(event, "thread-activity-append").pipe(
+      yield* Effect.forEach(activities, (activity, index) =>
+        providerCommandId(event, "thread-activity-append", `${activity.kind}:${index}`).pipe(
           Effect.flatMap((commandId) =>
             orchestrationEngine.dispatch({
               type: "thread.activity.append",
@@ -1782,8 +1797,20 @@ const make = Effect.gen(function* () {
 
   const processDomainEvent = (_event: TurnStartRequestedDomainEvent) => Effect.void;
 
-  const processInput = (input: RuntimeIngestionInput) =>
-    input.source === "runtime" ? processRuntimeEvent(input.event) : processDomainEvent(input.event);
+  const processInput = (input: RuntimeIngestionInput) => {
+    if (input.source === "domain") {
+      return processDomainEvent(input.event);
+    }
+    return Cache.getOption(seenRuntimeEventIds, input.event.eventId).pipe(
+      Effect.flatMap((seen) =>
+        Option.isSome(seen)
+          ? Effect.void
+          : processRuntimeEvent(input.event).pipe(
+              Effect.andThen(Cache.set(seenRuntimeEventIds, input.event.eventId, true)),
+            ),
+      ),
+    );
+  };
 
   const processInputSafely = (input: RuntimeIngestionInput) =>
     processInput(input).pipe(

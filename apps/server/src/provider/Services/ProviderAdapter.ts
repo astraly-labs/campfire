@@ -30,6 +30,11 @@ export interface ProviderAdapterCapabilities {
    * Declares whether changing the model on an existing session is supported.
    */
   readonly sessionModelSwitch: ProviderSessionModelSwitchMode;
+  /**
+   * External adapters detach on backend shutdown so their provider processes
+   * can survive a web/backend rollout.
+   */
+  readonly processOwnership?: "adapter" | "external";
 }
 
 export interface ProviderThreadTurnSnapshot {
@@ -94,12 +99,12 @@ export interface ProviderAdapterShape<TError> {
   /**
    * List currently active provider sessions for this adapter.
    */
-  readonly listSessions: () => Effect.Effect<ReadonlyArray<ProviderSession>>;
+  readonly listSessions: () => Effect.Effect<ReadonlyArray<ProviderSession>, TError>;
 
   /**
    * Check whether this adapter owns an active session id.
    */
-  readonly hasSession: (threadId: ThreadId) => Effect.Effect<boolean>;
+  readonly hasSession: (threadId: ThreadId) => Effect.Effect<boolean, TError>;
 
   /**
    * Read a provider thread snapshot.

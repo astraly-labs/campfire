@@ -36,6 +36,7 @@ import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeCodexAdapter } from "../Layers/CodexAdapter.ts";
+import { makeRemoteCodexAdapter } from "../host/RemoteCodexAdapter.ts";
 import { checkCodexProviderStatus, makePendingCodexProvider } from "../Layers/CodexProvider.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
@@ -155,11 +156,29 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
       // here; the registry only has to worry about snapshot-build and
       // spawner-availability failures surfaced from `checkCodexProviderStatus`
       // below.
-      const adapter = yield* makeCodexAdapter(effectiveConfig, {
-        instanceId,
-        environment: processEnv,
-        ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
-      });
+      const providerHostSocketPath = process.env.T3CODE_CODEX_HOST_SOCKET?.trim();
+      const adapter = providerHostSocketPath
+        ? yield* makeRemoteCodexAdapter({
+            socketPath: providerHostSocketPath,
+            instanceId,
+            config: effectiveConfig,
+            environment,
+          }).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ProviderDriverError({
+                  driver: DRIVER_KIND,
+                  instanceId,
+                  detail: cause.message,
+                  cause,
+                }),
+            ),
+          )
+        : yield* makeCodexAdapter(effectiveConfig, {
+            instanceId,
+            environment: processEnv,
+            ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
+          });
       const textGeneration = yield* makeCodexTextGeneration(effectiveConfig, processEnv);
 
       // Build a managed snapshot whose settings never change — mutations come

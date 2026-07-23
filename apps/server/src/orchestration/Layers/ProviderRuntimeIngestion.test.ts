@@ -946,6 +946,50 @@ describe("ProviderRuntimeIngestion", () => {
     expect(message?.streaming).toBe(false);
   });
 
+  it("ignores a replayed provider event with the same event id", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const delta: LegacyProviderRuntimeEvent = {
+      type: "content.delta",
+      eventId: asEventId("evt-message-delta-replayed"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-replayed-delta"),
+      itemId: asItemId("item-replayed-delta"),
+      payload: {
+        streamKind: "assistant_text",
+        delta: "once",
+      },
+    };
+    harness.emit(delta);
+    harness.emit(delta);
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-message-completed-replayed-delta"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-replayed-delta"),
+      itemId: asItemId("item-replayed-delta"),
+      payload: {
+        itemType: "assistant_message",
+        status: "completed",
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.messages.some(
+        (message: ProviderRuntimeTestMessage) =>
+          message.id === "assistant:item-replayed-delta" && !message.streaming,
+      ),
+    );
+    const message = thread.messages.find(
+      (entry: ProviderRuntimeTestMessage) => entry.id === "assistant:item-replayed-delta",
+    );
+    expect(message?.text).toBe("once");
+  });
+
   it("uses assistant item completion detail when no assistant deltas were streamed", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
