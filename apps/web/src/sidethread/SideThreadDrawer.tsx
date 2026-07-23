@@ -302,7 +302,7 @@ export function SideThreadDrawer(props: {
             ) : sideThread.messages.length === 0 ? (
               <p className="text-sm text-muted-foreground">No team messages yet.</p>
             ) : (
-              sideThread.messages.map((message) => {
+              sideThread.messages.map((message, index) => {
                 const reply = message.replyToSideThreadMessageId
                   ? sideThread.messages.find(
                       (candidate) => candidate.id === message.replyToSideThreadMessageId,
@@ -312,19 +312,40 @@ export function SideThreadDrawer(props: {
                   ? parentMessages.get(message.quotedMessageId)
                   : null;
                 const own = message.author.subject === currentSubject;
+                const continuesPrevious =
+                  sideThread.messages[index - 1]?.author.subject === message.author.subject;
+                const continuesNext =
+                  sideThread.messages[index + 1]?.author.subject === message.author.subject;
+                const timestamp = new Date(message.createdAt).toLocaleTimeString([], {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                });
                 return (
-                  <div key={message.id} className="group rounded-xl border bg-muted/25 p-3">
-                    <div className="mb-2 flex items-center gap-2">
-                      <CollaborationAvatar user={message.author} size="xs" labelPrefix="Sent by" />
-                      <span className="text-xs font-medium">{message.author.displayName}</span>
-                      <time className="ml-auto text-[10px] text-muted-foreground">
-                        {new Date(message.createdAt).toLocaleTimeString([], {
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })}
+                  <div
+                    key={message.id}
+                    className={`group border bg-muted/25 p-3 ${
+                      continuesPrevious ? "-mt-3 border-t-0 pt-1" : "rounded-t-xl"
+                    } ${continuesNext ? "" : "rounded-b-xl"}`}
+                  >
+                    {!continuesPrevious ? (
+                      <div className="mb-2 flex items-center gap-2">
+                        <CollaborationAvatar
+                          user={message.author}
+                          size="xs"
+                          labelPrefix="Sent by"
+                        />
+                        <span className="text-xs font-medium">{message.author.displayName}</span>
+                        <time className="ml-auto text-[10px] text-muted-foreground">
+                          {timestamp}
+                          {message.editedAt ? " · edited" : ""}
+                        </time>
+                      </div>
+                    ) : (
+                      <time className="float-right ml-2 text-[10px] text-muted-foreground">
+                        {timestamp}
                         {message.editedAt ? " · edited" : ""}
                       </time>
-                    </div>
+                    )}
                     {reply ? (
                       <div className="mb-2 truncate rounded-md border-l-2 border-primary/50 bg-background/55 px-2 py-1 text-[11px] text-muted-foreground">
                         Reply to {reply.author.displayName}: {reply.text || "attachment"}
