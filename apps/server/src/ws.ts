@@ -283,7 +283,13 @@ function isThreadDetailEvent(event: OrchestrationEvent): event is Extract<
       | "thread.activity-appended"
       | "thread.turn-diff-completed"
       | "thread.reverted"
-      | "thread.session-set";
+      | "thread.session-set"
+      | "sidethread.created"
+      | "sidethread.message-posted"
+      | "sidethread.message-reacted"
+      | "sidethread.message-edited"
+      | "sidethread.marked-read"
+      | "sidethread.archived";
   }
 > {
   return (
@@ -292,7 +298,13 @@ function isThreadDetailEvent(event: OrchestrationEvent): event is Extract<
     event.type === "thread.activity-appended" ||
     event.type === "thread.turn-diff-completed" ||
     event.type === "thread.reverted" ||
-    event.type === "thread.session-set"
+    event.type === "thread.session-set" ||
+    event.type === "sidethread.created" ||
+    event.type === "sidethread.message-posted" ||
+    event.type === "sidethread.message-reacted" ||
+    event.type === "sidethread.message-edited" ||
+    event.type === "sidethread.marked-read" ||
+    event.type === "sidethread.archived"
   );
 }
 

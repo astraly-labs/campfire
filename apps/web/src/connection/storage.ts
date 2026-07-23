@@ -49,11 +49,13 @@ const StoredShellSnapshot = Schema.Struct({
   snapshot: OrchestrationShellSnapshot,
 });
 const StoredShellSnapshotJson = Schema.fromJsonString(StoredShellSnapshot);
-// v2 stores the snapshot sequence alongside the thread so a warm cache can
-// resume via `afterSequence` instead of re-downloading the full thread body.
+// v3 stores the snapshot sequence alongside the thread and invalidates v2
+// entries that may have missed side-thread events before those events were
+// included in detailed-thread subscriptions. It can still resume via
+// `afterSequence` instead of re-downloading the full thread body.
 // Older v1 entries (no sequence) fail to decode and are treated as a cold cache.
 const StoredThreadSnapshot = Schema.Struct({
-  schemaVersion: Schema.Literal(2),
+  schemaVersion: Schema.Literal(3),
   environmentId: EnvironmentId,
   threadId: ThreadId,
   snapshot: OrchestrationThreadDetailSnapshot,
@@ -561,7 +563,7 @@ export const connectionStorageLayer = Layer.effectContext(
       saveThread: (environmentId, snapshot) =>
         Effect.gen(function* () {
           const encoded = yield* encodeStoredThreadSnapshot({
-            schemaVersion: 2,
+            schemaVersion: 3,
             environmentId,
             threadId: snapshot.thread.id,
             snapshot,

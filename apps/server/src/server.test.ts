@@ -29,6 +29,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ResolvedKeybindingRule,
+  SideThreadId,
   ThreadId,
   WS_METHODS,
   WsRpcGroup,
@@ -6344,6 +6345,60 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(items[0]?.kind, "snapshot");
       assert.equal(items[1]?.kind, "event");
       assert.equal(items[1]?.kind === "event" ? items[1].event.sequence : null, 2);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
+  );
+
+  it.effect("streams side-thread events to the detailed thread subscription", () =>
+    Effect.gen(function* () {
+      const thread = makeDefaultOrchestrationReadModel().threads[0]!;
+      const liveEvents = yield* PubSub.unbounded<OrchestrationEvent>();
+      const createdEvent = {
+        sequence: 2,
+        eventId: EventId.make("event-side-thread-created"),
+        aggregateKind: "thread",
+        aggregateId: defaultThreadId,
+        occurredAt: "2026-01-01T00:00:01.000Z",
+        commandId: null,
+        causationEventId: null,
+        correlationId: null,
+        metadata: {},
+        type: "sidethread.created",
+        payload: {
+          threadId: defaultThreadId,
+          sideThreadId: SideThreadId.make(`thread:${defaultThreadId}`),
+          createdBy: { subject: "google:alice", displayName: "Alice" },
+          createdAt: "2026-01-01T00:00:01.000Z",
+        },
+      } satisfies Extract<OrchestrationEvent, { type: "sidethread.created" }>;
+
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            streamDomainEvents: Stream.fromPubSub(liveEvents),
+          },
+          projectionSnapshotQuery: {
+            getThreadDetailSnapshot: () =>
+              Effect.gen(function* () {
+                yield* Effect.sleep("25 millis");
+                yield* PubSub.publish(liveEvents, createdEvent);
+                return Option.some({ snapshotSequence: 1, thread });
+              }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const items = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.subscribeThread]({
+            threadId: defaultThreadId,
+          }).pipe(Stream.take(2), Stream.runCollect),
+        ),
+      ).pipe(Effect.timeout("2 seconds"));
+
+      assert.equal(items[0]?.kind, "snapshot");
+      assert.equal(items[1]?.kind, "event");
+      assert.equal(items[1]?.kind === "event" ? items[1].event.type : null, "sidethread.created");
     }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
   );
 
