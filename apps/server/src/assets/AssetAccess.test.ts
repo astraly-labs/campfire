@@ -70,7 +70,7 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(testLayer)),
   );
 
-  it.effect("rejects workspace files outside the authorized root", () =>
+  it.effect("issues exact URLs for temporary preview artifacts", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -79,6 +79,43 @@ describe("AssetAccess", () => {
       });
       const outside = yield* fileSystem.makeTempDirectoryScoped({
         prefix: "t3-asset-outside-",
+      });
+      const htmlPath = path.join(outside, "report.html");
+      const siblingPath = path.join(outside, "other.html");
+      yield* fileSystem.writeFileString(htmlPath, "<p>outside</p>");
+      yield* fileSystem.writeFileString(siblingPath, "<p>other</p>");
+      const canonicalHtmlPath = yield* fileSystem.realPath(htmlPath);
+
+      const result = yield* issueAssetUrl({
+        resource: {
+          _tag: "workspace-file",
+          threadId: ThreadId.make("thread-1"),
+          path: htmlPath,
+        },
+        workspaceRoot: root,
+      });
+      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separatorIndex = suffix.indexOf("/");
+      const token = suffix.slice(0, separatorIndex);
+
+      expect(yield* resolveAsset(token, "report.html")).toEqual({
+        kind: "file",
+        path: canonicalHtmlPath,
+      });
+      expect(yield* resolveAsset(token, "other.html")).toBeNull();
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("rejects preview files outside the workspace and temporary directories", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-asset-root-",
+      });
+      const outside = yield* fileSystem.makeTempDirectoryScoped({
+        directory: process.cwd(),
+        prefix: ".t3-asset-outside-",
       });
       const htmlPath = path.join(outside, "report.html");
       yield* fileSystem.writeFileString(htmlPath, "<p>outside</p>");
@@ -92,15 +129,38 @@ describe("AssetAccess", () => {
         workspaceRoot: root,
       }).pipe(Effect.flip);
       expect(error.message).toBe("Workspace file path must be relative to the project root.");
-      expect(error).toMatchObject({
-        _tag: "AssetWorkspacePathValidationError",
+      expect(error._tag).toBe("AssetWorkspacePathValidationError");
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("rejects temporary symlinks that escape the allowed roots", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-asset-root-",
+      });
+      const temporary = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-asset-link-",
+      });
+      const outside = yield* fileSystem.makeTempDirectoryScoped({
+        directory: process.cwd(),
+        prefix: ".t3-asset-link-target-",
+      });
+      const htmlPath = path.join(outside, "report.html");
+      const linkPath = path.join(temporary, "report.html");
+      yield* fileSystem.writeFileString(htmlPath, "<p>outside</p>");
+      yield* fileSystem.symlink(htmlPath, linkPath);
+
+      const error = yield* issueAssetUrl({
         resource: {
           _tag: "workspace-file",
-          threadId: "thread-1",
-          path: htmlPath,
+          threadId: ThreadId.make("thread-1"),
+          path: linkPath,
         },
-      });
-      expect(error.cause).toBeInstanceOf(WorkspacePaths.WorkspacePathOutsideRootError);
+        workspaceRoot: root,
+      }).pipe(Effect.flip);
+      expect(error._tag).toBe("AssetWorkspacePathValidationError");
     }).pipe(Effect.provide(testLayer)),
   );
 

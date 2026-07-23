@@ -1,3 +1,5 @@
+import * as NodeOS from "node:os";
+
 import type { AssetResource } from "@t3tools/contracts";
 import {
   AssetAttachmentNotFoundError,
@@ -55,6 +57,7 @@ const PREVIEW_ASSET_EXTENSIONS = new Set([
   ".woff",
   ".woff2",
 ]);
+const TEMPORARY_ARTIFACT_ROOTS = [NodeOS.tmpdir(), "/tmp"] as const;
 
 const AssetClaimsSchema = Schema.Union([
   Schema.Struct({
@@ -162,6 +165,29 @@ const resolveCanonicalWorkspaceFileForRequest = (input: {
     Effect.orElseSucceed(() => null),
   );
 
+const resolveCanonicalTemporaryArtifact = Effect.fn(
+  "AssetAccess.resolveCanonicalTemporaryArtifact",
+)(function* (filePath: string) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  if (!path.isAbsolute(filePath) || !isWorkspacePreviewEntryPath(filePath)) {
+    return null;
+  }
+  const canonicalFile = yield* optionOnNotFound(fileSystem.realPath(filePath));
+  if (Option.isNone(canonicalFile)) return null;
+  const canonicalRoots = yield* Effect.forEach(TEMPORARY_ARTIFACT_ROOTS, (root) =>
+    optionOnNotFound(fileSystem.realPath(root)),
+  );
+  const insideTemporaryRoot = canonicalRoots.some((root) => {
+    if (Option.isNone(root)) return false;
+    const relative = path.relative(root.value, canonicalFile.value);
+    return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
+  });
+  if (!insideTemporaryRoot) return null;
+  const info = yield* optionOnNotFound(fileSystem.stat(canonicalFile.value));
+  return Option.isSome(info) && info.value.type === "File" ? canonicalFile.value : null;
+});
+
 export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (input: {
   readonly resource: AssetResource;
   readonly workspaceRoot?: string;
@@ -192,6 +218,30 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       const relativePath = path.isAbsolute(input.resource.path)
         ? path.relative(workspaceRoot, input.resource.path)
         : input.resource.path;
+      const outsideWorkspace = relativePath.startsWith("..") || path.isAbsolute(relativePath);
+      const temporaryArtifact =
+        path.isAbsolute(input.resource.path) && outsideWorkspace
+          ? yield* resolveCanonicalTemporaryArtifact(input.resource.path).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new AssetWorkspaceAssetInspectionError({
+                    resource: input.resource,
+                    cause,
+                  }),
+              ),
+            )
+          : null;
+      if (temporaryArtifact) {
+        claims = {
+          version: 1,
+          kind: "workspace-file-exact",
+          workspaceRoot: path.dirname(temporaryArtifact),
+          relativePath: path.basename(temporaryArtifact),
+          expiresAt,
+        };
+        fileName = path.basename(temporaryArtifact);
+        break;
+      }
       const resolved = yield* workspacePaths
         .resolveRelativePathWithinRoot({ workspaceRoot, relativePath })
         .pipe(

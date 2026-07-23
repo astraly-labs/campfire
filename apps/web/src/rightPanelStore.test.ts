@@ -205,6 +205,22 @@ describe("rightPanelStore", () => {
     });
   });
 
+  it("opens temporary artifacts as dedicated surfaces", () => {
+    useRightPanelStore.getState().openArtifact(refA, "/tmp/design.html");
+
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: "artifact:/tmp/design.html",
+      surfaces: [
+        {
+          id: "artifact:/tmp/design.html",
+          kind: "artifact",
+          absolutePath: "/tmp/design.html",
+        },
+      ],
+    });
+  });
+
   it("removes persisted file surfaces when their workspace no longer exists", () => {
     useRightPanelStore.getState().openFile(refA, "src/index.ts");
     useRightPanelStore.getState().open(refA, "plan");
