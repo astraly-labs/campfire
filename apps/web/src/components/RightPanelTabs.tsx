@@ -499,6 +499,8 @@ function surfaceTitle(
       return "Files";
     case "file":
       return surface.relativePath.slice(surface.relativePath.lastIndexOf("/") + 1);
+    case "artifact":
+      return surface.absolutePath.split(/[\\/]/).at(-1) ?? "Artifact";
     case "terminal":
       return (
         terminalLabelsById.get(surface.activeTerminalId) ??
@@ -573,6 +575,15 @@ function SurfaceIcon({
           kind="file"
           theme={theme}
           className="size-3"
+        />
+      );
+    case "artifact":
+      return (
+        <PierreEntryIcon
+          pathValue={surface.absolutePath}
+          kind="file"
+          theme={theme}
+          className="size-3.5"
         />
       );
     case "terminal":

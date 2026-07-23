@@ -1010,6 +1010,7 @@ interface MarkdownFileLinkProps {
   onOpen?: ((targetPath: string) => Promise<AtomCommandResult<unknown, unknown>>) | undefined;
   onOpenInPanel: (workspaceRelativePath: string, line: number | undefined) => void;
   openInEditorMenuLabel: string;
+  onPreviewArtifact?: (() => void) | undefined;
   onOpenInBrowser?: (() => Promise<AtomCommandResult<unknown, unknown>>) | undefined;
   onReveal?: (() => Promise<AtomCommandResult<unknown, unknown>>) | undefined;
   /** Platform-specific menu label ("Reveal in Finder", ...); required for the
@@ -1447,6 +1448,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
   onOpen,
   onOpenInPanel,
   openInEditorMenuLabel,
+  onPreviewArtifact,
   onOpenInBrowser,
   onReveal,
   revealLabel,
@@ -1536,6 +1538,10 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
     })();
   }, [onOpenInBrowser, targetPath]);
 
+  const handlePreviewArtifact = useCallback(() => {
+    onPreviewArtifact?.();
+  }, [onPreviewArtifact]);
+
   const handleRevealInFileManager = useCallback(() => {
     if (!onReveal) {
       return;
@@ -1622,6 +1628,9 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
         const clicked = await api.contextMenu.show(
           [
             ...(onOpen ? ([{ id: "open", label: openInEditorMenuLabel }] as const) : []),
+            ...(onPreviewArtifact
+              ? ([{ id: "preview-artifact", label: "Preview artifact" }] as const)
+              : []),
             ...(onOpenInBrowser
               ? ([{ id: "open-in-browser", label: "Open in integrated browser" }] as const)
               : []),
@@ -1634,6 +1643,10 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
 
         if (clicked === "open") {
           handleOpenInEditor();
+          return;
+        }
+        if (clicked === "preview-artifact") {
+          handlePreviewArtifact();
           return;
         }
         if (clicked === "open-in-browser") {
@@ -1663,7 +1676,9 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
       handleCopy,
       handleOpenInBrowser,
       handleOpenInEditor,
+      handlePreviewArtifact,
       handleRevealInFileManager,
+      onPreviewArtifact,
       onOpenInBrowser,
       onOpen,
       onReveal,
@@ -1691,12 +1706,15 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
 
   const canOpenInEditor = onOpen !== undefined;
   const canOpenInBrowser = onOpenInBrowser !== undefined;
+  const canPreviewArtifact = onPreviewArtifact !== undefined;
   const canOpenInPanel = threadRef !== undefined && Boolean(workspaceRelativePath);
-  const hasPrimaryAction = hasMarkdownFilePrimaryAction({
-    canOpenInEditor,
-    canOpenInBrowser,
-    canOpenInPanel,
-  });
+  const hasPrimaryAction =
+    canPreviewArtifact ||
+    hasMarkdownFilePrimaryAction({
+      canOpenInEditor,
+      canOpenInBrowser,
+      canOpenInPanel,
+    });
   const useBrowserPrimaryAction = shouldUseMarkdownFileBrowserPrimaryAction({
     iconPath,
     canOpenInEditor,
@@ -1722,6 +1740,10 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
                 event.stopPropagation();
                 if (onOpen && shouldOpenMarkdownFileLinkInEditor(event)) {
                   handleOpenInEditor();
+                  return;
+                }
+                if (onPreviewArtifact) {
+                  handlePreviewArtifact();
                   return;
                 }
                 if (useBrowserPrimaryAction) {
@@ -1786,6 +1808,7 @@ function areMarkdownFileLinkPropsEqual(
     previous.onOpen === next.onOpen &&
     previous.onOpenInPanel === next.onOpenInPanel &&
     previous.openInEditorMenuLabel === next.openInEditorMenuLabel &&
+    previous.onPreviewArtifact === next.onPreviewArtifact &&
     previous.onOpenInBrowser === next.onOpenInBrowser &&
     previous.onReveal === next.onReveal &&
     previous.revealLabel === next.revealLabel &&
@@ -2103,6 +2126,11 @@ function ChatMarkdown({
               : undefined
           }
           revealLabel={revealInFileManagerLabel}
+          onPreviewArtifact={
+            threadRef && isBrowserPreviewFile(fileLinkMeta.filePath)
+              ? () => useRightPanelStore.getState().openArtifact(threadRef, fileLinkMeta.filePath)
+              : undefined
+          }
           onOpenInBrowser={
             threadRef &&
             isPreviewSupportedInRuntime() &&
