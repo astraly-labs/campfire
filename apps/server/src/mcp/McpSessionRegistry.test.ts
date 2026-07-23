@@ -2,6 +2,8 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import { HttpServer } from "effect/unstable/http";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -19,11 +21,12 @@ const fakeEnvironment = ServerEnvironment.ServerEnvironment.of({
   getDescriptor: Effect.die("unused"),
 });
 
-const makeRegistry = (now: () => number, httpServer = fakeHttpServer) =>
+const makeRegistry = (now: () => number, httpServer = fakeHttpServer, persistencePath?: string) =>
   McpSessionRegistry.__testing
     .make({
       now,
       livenessWindowMs: 100,
+      ...(persistencePath ? { persistencePath } : {}),
     })
     .pipe(
       Effect.provideService(HttpServer.HttpServer, httpServer),
@@ -126,4 +129,26 @@ it.effect("does not keep credentials of other threads alive", () =>
 
     expect(yield* registry.resolve(token)).toBeUndefined();
   }),
+);
+
+it.effect("restores hashed MCP credentials after a backend restart", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-mcp-credentials-" });
+    const persistencePath = path.join(tempDir, "credentials.json");
+    const first = yield* makeRegistry(() => 1_000, fakeHttpServer, persistencePath);
+    const issued = yield* first.issue({
+      threadId: ThreadId.make("thread-restart"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+    });
+    const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
+    const persisted = yield* fs.readFileString(persistencePath);
+    expect(persisted).not.toContain(token);
+
+    const restarted = yield* makeRegistry(() => 1_001, fakeHttpServer, persistencePath);
+    const resolved = yield* restarted.resolve(token);
+    expect(resolved?.threadId).toBe(ThreadId.make("thread-restart"));
+    expect(resolved?.providerInstanceId).toBe(ProviderInstanceId.make("codex"));
+  }).pipe(Effect.provide(NodeServices.layer)),
 );

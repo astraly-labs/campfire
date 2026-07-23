@@ -30,6 +30,17 @@ export T3CODE_PORT="${T3CODE_PORT:-3773}"
 export T3CODE_NO_BROWSER=true
 export T3CODE_TAILSCALE_SERVE=true
 export T3CODE_TAILSCALE_SERVE_PORT="${T3CODE_TAILSCALE_SERVE_PORT:-443}"
+export T3CODE_CODEX_HOST_SOCKET="${T3CODE_CODEX_HOST_SOCKET:-$T3CODE_HOME/runtime/codex-provider-host.sock}"
+
+campfire_wait_attempts=0
+while [ ! -S "$T3CODE_CODEX_HOST_SOCKET" ]; do
+  campfire_wait_attempts=$((campfire_wait_attempts + 1))
+  if [ "$campfire_wait_attempts" -ge 120 ]; then
+    echo "Codex provider host did not create $T3CODE_CODEX_HOST_SOCKET within 30 seconds" >&2
+    exit 75
+  fi
+  sleep 0.25
+done
 
 exec "$CAMPFIRE_NODE" "$CAMPFIRE_RELEASE/apps/server/dist/bin.mjs" serve \
   --mode web \
