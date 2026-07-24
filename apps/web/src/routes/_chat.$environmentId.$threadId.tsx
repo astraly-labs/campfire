@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { useEffect } from "react";
 
 import ChatView from "../components/ChatView";
@@ -17,7 +17,10 @@ import { useEnvironmentQuery } from "../state/query";
 import { environmentShell } from "../state/shell";
 
 function ChatThreadRouteView() {
-  const navigate = useNavigate();
+  const navigate = Route.useNavigate();
+  const threadView = Route.useSearch({
+    select: (search) => (search.view === "briefing" ? "briefing" : "conversation"),
+  });
   const threadRef = Route.useParams({
     select: (params) => resolveThreadRouteRef(params),
   });
@@ -86,6 +89,12 @@ function ChatThreadRouteView() {
           threadId={threadRef.threadId}
           routeKind="server"
           threadSyncPhase={threadSyncPhase}
+          threadView={threadView}
+          onThreadViewChange={(view) => {
+            void navigate({
+              search: () => (view === "briefing" ? { view: "briefing" } : {}),
+            });
+          }}
         />
       ) : null}
     </SidebarInset>
@@ -93,5 +102,7 @@ function ChatThreadRouteView() {
 }
 
 export const Route = createFileRoute("/_chat/$environmentId/$threadId")({
+  validateSearch: (search: Record<string, unknown>): { view?: "briefing" } =>
+    search.view === "briefing" ? { view: "briefing" } : {},
   component: ChatThreadRouteView,
 });

@@ -29,4 +29,5 @@ export * from "./preview.ts";
 export * from "./previewAutomation.ts";
 export * from "./resourceTelemetry.ts";
 export * from "./presence.ts";
+export * from "./contextAssistant.ts";
 export * from "./rpc.ts";

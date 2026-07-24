@@ -7,7 +7,7 @@ import {
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { memo } from "react";
-import { MessageCircleIcon } from "lucide-react";
+import { LockKeyholeIcon, MessageCircleIcon } from "lucide-react";
 import GitActionsControl from "../GitActionsControl";
 import { type DraftId } from "~/composerDraftStore";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -37,6 +37,9 @@ interface ChatHeaderProps {
   keybindings: ResolvedKeybindingsConfig;
   availableEditors: ReadonlyArray<EditorId>;
   rightPanelOpen: boolean;
+  view: "conversation" | "briefing";
+  briefingAvailable: boolean;
+  onViewChange: (view: "conversation" | "briefing") => void;
   sideThreadOpen: boolean;
   sideThreadMessageCount: number;
   sideThreadUnread: boolean;
@@ -77,6 +80,9 @@ export const ChatHeader = memo(function ChatHeader({
   keybindings,
   availableEditors,
   rightPanelOpen,
+  view,
+  briefingAvailable,
+  onViewChange,
   sideThreadOpen,
   sideThreadMessageCount,
   sideThreadUnread,
@@ -146,6 +152,43 @@ export const ChatHeader = memo(function ChatHeader({
           <TooltipPopup side="top">{activeThreadTitle}</TooltipPopup>
         </Tooltip>
       </div>
+      {briefingAvailable ? (
+        <div
+          role="tablist"
+          aria-label="Thread view"
+          className="no-drag flex shrink-0 items-center rounded-lg border border-border bg-muted/35 p-0.5"
+        >
+          <button
+            type="button"
+            role="tab"
+            aria-selected={view === "conversation"}
+            onClick={() => onViewChange("conversation")}
+            className={cn(
+              "rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
+              view === "conversation"
+                ? "bg-background text-foreground shadow-xs"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            Conversation
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={view === "briefing"}
+            onClick={() => onViewChange("briefing")}
+            className={cn(
+              "flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
+              view === "briefing"
+                ? "bg-background text-foreground shadow-xs"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            <LockKeyholeIcon className="size-3" />
+            Briefing
+          </button>
+        </div>
+      ) : null}
       <div
         data-chat-header-actions
         className={cn(
@@ -153,64 +196,73 @@ export const ChatHeader = memo(function ChatHeader({
           rightPanelOpen ? "pr-0" : "pr-16",
         )}
       >
-        <PresenceAvatarStack viewers={viewers} />
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                type="button"
-                size="sm"
-                variant={sideThreadOpen ? "secondary" : "ghost"}
-                aria-label={sideThreadOpen ? "Close side thread" : "Open side thread"}
-                aria-pressed={sideThreadOpen}
-                onClick={onToggleSideThread}
-                className="relative"
+        {view === "briefing" ? (
+          <span className="hidden items-center gap-1.5 text-xs text-muted-foreground @4xl/header-actions:flex">
+            <LockKeyholeIcon className="size-3" />
+            Private · temporary
+          </span>
+        ) : (
+          <>
+            <PresenceAvatarStack viewers={viewers} />
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={sideThreadOpen ? "secondary" : "ghost"}
+                    aria-label={sideThreadOpen ? "Close side thread" : "Open side thread"}
+                    aria-pressed={sideThreadOpen}
+                    onClick={onToggleSideThread}
+                    className="relative"
+                  />
+                }
+              >
+                <MessageCircleIcon className="size-4" />
+                {sideThreadMessageCount > 0 ? (
+                  <span className="min-w-4 rounded-full bg-primary px-1 text-[10px] leading-4 text-primary-foreground">
+                    {sideThreadMessageCount > 99 ? "99+" : sideThreadMessageCount}
+                  </span>
+                ) : null}
+                {sideThreadUnread ? (
+                  <span
+                    aria-label="Unread team discussion"
+                    className="absolute -right-0.5 -top-0.5 size-2 rounded-full bg-red-500 ring-2 ring-background"
+                  />
+                ) : null}
+              </TooltipTrigger>
+              <TooltipPopup side="bottom">
+                {sideThreadOpen ? "Close side thread" : "Open side thread"}
+              </TooltipPopup>
+            </Tooltip>
+            {activeProjectScripts && (
+              <ProjectScriptsControl
+                scripts={activeProjectScripts}
+                fileScripts={fileScripts}
+                keybindings={keybindings}
+                preferredScriptId={preferredScriptId}
+                onRunScript={onRunProjectScript}
+                onAddScript={onAddProjectScript}
+                onUpdateScript={onUpdateProjectScript}
+                onDeleteScript={onDeleteProjectScript}
               />
-            }
-          >
-            <MessageCircleIcon className="size-4" />
-            {sideThreadMessageCount > 0 ? (
-              <span className="min-w-4 rounded-full bg-primary px-1 text-[10px] leading-4 text-primary-foreground">
-                {sideThreadMessageCount > 99 ? "99+" : sideThreadMessageCount}
-              </span>
-            ) : null}
-            {sideThreadUnread ? (
-              <span
-                aria-label="Unread team discussion"
-                className="absolute -right-0.5 -top-0.5 size-2 rounded-full bg-red-500 ring-2 ring-background"
+            )}
+            {showOpenInPicker && (
+              <OpenInPicker
+                environmentId={activeThreadEnvironmentId}
+                keybindings={keybindings}
+                availableEditors={availableEditors}
+                openInCwd={openInCwd}
               />
-            ) : null}
-          </TooltipTrigger>
-          <TooltipPopup side="bottom">
-            {sideThreadOpen ? "Close side thread" : "Open side thread"}
-          </TooltipPopup>
-        </Tooltip>
-        {activeProjectScripts && (
-          <ProjectScriptsControl
-            scripts={activeProjectScripts}
-            fileScripts={fileScripts}
-            keybindings={keybindings}
-            preferredScriptId={preferredScriptId}
-            onRunScript={onRunProjectScript}
-            onAddScript={onAddProjectScript}
-            onUpdateScript={onUpdateProjectScript}
-            onDeleteScript={onDeleteProjectScript}
-          />
-        )}
-        {showOpenInPicker && (
-          <OpenInPicker
-            environmentId={activeThreadEnvironmentId}
-            keybindings={keybindings}
-            availableEditors={availableEditors}
-            openInCwd={openInCwd}
-          />
-        )}
-        {activeProjectName && (
-          <GitActionsControl
-            gitCwd={gitCwd}
-            activeThreadRef={scopeThreadRef(activeThreadEnvironmentId, activeThreadId)}
-            {...(draftId ? { draftId } : {})}
-          />
+            )}
+            {activeProjectName && (
+              <GitActionsControl
+                gitCwd={gitCwd}
+                activeThreadRef={scopeThreadRef(activeThreadEnvironmentId, activeThreadId)}
+                {...(draftId ? { draftId } : {})}
+              />
+            )}
+          </>
         )}
       </div>
     </div>

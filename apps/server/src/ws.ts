@@ -73,6 +73,10 @@ import {
 import { normalizeDispatchCommand } from "./orchestration/Normalizer.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
+import {
+  makeContextAssistantManager,
+  makeUnavailableContextAssistantManager,
+} from "./contextAssistant.ts";
 import { makeLiveSubscriptionBuffer } from "./orchestration/liveSubscriptionBuffer.ts";
 import {
   observeRpcEffect as instrumentRpcEffect,
@@ -80,6 +84,7 @@ import {
   observeRpcStreamEffect as instrumentRpcStreamEffect,
 } from "./observability/RpcInstrumentation.ts";
 import * as ProviderRegistry from "./provider/Services/ProviderRegistry.ts";
+import * as ProviderService from "./provider/Services/ProviderService.ts";
 import { resolveCodexHomeLayout } from "./provider/Drivers/CodexHomeLayout.ts";
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
@@ -396,6 +401,7 @@ const makeWsRpcLayer = (
       const previewManager = yield* PreviewManager.PreviewManager;
       const portDiscovery = yield* PortScanner.PortDiscovery;
       const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
+      const providerService = yield* Effect.serviceOption(ProviderService.ProviderService);
       const providerMaintenanceRunner = yield* ProviderMaintenanceRunner.ProviderMaintenanceRunner;
       const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
       const config = yield* ServerConfig.ServerConfig;
@@ -443,6 +449,16 @@ const makeWsRpcLayer = (
       const resourceTelemetry = yield* ResourceTelemetry.ResourceTelemetry;
       const relayClient = yield* RelayClient.RelayClient;
       const presence = yield* PresenceService.Presence;
+      const contextAssistant = Option.match(providerService, {
+        onNone: makeUnavailableContextAssistantManager,
+        onSome: (service) =>
+          makeContextAssistantManager({
+            crypto,
+            projectionSnapshotQuery,
+            providerService: service,
+          }),
+      });
+      yield* Effect.addFinalizer(() => contextAssistant.closeAll);
       const authenticatedActor = {
         kind: "client",
         subject: currentSession.subject,
@@ -1862,6 +1878,16 @@ const makeWsRpcLayer = (
               });
             }),
             { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.contextAssistantAsk]: (input) =>
+          observeRpcStreamEffect(WS_METHODS.contextAssistantAsk, contextAssistant.ask(input), {
+            "rpc.aggregate": "context-assistant",
+          }),
+        [WS_METHODS.contextAssistantClose]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.contextAssistantClose,
+            contextAssistant.close(input.sessionId),
+            { "rpc.aggregate": "context-assistant" },
           ),
         [WS_METHODS.subscribeVcsStatus]: (input) =>
           observeRpcStream(

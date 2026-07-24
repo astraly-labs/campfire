@@ -161,6 +161,13 @@ import {
   SourceControlRepositoryLookupInput,
 } from "./sourceControl.ts";
 import { VcsError } from "./vcs.ts";
+import {
+  ContextAssistantAskInput,
+  ContextAssistantCloseInput,
+  ContextAssistantCloseResult,
+  ContextAssistantError,
+  ContextAssistantStreamEvent,
+} from "./contextAssistant.ts";
 
 export const WS_METHODS = {
   // Project registry methods
@@ -178,6 +185,10 @@ export const WS_METHODS = {
   // Filesystem methods
   filesystemBrowse: "filesystem.browse",
   assetsCreateUrl: "assets.createUrl",
+
+  // Private, connection-scoped thread briefing
+  contextAssistantAsk: "contextAssistant.ask",
+  contextAssistantClose: "contextAssistant.close",
 
   // VCS methods
   vcsPull: "vcs.pull",
@@ -463,6 +474,19 @@ export const WsAssetsCreateUrlRpc = Rpc.make(WS_METHODS.assetsCreateUrl, {
   payload: AssetCreateUrlInput,
   success: AssetCreateUrlResult,
   error: Schema.Union([AssetAccessError, EnvironmentAuthorizationError]),
+});
+
+export const WsContextAssistantAskRpc = Rpc.make(WS_METHODS.contextAssistantAsk, {
+  payload: ContextAssistantAskInput,
+  success: ContextAssistantStreamEvent,
+  error: Schema.Union([ContextAssistantError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
+export const WsContextAssistantCloseRpc = Rpc.make(WS_METHODS.contextAssistantClose, {
+  payload: ContextAssistantCloseInput,
+  success: ContextAssistantCloseResult,
+  error: Schema.Union([ContextAssistantError, EnvironmentAuthorizationError]),
 });
 
 export const WsSubscribeVcsStatusRpc = Rpc.make(WS_METHODS.subscribeVcsStatus, {
@@ -804,6 +828,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsShellOpenInEditorRpc,
   WsFilesystemBrowseRpc,
   WsAssetsCreateUrlRpc,
+  WsContextAssistantAskRpc,
+  WsContextAssistantCloseRpc,
   WsSubscribeVcsStatusRpc,
   WsVcsPullRpc,
   WsVcsRefreshStatusRpc,
