@@ -45,6 +45,7 @@ it.effect("keeps sessions alive and replays events across backend adapter restar
     let factoryCalls = 0;
     let hostCloses = 0;
     let stopAllCalls = 0;
+    let sendTurnCalls = 0;
 
     const hosted: HostedCodexAdapter = {
       adapter: {
@@ -66,9 +67,12 @@ it.effect("keeps sessions alive and replays events across backend adapter restar
             return session;
           }),
         sendTurn: (input) =>
-          Effect.succeed({
-            threadId: input.threadId,
-            turnId: TurnId.make("turn-1"),
+          Effect.sync(() => {
+            sendTurnCalls += 1;
+            return {
+              threadId: input.threadId,
+              turnId: TurnId.make("turn-1"),
+            };
           }),
         interruptTurn: () => Effect.void,
         respondToRequest: () => Effect.void,
@@ -116,7 +120,11 @@ it.effect("keeps sessions alive and replays events across backend adapter restar
       providerInstanceId: instanceId,
       runtimeMode: "approval-required",
     });
-    yield* first.sendTurn({ threadId, input: "keep going" });
+    yield* first.sendTurn({
+      threadId,
+      idempotencyKey: "command:turn-survives-restart",
+      input: "keep going",
+    });
 
     const event: ProviderRuntimeEvent = {
       type: "runtime.warning",
@@ -146,6 +154,13 @@ it.effect("keeps sessions alive and replays events across backend adapter restar
       environment: [],
     }).pipe(Effect.provideService(Scope.Scope, secondScope));
     expect(yield* second.hasSession(threadId)).toBe(true);
+    const repeated = yield* second.sendTurn({
+      threadId,
+      idempotencyKey: "command:turn-survives-restart",
+      input: "keep going",
+    });
+    expect(repeated.turnId).toBe(TurnId.make("turn-1"));
+    expect(sendTurnCalls).toBe(1);
     const replayed = yield* Stream.runHead(second.streamEvents).pipe(Effect.timeout("2 seconds"));
     expect(Option.getOrUndefined(replayed)?.eventId).toBe(event.eventId);
     expect(factoryCalls).toBe(1);

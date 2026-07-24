@@ -153,6 +153,7 @@ describe("ProviderCommandReactor", () => {
     readonly interruptTurnEffect?: () => Effect.Effect<void, ProviderAdapterRequestError>;
     readonly stopSessionEffect?: () => Effect.Effect<void, ProviderAdapterRequestError>;
     readonly providerResumeCursor?: unknown;
+    readonly startReactor?: boolean;
     readonly startSessionEffect?: (
       session: ProviderSession,
     ) => Effect.Effect<ProviderSession, ProviderAdapterRequestError>;
@@ -431,13 +432,22 @@ describe("ProviderCommandReactor", () => {
       Layer.provideMerge(ServerSettingsService.layerTest()),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
       Layer.provideMerge(NodeServices.layer),
+      Layer.provideMerge(SqlitePersistenceMemory),
     );
-    runtime = ManagedRuntime.make(layer);
+    const harnessRuntime = ManagedRuntime.make(layer);
+    runtime = harnessRuntime;
 
-    const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
-    const snapshotQuery = await runtime.runPromise(Effect.service(ProjectionSnapshotQuery));
-    const reactor = await runtime.runPromise(Effect.service(ProviderCommandReactor));
-    const runEffect = <A, E>(effect: Effect.Effect<A, E>) => runtime!.runPromise(effect);
+    const engine = await harnessRuntime.runPromise(Effect.service(OrchestrationEngineService));
+    const snapshotQuery = await harnessRuntime.runPromise(Effect.service(ProjectionSnapshotQuery));
+    const reactor = await harnessRuntime.runPromise(Effect.service(ProviderCommandReactor));
+    const runEffect = <A, E>(effect: Effect.Effect<A, E>) => harnessRuntime.runPromise(effect);
+    let reactorStarted = false;
+    const startReactor = async () => {
+      if (reactorStarted) return;
+      reactorStarted = true;
+      scope = await Effect.runPromise(Scope.make("sequential"));
+      await Effect.runPromise(reactor.start().pipe(Scope.provide(scope)));
+    };
 
     await Effect.runPromise(
       engine.dispatch({
@@ -501,12 +511,15 @@ describe("ProviderCommandReactor", () => {
       );
     }
 
-    scope = await Effect.runPromise(Scope.make("sequential"));
-    await Effect.runPromise(reactor.start().pipe(Scope.provide(scope)));
+    if (input?.startReactor !== false) {
+      await startReactor();
+    }
     const drain = () => Effect.runPromise(reactor.drain);
 
     return {
       engine,
+      dispatch: (command: Parameters<typeof engine.dispatch>[0]) =>
+        harnessRuntime.runPromise(engine.dispatch(command)),
       readModel: () => Effect.runPromise(snapshotQuery.getSnapshot()),
       startSession,
       sendTurn,
@@ -522,6 +535,7 @@ describe("ProviderCommandReactor", () => {
       generateThreadTitle,
       runtimeSessions,
       stateDir,
+      startReactor,
       drain,
       runEffect,
       get titleRegenerationCompletionDispatchAttempts() {
@@ -529,6 +543,37 @@ describe("ProviderCommandReactor", () => {
       },
     };
   }
+
+  it("replays a durable pending turn when the reactor starts after dispatch", async () => {
+    const harness = await createHarness({ startReactor: false });
+    const createdAt = "2026-01-01T00:00:00.000Z";
+
+    await harness.dispatch({
+      type: "thread.turn.start",
+      commandId: CommandId.make("cmd-pending-before-reactor-start"),
+      threadId: ThreadId.make("thread-1"),
+      message: {
+        messageId: asMessageId("message-pending-before-reactor-start"),
+        role: "user",
+        text: "continue after restart",
+        attachments: [],
+      },
+      interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+      runtimeMode: "approval-required",
+      createdAt,
+    });
+
+    expect(harness.sendTurn).not.toHaveBeenCalled();
+    await harness.startReactor();
+    await harness.drain();
+
+    expect(harness.sendTurn).toHaveBeenCalledTimes(1);
+    expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
+      threadId: ThreadId.make("thread-1"),
+      idempotencyKey: "command:cmd-pending-before-reactor-start",
+      input: "continue after restart",
+    });
+  });
 
   it("reacts to thread.turn.start by ensuring session and sending provider turn", async () => {
     const harness = await createHarness({
