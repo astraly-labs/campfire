@@ -54,6 +54,20 @@ describe("resolveMarkdownFileLinkTarget", () => {
     });
   });
 
+  it("resolves a linked worktree file with spaces at the requested line", () => {
+    expect(
+      resolveMarkdownFileLinkMeta(
+        "</Users/jeffbezos/Library/Application Support/Campfire-staging/worktrees/tessera/t3code-d97c2e45/docs/src/pages/api/websocket.mdx:85>",
+        "/Users/jeffbezos/Library/Application Support/Campfire-staging/worktrees/tessera/t3code-d97c2e45",
+      ),
+    ).toMatchObject({
+      filePath:
+        "/Users/jeffbezos/Library/Application Support/Campfire-staging/worktrees/tessera/t3code-d97c2e45/docs/src/pages/api/websocket.mdx",
+      workspaceRelativePath: "docs/src/pages/api/websocket.mdx",
+      line: 85,
+    });
+  });
+
   it("resolves relative file paths against cwd", () => {
     expect(resolveMarkdownFileLinkTarget("src/processRunner.ts:71", "/Users/julius/project")).toBe(
       "/Users/julius/project/src/processRunner.ts:71",
