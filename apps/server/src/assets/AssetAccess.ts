@@ -196,6 +196,7 @@ const resolveCanonicalCodexVisualization = Effect.fn(
   readonly codexHomePath: string;
   readonly providerThreadId: string;
   readonly fileName: string;
+  readonly worktreePath?: string;
 }) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -213,13 +214,23 @@ const resolveCanonicalCodexVisualization = Effect.fn(
   const createdAtParts = DateTime.toPartsUtc(createdAt.value);
 
   const visualizationRoot = path.join(input.codexHomePath, "visualizations");
-  const threadDirectory = path.join(
+  const datedRoot = path.join(
     visualizationRoot,
     String(createdAtParts.year),
     String(createdAtParts.month).padStart(2, "0"),
     String(createdAtParts.day).padStart(2, "0"),
-    input.providerThreadId,
   );
+  const directoryNames = [
+    ...(input.worktreePath ? [path.basename(input.worktreePath)] : []),
+    input.providerThreadId,
+  ];
+  const threadDirectories = yield* Effect.forEach(directoryNames, (directoryName) =>
+    optionOnNotFound(fileSystem.realPath(path.join(datedRoot, directoryName))).pipe(
+      Effect.map(Option.getOrNull),
+    ),
+  );
+  const threadDirectory = threadDirectories.find((directory) => directory !== null);
+  if (!threadDirectory) return null;
   const [canonicalRoot, canonicalFile] = yield* Effect.all([
     optionOnNotFound(fileSystem.realPath(threadDirectory)),
     optionOnNotFound(fileSystem.realPath(path.join(threadDirectory, input.fileName))),
@@ -237,6 +248,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
   readonly codexVisualization?: {
     readonly codexHomePath: string;
     readonly providerThreadId: string;
+    readonly worktreePath?: string;
   };
 }) {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -374,9 +386,9 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       }
       claims = {
         version: 1,
-        kind: "workspace-file-exact",
+        kind: "workspace-file",
         workspaceRoot: path.dirname(visualizationPath),
-        relativePath: path.basename(visualizationPath),
+        baseRelativePath: ".",
         expiresAt,
       };
       fileName = path.basename(visualizationPath);

@@ -1815,6 +1815,9 @@ const makeWsRpcLayer = (
                   codexVisualization: {
                     codexHomePath: homeLayout.effectiveHomePath ?? homeLayout.sharedHomePath,
                     providerThreadId: thread.value.session.providerThreadId,
+                    ...(thread.value.worktreePath
+                      ? { worktreePath: thread.value.worktreePath }
+                      : {}),
                   },
                 });
               }

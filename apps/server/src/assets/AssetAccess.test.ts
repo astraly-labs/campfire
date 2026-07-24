@@ -106,7 +106,7 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(testLayer)),
   );
 
-  it.effect("issues exact URLs for a Codex thread visualization", () =>
+  it.effect("serves a Codex worktree visualization and its sibling assets", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -114,20 +114,23 @@ describe("AssetAccess", () => {
         prefix: "t3-codex-home-",
       });
       const providerThreadId = "019f9357-c3d2-7d13-b612-ef565c945b42";
+      const worktreePath = path.join(codexHomePath, "worktrees", "t3code-371284f3");
       const visualizationDirectory = path.join(
         codexHomePath,
         "visualizations",
         "2026",
         "07",
         "24",
-        providerThreadId,
+        path.basename(worktreePath),
       );
       const visualizationPath = path.join(visualizationDirectory, "playbooks-concept.html");
-      const siblingPath = path.join(visualizationDirectory, "other.html");
+      const siblingPath = path.join(visualizationDirectory, "playbooks-concept.png");
       yield* fileSystem.makeDirectory(visualizationDirectory, { recursive: true });
-      yield* fileSystem.writeFileString(visualizationPath, "<div>Playbooks</div>");
-      yield* fileSystem.writeFileString(siblingPath, "<div>Other</div>");
+      yield* fileSystem.writeFileString(visualizationPath, '<img src="playbooks-concept.png">');
+      yield* fileSystem.writeFile(siblingPath, new Uint8Array([137, 80, 78, 71]));
+      yield* fileSystem.writeFileString(path.join(visualizationDirectory, ".env"), "SECRET=value");
       const canonicalVisualizationPath = yield* fileSystem.realPath(visualizationPath);
+      const canonicalSiblingPath = yield* fileSystem.realPath(siblingPath);
 
       const result = yield* issueAssetUrl({
         resource: {
@@ -135,7 +138,7 @@ describe("AssetAccess", () => {
           threadId: ThreadId.make("thread-1"),
           fileName: "playbooks-concept.html",
         },
-        codexVisualization: { codexHomePath, providerThreadId },
+        codexVisualization: { codexHomePath, providerThreadId, worktreePath },
       });
       const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
       const separatorIndex = suffix.indexOf("/");
@@ -145,7 +148,11 @@ describe("AssetAccess", () => {
         kind: "file",
         path: canonicalVisualizationPath,
       });
-      expect(yield* resolveAsset(token, "other.html")).toBeNull();
+      expect(yield* resolveAsset(token, "playbooks-concept.png")).toEqual({
+        kind: "file",
+        path: canonicalSiblingPath,
+      });
+      expect(yield* resolveAsset(token, ".env")).toBeNull();
     }).pipe(Effect.provide(testLayer)),
   );
 

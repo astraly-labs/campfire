@@ -44,6 +44,7 @@ import {
   CodexInlineVisualization,
   splitCodexInlineVisualizations,
 } from "./chat/CodexInlineVisualization";
+import { MarkdownWorkspaceImage } from "./chat/MarkdownWorkspaceImage";
 import { CHAT_FILE_TAG_CHIP_CLASS_NAME, FileTagChipContent } from "./chat/FileTagChip";
 import { PierreEntryIcon } from "./chat/PierreEntryIcon";
 import {
@@ -1443,7 +1444,10 @@ function ChatMarkdown({
       },
       a({ node, href, children, ...props }) {
         const normalizedHref = href ? normalizeMarkdownLinkHrefKey(href) : "";
-        const fileLinkMeta = normalizedHref ? markdownFileLinkMetaByHref.get(normalizedHref) : null;
+        const fileLinkMeta = normalizedHref
+          ? (markdownFileLinkMetaByHref.get(normalizedHref) ??
+            resolveMarkdownFileLinkMeta(normalizedHref, cwd))
+          : null;
         if (!fileLinkMeta) {
           const faviconHost = resolveExternalWebLinkHost(href);
           const isSameDocumentLink = href?.startsWith("#") ?? false;
@@ -1533,6 +1537,11 @@ function ChatMarkdown({
           <code {...props} className={className}>
             {children}
           </code>
+        );
+      },
+      img({ node: _node, src, alt, ...props }) {
+        return (
+          <MarkdownWorkspaceImage {...props} src={src} alt={alt} cwd={cwd} threadRef={threadRef} />
         );
       },
       table({ node: _node, ...props }) {

@@ -42,6 +42,18 @@ describe("resolveMarkdownFileLinkTarget", () => {
     );
   });
 
+  it("resolves local asset paths containing spaces", () => {
+    expect(
+      resolveMarkdownFileLinkMeta(
+        "/Users/julius/Library/Application Support/Campfire/worktree/mockup.html",
+        "/Users/julius/Library/Application Support/Campfire/worktree",
+      ),
+    ).toMatchObject({
+      filePath: "/Users/julius/Library/Application Support/Campfire/worktree/mockup.html",
+      workspaceRelativePath: "mockup.html",
+    });
+  });
+
   it("resolves relative file paths against cwd", () => {
     expect(resolveMarkdownFileLinkTarget("src/processRunner.ts:71", "/Users/julius/project")).toBe(
       "/Users/julius/project/src/processRunner.ts:71",
