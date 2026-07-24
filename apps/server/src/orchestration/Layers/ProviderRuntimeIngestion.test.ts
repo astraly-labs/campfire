@@ -2768,6 +2768,7 @@ describe("ProviderRuntimeIngestion", () => {
       provider: ProviderDriverKind.make("codex"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
+      payload: { providerThreadId: "019f9357-c3d2-7d13-b612-ef565c945b42" },
     });
     harness.emit({
       type: "item.started",
@@ -2795,6 +2796,7 @@ describe("ProviderRuntimeIngestion", () => {
     );
 
     expect(thread.session?.status).toBe("ready");
+    expect(thread.session?.providerThreadId).toBe("019f9357-c3d2-7d13-b612-ef565c945b42");
     expect(
       thread.activities.some(
         (activity: ProviderRuntimeTestActivity) => activity.kind === "tool.started",

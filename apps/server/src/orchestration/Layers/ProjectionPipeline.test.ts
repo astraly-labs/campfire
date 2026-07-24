@@ -1539,6 +1539,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
             threadId,
             status: "running",
             providerName: "claude",
+            providerThreadId: "provider-thread-lifecycle",
             runtimeMode: "full-access",
             activeTurnId: turnId,
             lastError: null,
@@ -1582,6 +1583,12 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
         WHERE thread_id = ${threadId} AND turn_id = ${turnId}
       `;
       assert.deepEqual(runningRows, [{ state: "running", completedAt: null }]);
+      const sessionRows = yield* sql<{ readonly providerThreadId: string | null }>`
+        SELECT provider_thread_id AS "providerThreadId"
+        FROM projection_thread_sessions
+        WHERE thread_id = ${threadId}
+      `;
+      assert.deepEqual(sessionRows, [{ providerThreadId: "provider-thread-lifecycle" }]);
 
       // The session leaving "running" is the turn-end signal.
       yield* eventStore.append({

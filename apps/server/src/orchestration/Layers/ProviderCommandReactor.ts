@@ -529,6 +529,14 @@ const make = Effect.gen(function* () {
                 : mapProviderSessionStatusToOrchestrationStatus(session.status),
             providerName: session.provider,
             providerInstanceId: session.providerInstanceId,
+            ...(session.resumeCursor !== undefined &&
+            session.resumeCursor !== null &&
+            typeof session.resumeCursor === "object" &&
+            !Array.isArray(session.resumeCursor) &&
+            "threadId" in session.resumeCursor &&
+            typeof session.resumeCursor.threadId === "string"
+              ? { providerThreadId: session.resumeCursor.threadId }
+              : {}),
             runtimeMode: desiredRuntimeMode,
             // Provider turn ids are not orchestration turn ids.
             activeTurnId: null,

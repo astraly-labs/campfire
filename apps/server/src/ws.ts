@@ -48,6 +48,7 @@ import {
   AssetWorkspaceContextNotFoundError,
   AssetWorkspaceContextResolutionError,
   RpcClientId,
+  CodexSettings,
   EnvironmentAuthorizationError,
   ThreadId,
   type TerminalAttachStreamEvent,
@@ -79,6 +80,7 @@ import {
   observeRpcStreamEffect as instrumentRpcStreamEffect,
 } from "./observability/RpcInstrumentation.ts";
 import * as ProviderRegistry from "./provider/Services/ProviderRegistry.ts";
+import { resolveCodexHomeLayout } from "./provider/Drivers/CodexHomeLayout.ts";
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
@@ -139,6 +141,7 @@ export const resolveAvailableEditorsForConfig = <A, E, R>(
     Effect.timeoutOption(EDITOR_DISCOVERY_TIMEOUT),
     Effect.map(Option.getOrElse(() => [])),
   );
+const decodeCodexSettings = Schema.decodeUnknownEffect(CodexSettings);
 
 function unexpectedCompatibilityError(error: never): never {
   throw new Error(`Unhandled compatibility error: ${String(error)}`);
@@ -1754,6 +1757,67 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.assetsCreateUrl,
             Effect.gen(function* () {
+              if (input.resource._tag === "codex-visualization") {
+                const thread = yield* projectionSnapshotQuery
+                  .getThreadShellById(input.resource.threadId)
+                  .pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new AssetWorkspaceContextResolutionError({
+                          resource: input.resource,
+                          cause,
+                        }),
+                    ),
+                  );
+                if (
+                  Option.isNone(thread) ||
+                  thread.value.session?.providerName !== "codex" ||
+                  !thread.value.session.providerThreadId ||
+                  !thread.value.session.providerInstanceId
+                ) {
+                  return yield* new AssetWorkspaceContextNotFoundError({
+                    resource: input.resource,
+                  });
+                }
+                const settings = yield* serverSettings.getSettings.pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new AssetWorkspaceContextResolutionError({
+                        resource: input.resource,
+                        cause,
+                      }),
+                  ),
+                );
+                const instance =
+                  settings.providerInstances[thread.value.session.providerInstanceId];
+                const codexConfig =
+                  instance?.driver === "codex"
+                    ? yield* decodeCodexSettings(instance.config ?? {}).pipe(
+                        Effect.mapError(
+                          (cause) =>
+                            new AssetWorkspaceContextResolutionError({
+                              resource: input.resource,
+                              cause,
+                            }),
+                        ),
+                      )
+                    : thread.value.session.providerInstanceId === "codex"
+                      ? settings.providers.codex
+                      : null;
+                if (!codexConfig) {
+                  return yield* new AssetWorkspaceContextNotFoundError({
+                    resource: input.resource,
+                  });
+                }
+                const homeLayout = yield* resolveCodexHomeLayout(codexConfig);
+                return yield* issueAssetUrl({
+                  resource: input.resource,
+                  codexVisualization: {
+                    codexHomePath: homeLayout.effectiveHomePath ?? homeLayout.sharedHomePath,
+                    providerThreadId: thread.value.session.providerThreadId,
+                  },
+                });
+              }
               if (input.resource._tag !== "workspace-file") {
                 return yield* issueAssetUrl({ resource: input.resource });
               }

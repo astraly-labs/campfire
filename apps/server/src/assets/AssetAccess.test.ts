@@ -106,6 +106,49 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(testLayer)),
   );
 
+  it.effect("issues exact URLs for a Codex thread visualization", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const codexHomePath = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-codex-home-",
+      });
+      const providerThreadId = "019f9357-c3d2-7d13-b612-ef565c945b42";
+      const visualizationDirectory = path.join(
+        codexHomePath,
+        "visualizations",
+        "2026",
+        "07",
+        "24",
+        providerThreadId,
+      );
+      const visualizationPath = path.join(visualizationDirectory, "playbooks-concept.html");
+      const siblingPath = path.join(visualizationDirectory, "other.html");
+      yield* fileSystem.makeDirectory(visualizationDirectory, { recursive: true });
+      yield* fileSystem.writeFileString(visualizationPath, "<div>Playbooks</div>");
+      yield* fileSystem.writeFileString(siblingPath, "<div>Other</div>");
+      const canonicalVisualizationPath = yield* fileSystem.realPath(visualizationPath);
+
+      const result = yield* issueAssetUrl({
+        resource: {
+          _tag: "codex-visualization",
+          threadId: ThreadId.make("thread-1"),
+          fileName: "playbooks-concept.html",
+        },
+        codexVisualization: { codexHomePath, providerThreadId },
+      });
+      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separatorIndex = suffix.indexOf("/");
+      const token = suffix.slice(0, separatorIndex);
+
+      expect(yield* resolveAsset(token, "playbooks-concept.html")).toEqual({
+        kind: "file",
+        path: canonicalVisualizationPath,
+      });
+      expect(yield* resolveAsset(token, "other.html")).toBeNull();
+    }).pipe(Effect.provide(testLayer)),
+  );
+
   it.effect("rejects preview files outside the workspace and temporary directories", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

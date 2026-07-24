@@ -23,6 +23,7 @@ import {
 } from "@t3tools/shared/filePreview";
 import { PROJECT_FAVICON_FALLBACK_MARKER } from "@t3tools/shared/projectFavicon";
 import * as Clock from "effect/Clock";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -58,6 +59,7 @@ const PREVIEW_ASSET_EXTENSIONS = new Set([
   ".woff2",
 ]);
 const TEMPORARY_ARTIFACT_ROOTS = [NodeOS.tmpdir(), "/tmp"] as const;
+const CODEX_THREAD_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const AssetClaimsSchema = Schema.Union([
   Schema.Struct({
@@ -188,9 +190,54 @@ const resolveCanonicalTemporaryArtifact = Effect.fn(
   return Option.isSome(info) && info.value.type === "File" ? canonicalFile.value : null;
 });
 
+const resolveCanonicalCodexVisualization = Effect.fn(
+  "AssetAccess.resolveCanonicalCodexVisualization",
+)(function* (input: {
+  readonly codexHomePath: string;
+  readonly providerThreadId: string;
+  readonly fileName: string;
+}) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  if (
+    !CODEX_THREAD_ID_PATTERN.test(input.providerThreadId) ||
+    path.basename(input.fileName) !== input.fileName ||
+    path.extname(input.fileName).toLowerCase() !== ".html"
+  ) {
+    return null;
+  }
+
+  const timestampHex = input.providerThreadId.replaceAll("-", "").slice(0, 12);
+  const createdAt = DateTime.make(Number.parseInt(timestampHex, 16));
+  if (Option.isNone(createdAt)) return null;
+  const createdAtParts = DateTime.toPartsUtc(createdAt.value);
+
+  const visualizationRoot = path.join(input.codexHomePath, "visualizations");
+  const threadDirectory = path.join(
+    visualizationRoot,
+    String(createdAtParts.year),
+    String(createdAtParts.month).padStart(2, "0"),
+    String(createdAtParts.day).padStart(2, "0"),
+    input.providerThreadId,
+  );
+  const [canonicalRoot, canonicalFile] = yield* Effect.all([
+    optionOnNotFound(fileSystem.realPath(threadDirectory)),
+    optionOnNotFound(fileSystem.realPath(path.join(threadDirectory, input.fileName))),
+  ]);
+  if (Option.isNone(canonicalRoot) || Option.isNone(canonicalFile)) return null;
+  const relative = path.relative(canonicalRoot.value, canonicalFile.value);
+  if (relative !== input.fileName) return null;
+  const info = yield* optionOnNotFound(fileSystem.stat(canonicalFile.value));
+  return Option.isSome(info) && info.value.type === "File" ? canonicalFile.value : null;
+});
+
 export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (input: {
   readonly resource: AssetResource;
   readonly workspaceRoot?: string;
+  readonly codexVisualization?: {
+    readonly codexHomePath: string;
+    readonly providerThreadId: string;
+  };
 }) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -300,6 +347,39 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
             expiresAt,
           };
       fileName = path.basename(resolved.relativePath);
+      break;
+    }
+    case "codex-visualization": {
+      if (!input.codexVisualization) {
+        return yield* new AssetWorkspaceContextNotFoundError({
+          resource: input.resource,
+        });
+      }
+      const visualizationPath = yield* resolveCanonicalCodexVisualization({
+        ...input.codexVisualization,
+        fileName: input.resource.fileName,
+      }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new AssetWorkspaceAssetInspectionError({
+              resource: input.resource,
+              cause,
+            }),
+        ),
+      );
+      if (!visualizationPath) {
+        return yield* new AssetWorkspaceAssetNotFoundError({
+          resource: input.resource,
+        });
+      }
+      claims = {
+        version: 1,
+        kind: "workspace-file-exact",
+        workspaceRoot: path.dirname(visualizationPath),
+        relativePath: path.basename(visualizationPath),
+        expiresAt,
+      };
+      fileName = path.basename(visualizationPath);
       break;
     }
     case "attachment": {
