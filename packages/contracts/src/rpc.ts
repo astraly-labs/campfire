@@ -211,6 +211,13 @@ import {
   SourceControlRepositoryLookupInput,
 } from "./sourceControl.ts";
 import { VcsError } from "./vcs.ts";
+import {
+  ContextAssistantAskInput,
+  ContextAssistantCloseInput,
+  ContextAssistantCloseResult,
+  ContextAssistantError,
+  ContextAssistantStreamEvent,
+} from "./contextAssistant.ts";
 
 export const WS_METHODS = {
   // Project registry methods
@@ -234,6 +241,10 @@ export const WS_METHODS = {
 
   // Provider methods
   providerUploadFeedback: "provider.uploadFeedback",
+
+  // Private, connection-scoped thread briefing
+  contextAssistantAsk: "contextAssistant.ask",
+  contextAssistantClose: "contextAssistant.close",
 
   // VCS methods
   vcsPull: "vcs.pull",
@@ -706,6 +717,19 @@ export const WsProviderUploadFeedbackRpc = Rpc.make(WS_METHODS.providerUploadFee
   error: Schema.Union([ProviderUploadFeedbackError, EnvironmentAuthorizationError]),
 });
 
+export const WsContextAssistantAskRpc = Rpc.make(WS_METHODS.contextAssistantAsk, {
+  payload: ContextAssistantAskInput,
+  success: ContextAssistantStreamEvent,
+  error: Schema.Union([ContextAssistantError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
+export const WsContextAssistantCloseRpc = Rpc.make(WS_METHODS.contextAssistantClose, {
+  payload: ContextAssistantCloseInput,
+  success: ContextAssistantCloseResult,
+  error: Schema.Union([ContextAssistantError, EnvironmentAuthorizationError]),
+});
+
 export const WsSubscribeVcsStatusRpc = Rpc.make(WS_METHODS.subscribeVcsStatus, {
   payload: VcsStatusInput,
   success: VcsStatusStreamEvent,
@@ -1100,6 +1124,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsAttachmentsCreateUploadUrlRpc,
   WsAttachmentsDeleteRpc,
   WsProviderUploadFeedbackRpc,
+  WsContextAssistantAskRpc,
+  WsContextAssistantCloseRpc,
   WsSubscribeVcsStatusRpc,
   WsVcsPullRpc,
   WsVcsRefreshStatusRpc,

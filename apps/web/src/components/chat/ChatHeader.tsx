@@ -10,7 +10,8 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { ChevronDownIcon } from "lucide-react";
+import type { ChangeRequestSettleSource } from "@t3tools/client-runtime/state/thread-settled";
+import { ChevronDownIcon, LockKeyholeIcon, MessageCircleIcon } from "lucide-react";
 import {
   memo,
   useCallback,
@@ -21,7 +22,6 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
 } from "react";
-import { MessageCircleIcon } from "lucide-react";
 import GitActionsControl from "../GitActionsControl";
 import { isTrailingDoubleClick } from "../Sidebar.logic";
 import { type DraftId } from "~/composerDraftStore";
@@ -65,6 +65,9 @@ interface ChatHeaderProps {
   keybindings: ResolvedKeybindingsConfig;
   availableEditors: ReadonlyArray<EditorId>;
   rightPanelOpen: boolean;
+  view: "conversation" | "briefing";
+  briefingAvailable: boolean;
+  onViewChange: (view: "conversation" | "briefing") => void;
   sideThreadOpen: boolean;
   sideThreadMessageCount: number;
   sideThreadUnread: boolean;
@@ -137,6 +140,9 @@ export const ChatHeader = memo(function ChatHeader({
   keybindings,
   availableEditors,
   rightPanelOpen,
+  view,
+  briefingAvailable,
+  onViewChange,
   sideThreadOpen,
   sideThreadMessageCount,
   sideThreadUnread,
@@ -384,6 +390,32 @@ export const ChatHeader = memo(function ChatHeader({
           )}
         </WorkspaceBreadcrumbItem>
       </WorkspaceBreadcrumb>
+      {briefingAvailable ? (
+        <div
+          role="tablist"
+          aria-label="Thread view"
+          className="no-drag flex shrink-0 items-center rounded-lg border border-border bg-muted/35 p-0.5"
+        >
+          {(["conversation", "briefing"] as const).map((targetView) => (
+            <button
+              key={targetView}
+              type="button"
+              role="tab"
+              aria-selected={view === targetView}
+              onClick={() => onViewChange(targetView)}
+              className={cn(
+                "flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
+                view === targetView
+                  ? "bg-background text-foreground shadow-xs"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {targetView === "briefing" ? <LockKeyholeIcon className="size-3" /> : null}
+              {targetView === "briefing" ? "Briefing" : "Conversation"}
+            </button>
+          ))}
+        </div>
+      ) : null}
       <div
         data-chat-header-actions
         className={cn(
@@ -391,8 +423,15 @@ export const ChatHeader = memo(function ChatHeader({
           rightPanelOpen ? "pr-0" : "pr-16",
         )}
       >
-        <PresenceAvatarStack viewers={viewers} />
-        <Tooltip>
+        {view === "briefing" ? (
+          <span className="hidden items-center gap-1.5 text-xs text-muted-foreground @4xl/header-actions:flex">
+            <LockKeyholeIcon className="size-3" />
+            Private · temporary
+          </span>
+        ) : (
+          <>
+            <PresenceAvatarStack viewers={viewers} />
+            <Tooltip>
           <TooltipTrigger
             render={
               <Button
@@ -422,8 +461,8 @@ export const ChatHeader = memo(function ChatHeader({
           <TooltipPopup side="bottom">
             {sideThreadOpen ? "Close side thread" : "Open side thread"}
           </TooltipPopup>
-        </Tooltip>
-        {activeProjectScripts && (
+            </Tooltip>
+            {activeProjectScripts && (
           <ProjectScriptsControl
             scripts={activeProjectScripts}
             fileScripts={fileScripts}
@@ -434,22 +473,24 @@ export const ChatHeader = memo(function ChatHeader({
             onUpdateScript={onUpdateProjectScript}
             onDeleteScript={onDeleteProjectScript}
           />
-        )}
-        {showOpenInPicker && (
+            )}
+            {showOpenInPicker && (
           <OpenInPicker
             environmentId={activeThreadEnvironmentId}
             keybindings={keybindings}
             availableEditors={availableEditors}
             openInCwd={openInCwd}
           />
-        )}
-        {activeProjectName && (
+            )}
+            {activeProjectName && (
           <GitActionsControl
             gitCwd={gitCwd}
             activeThreadRef={scopeThreadRef(activeThreadEnvironmentId, activeThreadId)}
             onOpenPullRequest={onOpenPullRequest}
             {...(draftId ? { draftId } : {})}
           />
+            )}
+          </>
         )}
       </div>
     </div>

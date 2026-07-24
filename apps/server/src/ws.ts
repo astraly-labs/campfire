@@ -92,6 +92,8 @@ import {
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ThreadDeletionReactor } from "./orchestration/Services/ThreadDeletionReactor.ts";
+import { makeContextAssistantManager } from "./contextAssistant.ts";
+import { makeLiveSubscriptionBuffer } from "./orchestration/liveSubscriptionBuffer.ts";
 import {
   observeRpcEffect as instrumentRpcEffect,
   observeRpcStream as instrumentRpcStream,
@@ -592,6 +594,12 @@ const makeWsRpcLayer = (
       const usage = yield* UsageService.UsageService;
       const relayClient = yield* RelayClient.RelayClient;
       const presence = yield* PresenceService.Presence;
+      const contextAssistant = makeContextAssistantManager({
+        crypto,
+        projectionSnapshotQuery,
+        providerService,
+      });
+      yield* Effect.addFinalizer(() => contextAssistant.closeAll);
       const presenceUser = {
         subject: authenticatedActor.subject,
         displayName: authenticatedActor.displayName ?? authenticatedActor.subject,
@@ -2282,6 +2290,16 @@ const makeWsRpcLayer = (
               });
             }),
             { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.contextAssistantAsk]: (input) =>
+          observeRpcStreamEffect(WS_METHODS.contextAssistantAsk, contextAssistant.ask(input), {
+            "rpc.aggregate": "context-assistant",
+          }),
+        [WS_METHODS.contextAssistantClose]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.contextAssistantClose,
+            contextAssistant.close(input.sessionId),
+            { "rpc.aggregate": "context-assistant" },
           ),
         [WS_METHODS.subscribeVcsStatus]: (input) =>
           observeRpcStream(

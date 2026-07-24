@@ -297,6 +297,7 @@ import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
 import { resolveTimelineIsAtEnd } from "./chat/MessagesTimeline.logic";
 import { ChatHeader } from "./chat/ChatHeader";
+import { ThreadBriefingView } from "./context-assistant/ThreadBriefingView";
 import { PanelLayoutControls, RightPanelMaximizeControl } from "./chat/PanelLayoutControls";
 import { type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { NoActiveThreadState } from "./NoActiveThreadState";
@@ -604,6 +605,8 @@ type ChatViewProps =
       forceExpandedMobileComposer?: boolean;
       threadSyncPhase?: ThreadSyncPhase | null;
       routeKind: "server";
+      threadView: "conversation" | "briefing";
+      onThreadViewChange: (view: "conversation" | "briefing") => void;
       draftId?: never;
     }
   | {
@@ -615,6 +618,8 @@ type ChatViewProps =
       threadSyncPhase?: never;
       routeKind: "draft";
       draftId: DraftId;
+      threadView?: never;
+      onThreadViewChange?: never;
     };
 
 interface TerminalLaunchContext {
@@ -1308,6 +1313,8 @@ function ChatViewContent(props: ChatViewProps) {
   const threadDetailLoading = threadSyncPhase === "loading";
   const handleNewThread = useNewThreadHandler();
   const { settleThread, pinThread, confirmAndUnpinThread } = useThreadActions();
+  const threadView = routeKind === "server" ? props.threadView : "conversation";
+  const briefingActive = routeKind === "server" && threadView === "briefing";
   const googleTeam = useGoogleTeam(environmentId);
   const [sideThreadOpen, setSideThreadOpen] = useState(false);
   const [sideThreadAnchorMessageId, setSideThreadAnchorMessageId] = useState<MessageId | null>(
@@ -1817,10 +1824,11 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const previewPanelOpen = activeRightPanelKind === "preview" && isPreviewSupportedInRuntime();
   const rightPanelOpen = rightPanelState.isOpen;
-  const canMaximizeRightPanel = rightPanelOpen && !shouldUseRightPanelSheet;
+  const visibleRightPanelOpen = rightPanelOpen && !briefingActive;
+  const canMaximizeRightPanel = visibleRightPanelOpen && !shouldUseRightPanelSheet;
   const rightPanelMaximized =
     canMaximizeRightPanel && maximizedRightPanelThreadKey === routeThreadKey;
-  const inlineRightPanelOwnsTitleBar = rightPanelOpen && !shouldUseRightPanelSheet;
+  const inlineRightPanelOwnsTitleBar = visibleRightPanelOpen && !shouldUseRightPanelSheet;
 
   useEffect(() => {
     if (!activeThreadRef) return;
@@ -7002,7 +7010,7 @@ function ChatViewContent(props: ChatViewProps) {
       terminalOpen={terminalUiState.terminalOpen}
       terminalShortcutLabel={shortcutLabelForCommand(keybindings, "terminal.toggle")}
       rightPanelAvailable={activeProject !== null}
-      rightPanelOpen={rightPanelOpen}
+      rightPanelOpen={visibleRightPanelOpen}
       rightPanelShortcutLabel={shortcutLabelForCommand(keybindings, "rightPanel.toggle")}
       // Suppressed while the Agents surface is visible: the roster itself is
       // on screen, so the toggle badge would be pointing at nothing.
@@ -7023,7 +7031,7 @@ function ChatViewContent(props: ChatViewProps) {
       )}
       data-workspace-titlebar-controls
     >
-      {rightPanelOpen && !shouldUseRightPanelSheet ? (
+      {visibleRightPanelOpen && !shouldUseRightPanelSheet ? (
         <RightPanelMaximizeControl
           maximized={rightPanelMaximized}
           onToggle={toggleRightPanelMaximized}
@@ -7178,7 +7186,7 @@ function ChatViewContent(props: ChatViewProps) {
 
   return (
     <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background">
-      {rightPanelOpen && !shouldUseRightPanelSheet ? panelLayoutControls : null}
+      {visibleRightPanelOpen && !shouldUseRightPanelSheet ? panelLayoutControls : null}
       <div
         className={cn(
           "flex min-h-0 min-w-0 flex-col overflow-x-hidden",
@@ -7193,7 +7201,7 @@ function ChatViewContent(props: ChatViewProps) {
           reserveNativeControls={reserveTitleBarControlInset && !inlineRightPanelOwnsTitleBar}
           className="relative bg-background"
         >
-          {!rightPanelOpen ? panelLayoutControls : null}
+          {!visibleRightPanelOpen && !briefingActive ? panelLayoutControls : null}
           <ChatHeader
             {...(!supportsPullRequests || activeProjectRepository === null
               ? {}
@@ -7213,7 +7221,12 @@ function ChatViewContent(props: ChatViewProps) {
             }
             keybindings={keybindings}
             availableEditors={availableEditors}
-            rightPanelOpen={rightPanelOpen}
+            rightPanelOpen={visibleRightPanelOpen}
+            view={threadView}
+            briefingAvailable={routeKind === "server"}
+            onViewChange={(view) => {
+              if (routeKind === "server") props.onThreadViewChange(view);
+            }}
             sideThreadOpen={sideThreadOpen}
             sideThreadMessageCount={activeSideThread?.messages.length ?? 0}
             sideThreadUnread={sideThreadUnread}
@@ -7233,19 +7246,24 @@ function ChatViewContent(props: ChatViewProps) {
           />
         </WorkspacePageHeader>
 
-        <ThreadErrorBanner
-          error={visibleThreadError}
-          onDismiss={() => {
-            setThreadError(activeThread.id, null);
-            dismissThreadErrorBannerForSession(threadErrorBannerKey);
-            setThreadErrorBannerDismissTick((tick) => tick + 1);
-          }}
-        />
+        {!briefingActive ? (
+          <ThreadErrorBanner
+            error={visibleThreadError}
+            onDismiss={() => {
+              setThreadError(activeThread.id, null);
+              dismissThreadErrorBannerForSession(threadErrorBannerKey);
+              setThreadErrorBannerDismissTick((tick) => tick + 1);
+            }}
+          />
+        ) : null}
         {/* Main content area with optional plan sidebar */}
         <div className="flex min-h-0 min-w-0 flex-1">
           {/* Chat column */}
           <div
-            className="relative flex min-h-0 min-w-0 flex-1 flex-col"
+            className={cn(
+              "relative min-h-0 min-w-0 flex-1 flex-col",
+              briefingActive ? "hidden" : "flex",
+            )}
             data-chat-workspace-drop-target="true"
             onDragEnter={workspaceFileDropHandlers.onDragEnter}
             onDragOver={workspaceFileDropHandlers.onDragOver}
@@ -7267,12 +7285,14 @@ function ChatViewContent(props: ChatViewProps) {
               </div>
             ) : null}
             {/* Provider status overlays the timeline without changing its content height. */}
-            <div className="pointer-events-none absolute inset-x-0 top-0 z-20">
-              <ProviderStatusBanner
-                status={visibleProviderStatus}
-                onDismiss={() => setDismissedProviderStatusBannerKey(providerStatusBannerKey)}
-              />
-            </div>
+            {!briefingActive ? (
+              <div className="pointer-events-none absolute inset-x-0 top-0 z-20">
+                <ProviderStatusBanner
+                  status={visibleProviderStatus}
+                  onDismiss={() => setDismissedProviderStatusBannerKey(providerStatusBannerKey)}
+                />
+              </div>
+            ) : null}
             {/* Messages Wrapper */}
             <div className="relative flex min-h-0 flex-1 flex-col">
               {/* Messages — LegendList handles virtualization and scrolling internally */}
@@ -7580,6 +7600,15 @@ function ChatViewContent(props: ChatViewProps) {
             ) : null}
           </div>
           {/* end chat column */}
+          {isServerThread && activeThreadRef ? (
+            <ThreadBriefingView
+              environmentId={activeThread.environmentId}
+              sourceThreadId={activeThread.id}
+              threadRef={activeThreadRef}
+              cwd={gitCwd ?? undefined}
+              hidden={!briefingActive}
+            />
+          ) : null}
         </div>
         {/* end horizontal flex container */}
 
@@ -7588,7 +7617,11 @@ function ChatViewContent(props: ChatViewProps) {
             key={mountedThreadKey}
             threadRef={mountedThreadRef}
             threadId={mountedThreadRef.threadId}
-            visible={mountedThreadKey === activeThreadKey && terminalUiState.terminalOpen}
+            visible={
+              !briefingActive &&
+              mountedThreadKey === activeThreadKey &&
+              terminalUiState.terminalOpen
+            }
             launchContext={
               mountedThreadKey === activeThreadKey ? (activeTerminalLaunchContext ?? null) : null
             }
@@ -7603,7 +7636,7 @@ function ChatViewContent(props: ChatViewProps) {
         ))}
       </div>
 
-      {!shouldUseRightPanelSheet && rightPanelOpen && activeThreadRef ? (
+      {!shouldUseRightPanelSheet && visibleRightPanelOpen && activeThreadRef ? (
         <RightPanelTabs
           mode="inline"
           maximized={rightPanelMaximized}
@@ -7638,7 +7671,7 @@ function ChatViewContent(props: ChatViewProps) {
           {rightPanelContent}
         </RightPanelTabs>
       ) : null}
-      {shouldUseRightPanelSheet && rightPanelOpen && activeThreadRef ? (
+      {shouldUseRightPanelSheet && visibleRightPanelOpen && activeThreadRef ? (
         <RightPanelSheet open onClose={closePreviewPanel}>
           <RightPanelTabs
             mode="sheet"
@@ -7694,7 +7727,7 @@ function ChatViewContent(props: ChatViewProps) {
           thread={activeThread}
           team={googleTeam.members}
           currentSubject={googleTeam.current?.subject ?? null}
-          open={sideThreadOpen}
+          open={sideThreadOpen && !briefingActive}
           contextMessageId={sideThreadAnchorMessageId}
           draftPrefill={sideThreadDraftPrefill}
           onClose={() => {
