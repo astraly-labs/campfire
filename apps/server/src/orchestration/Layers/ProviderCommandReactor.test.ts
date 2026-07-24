@@ -152,6 +152,7 @@ describe("ProviderCommandReactor", () => {
     readonly titleRegenerationBeforeStart?: "one" | "two";
     readonly interruptTurnEffect?: () => Effect.Effect<void, ProviderAdapterRequestError>;
     readonly stopSessionEffect?: () => Effect.Effect<void, ProviderAdapterRequestError>;
+    readonly providerResumeCursor?: unknown;
     readonly startSessionEffect?: (
       session: ProviderSession,
     ) => Effect.Effect<ProviderSession, ProviderAdapterRequestError>;
@@ -169,6 +170,7 @@ describe("ProviderCommandReactor", () => {
       instanceId: ProviderInstanceId.make("codex"),
       model: "gpt-5-codex",
     };
+    const providerResumeCursor = input?.providerResumeCursor;
     const startSessionEffect = input?.startSessionEffect;
     const startSession = vi.fn((_: unknown, input: unknown) => {
       const sessionIndex = nextSessionIndex++;
@@ -219,7 +221,7 @@ describe("ProviderCommandReactor", () => {
           ? { model: inputModelSelection?.model ?? modelSelection.model }
           : {}),
         threadId,
-        resumeCursor: resumeCursor ?? { opaque: `resume-${sessionIndex}` },
+        resumeCursor: resumeCursor ?? providerResumeCursor ?? { opaque: `resume-${sessionIndex}` },
         createdAt: now,
         updatedAt: now,
       };
@@ -529,7 +531,9 @@ describe("ProviderCommandReactor", () => {
   }
 
   it("reacts to thread.turn.start by ensuring session and sending provider turn", async () => {
-    const harness = await createHarness();
+    const harness = await createHarness({
+      providerResumeCursor: { threadId: "019f9357-c3d2-7d13-b612-ef565c945b42" },
+    });
     const now = "2026-01-01T00:00:00.000Z";
 
     await Effect.runPromise(
@@ -566,6 +570,7 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.session?.threadId).toBe("thread-1");
     expect(thread?.session?.status).toBe("starting");
     expect(thread?.session?.runtimeMode).toBe("approval-required");
+    expect(thread?.session?.providerThreadId).toBe("019f9357-c3d2-7d13-b612-ef565c945b42");
   });
 
   effectIt.effect("runs five independent Codex worktree turns with zero browser subscribers", () =>

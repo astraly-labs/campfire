@@ -77,6 +77,10 @@ import {
 } from "@t3tools/client-runtime/codex-markdown-directives";
 import { renderSkillInlineMarkdownChildren } from "./chat/SkillInlineText";
 import { type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
+import {
+  CodexInlineVisualization,
+  splitCodexInlineVisualizations,
+} from "./chat/CodexInlineVisualization";
 import { CHAT_FILE_TAG_CHIP_CLASS_NAME, FileTagChipContent } from "./chat/FileTagChip";
 import { PierreEntryIcon } from "./chat/PierreEntryIcon";
 import {
@@ -1927,6 +1931,13 @@ function ChatMarkdown({
     if (isWindowsDrivePathHref(href)) return href;
     return rewriteMarkdownFileUriHref(href) ?? defaultUrlTransform(href);
   }, []);
+  const inlineVisualizationSegments = useMemo(
+    () =>
+      threadRef
+        ? splitCodexInlineVisualizations(text)
+        : ([{ kind: "markdown", text, offset: 0 }] as const),
+    [text, threadRef],
+  );
   // Re-emit highlighted content as markdown so copying out of the rendered
   // view keeps links, emphasis, lists, and code fences intact.
   const handleCopy = useCallback((event: ReactClipboardEvent<HTMLDivElement>) => {
@@ -2502,15 +2513,28 @@ function ChatMarkdown({
       )}
       onCopy={handleCopy}
     >
-      <ReactMarkdown
-        remarkPlugins={remarkPlugins}
-        rehypePlugins={parseRawHtml ? CHAT_MARKDOWN_REHYPE_PLUGINS : undefined}
-        skipHtml={false}
-        components={markdownComponents}
-        urlTransform={markdownUrlTransform}
-      >
-        {text}
-      </ReactMarkdown>
+      {inlineVisualizationSegments.map((segment) =>
+        segment.kind === "visualization" ? (
+          threadRef ? (
+            <CodexInlineVisualization
+              key={`visualization:${segment.offset}:${segment.fileName}`}
+              threadRef={threadRef}
+              fileName={segment.fileName}
+            />
+          ) : null
+        ) : (
+          <ReactMarkdown
+            key={`markdown:${segment.offset}`}
+            remarkPlugins={remarkPlugins}
+            rehypePlugins={parseRawHtml ? CHAT_MARKDOWN_REHYPE_PLUGINS : undefined}
+            skipHtml={false}
+            components={markdownComponents}
+            urlTransform={markdownUrlTransform}
+          >
+            {segment.text}
+          </ReactMarkdown>
+        ),
+      )}
     </div>
   );
 }
