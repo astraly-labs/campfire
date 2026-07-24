@@ -32,6 +32,8 @@ import type { ProviderServiceError } from "../../provider/Errors.ts";
 import { TextGeneration } from "../../textGeneration/TextGeneration.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
+import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
+import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import {
@@ -195,6 +197,7 @@ const make = Effect.gen(function* () {
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const providerService = yield* ProviderService;
   const providerRegistry = yield* ProviderRegistry;
+  const projectionTurns = yield* ProjectionTurnRepository;
   const gitWorkflow = yield* GitWorkflowService;
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
   const textGeneration = yield* TextGeneration;
@@ -621,6 +624,7 @@ const make = Effect.gen(function* () {
 
   const buildSendTurnRequestForThread = Effect.fnUntraced(function* (input: {
     readonly threadId: ThreadId;
+    readonly idempotencyKey: string;
     readonly messageText: string;
     readonly attachments?: ReadonlyArray<ChatAttachment>;
     readonly modelSelection?: ModelSelection;
@@ -672,6 +676,7 @@ const make = Effect.gen(function* () {
 
     return {
       threadId: input.threadId,
+      idempotencyKey: input.idempotencyKey,
       ...(normalizedInput ? { input: normalizedInput } : {}),
       ...(normalizedAttachments.length > 0 ? { attachments: normalizedAttachments } : {}),
       ...(modelForTurn !== undefined ? { modelSelection: modelForTurn } : {}),
@@ -880,6 +885,7 @@ const make = Effect.gen(function* () {
 
     const sendTurnRequest = yield* buildSendTurnRequestForThread({
       threadId: event.payload.threadId,
+      idempotencyKey: key,
       messageText: message.text,
       ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
       ...(event.payload.modelSelection !== undefined
@@ -1118,6 +1124,47 @@ const make = Effect.gen(function* () {
     yield* Effect.forkScoped(
       Stream.runForEach(orchestrationEngine.streamDomainEvents, processEvent),
     );
+
+    yield* Effect.gen(function* () {
+      const pendingStarts = yield* projectionTurns.listPendingTurnStarts();
+      if (pendingStarts.length === 0) {
+        return;
+      }
+
+      const pendingKeys = new Set(
+        pendingStarts.map((pending) => `${pending.threadId}:${pending.messageId}`),
+      );
+      const pendingEvents = new Map<
+        string,
+        Extract<OrchestrationEvent, { type: "thread.turn-start-requested" }>
+      >();
+      yield* Stream.runForEach(
+        orchestrationEngine.readEvents(0, Number.MAX_SAFE_INTEGER),
+        (event) =>
+          Effect.sync(() => {
+            if (event.type !== "thread.turn-start-requested") {
+              return;
+            }
+            const key = `${event.payload.threadId}:${event.payload.messageId}`;
+            if (pendingKeys.has(key)) {
+              pendingEvents.set(key, event);
+            }
+          }),
+      );
+      yield* Effect.forEach(pendingEvents.values(), worker.enqueue, {
+        discard: true,
+      });
+      yield* Effect.logInfo("provider command reactor replayed pending turn starts", {
+        pendingCount: pendingStarts.length,
+        replayedCount: pendingEvents.size,
+      });
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("provider command reactor failed to replay pending turn starts", {
+          cause: Cause.pretty(cause),
+        }),
+      ),
+    );
   });
 
   return {
@@ -1126,4 +1173,6 @@ const make = Effect.gen(function* () {
   } satisfies ProviderCommandReactorShape;
 });
 
-export const ProviderCommandReactorLive = Layer.effect(ProviderCommandReactor, make);
+export const ProviderCommandReactorLive = Layer.effect(ProviderCommandReactor, make).pipe(
+  Layer.provide(ProjectionTurnRepositoryLive),
+);

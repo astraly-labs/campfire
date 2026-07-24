@@ -115,6 +115,16 @@ describe("ProviderSessionStartInput", () => {
 });
 
 describe("ProviderSendTurnInput", () => {
+  it("accepts a stable idempotency key", () => {
+    const parsed = decodeProviderSendTurnInput({
+      threadId: "thread-1",
+      idempotencyKey: "command:cmd-turn-1",
+      input: "continue",
+    });
+
+    expect(parsed.idempotencyKey).toBe("command:cmd-turn-1");
+  });
+
   it("accepts codex modelSelection", () => {
     const parsed = decodeProviderSendTurnInput({
       threadId: "thread-1",

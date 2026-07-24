@@ -512,6 +512,52 @@ function startLifecycleRuntime() {
 }
 
 lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
+  it.effect("keeps forwarding events after a root startSession effect completes", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const rootScope = yield* Scope.make("sequential");
+      const startFiber = yield* adapter
+        .startSession({
+          provider: ProviderDriverKind.make("codex"),
+          threadId: asThreadId("thread-root-session"),
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.forkIn(rootScope));
+      yield* Fiber.join(startFiber);
+      yield* Scope.close(rootScope, Exit.void);
+      const runtime = lifecycleRuntimeFactory.lastRuntime;
+      NodeAssert.ok(runtime);
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      yield* runtime.emit({
+        id: asEventId("evt-after-root-session"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "item/completed",
+        threadId: asThreadId("thread-root-session"),
+        turnId: asTurnId("turn-root-session"),
+        itemId: asItemId("msg-root-session"),
+        payload: {
+          completedAtMs: 1_778_000_000_000,
+          threadId: "thread-root-session",
+          turnId: "turn-root-session",
+          item: {
+            type: "agentMessage",
+            id: "msg-root-session",
+            text: "still connected",
+          },
+        },
+      });
+
+      const firstEvent = yield* Fiber.join(firstEventFiber).pipe(Effect.timeout("1 second"));
+      NodeAssert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag === "Some") {
+        NodeAssert.equal(firstEvent.value.type, "item.completed");
+      }
+    }),
+  );
+
   it.effect("maps completed agent message items to canonical item.completed events", () =>
     Effect.gen(function* () {
       const { adapter, runtime } = yield* startLifecycleRuntime();

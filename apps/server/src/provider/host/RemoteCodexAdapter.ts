@@ -239,7 +239,11 @@ class CodexProviderHostClient {
     throw new Error("Codex provider-host client is closed.");
   }
 
-  async request(operation: ProviderHostOperation, payload: unknown): Promise<unknown> {
+  async request(
+    operation: ProviderHostOperation,
+    payload: unknown,
+    commandId: string = NodeCrypto.randomUUID(),
+  ): Promise<unknown> {
     if (this.closed) throw new Error("Codex provider-host client is closed.");
     const requestId = NodeCrypto.randomUUID();
     const frame: PendingRequest["frame"] = {
@@ -248,7 +252,7 @@ class CodexProviderHostClient {
       instanceId: this.instanceId,
       lease: this.lease,
       requestId,
-      commandId: NodeCrypto.randomUUID(),
+      commandId,
       operation,
       payload,
     };
@@ -314,9 +318,10 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
     operation: ProviderHostOperation,
     payload: unknown,
     decode: (value: unknown) => A,
+    commandId?: string,
   ): Effect.Effect<A, ProviderAdapterRequestError> =>
     Effect.tryPromise({
-      try: () => client.request(operation, payload),
+      try: () => client.request(operation, payload, commandId),
       catch: (error) => requestError(operation, error),
     }).pipe(
       Effect.flatMap((value) =>
@@ -344,7 +349,7 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
         decodeProviderSession,
       ),
     sendTurn: (turnInput: ProviderSendTurnInput) =>
-      request("sendTurn", turnInput, decodeTurnStartResult),
+      request("sendTurn", turnInput, decodeTurnStartResult, turnInput.idempotencyKey),
     interruptTurn: (threadId: ThreadId, turnId?: TurnId) =>
       request("interruptTurn", { threadId, ...(turnId ? { turnId } : {}) }, voidResult),
     respondToRequest: (threadId, requestId, decision) =>
