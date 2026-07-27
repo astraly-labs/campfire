@@ -180,6 +180,7 @@ interface TimelineRowSharedState {
   onToggleWorkGroup: (groupId: string, anchorKey: string) => void;
   agentPanelModel: AgentPanelModel;
   onOpenAgents: () => void;
+  onReviewPullRequest?: ((pullRequestNumber: number) => void) | undefined;
 }
 
 interface TimelineRowActivityState {
@@ -263,6 +264,7 @@ interface MessagesTimelineProps {
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onFileOpen?: (attachment: ChatFileAttachment) => void;
   openingVideoAttachmentId: string | null;
+  onReviewPullRequest?: ((pullRequestNumber: number) => void) | undefined;
   activeThreadEnvironmentId: EnvironmentId;
   markdownCwd: string | undefined;
   resolvedTheme: "light" | "dark";
@@ -315,6 +317,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onImageExpand,
   onFileOpen = NOOP_OPEN_ATTACHMENT,
   openingVideoAttachmentId,
+  onReviewPullRequest,
   activeThreadEnvironmentId,
   markdownCwd,
   resolvedTheme,
@@ -588,6 +591,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onToggleWorkGroup,
       agentPanelModel,
       onOpenAgents,
+      onReviewPullRequest,
     }),
     [
       timestampFormat,
@@ -611,6 +615,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onToggleWorkGroup,
       agentPanelModel,
       onOpenAgents,
+      onReviewPullRequest,
     ],
   );
   const activityState = useMemo<TimelineRowActivityState>(
@@ -1322,6 +1327,7 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
             skills={ctx.skills}
             onUseArtifactTemplate={ctx.onUseArtifactTemplate}
             onImageExpand={ctx.onImageExpand}
+            onReviewPullRequest={ctx.onReviewPullRequest}
           />
         </QuoteOnSelection>
         <AssistantChangedFilesSection

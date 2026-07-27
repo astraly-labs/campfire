@@ -18,6 +18,7 @@ import {
 const ProjectionProjectDbRow = ProjectionProject.mapFields(
   Struct.assign({
     defaultModelSelection: Schema.NullOr(Schema.fromJsonString(ModelSelection)),
+    defaultReviewModelSelection: Schema.NullOr(Schema.fromJsonString(ModelSelection)),
     scripts: Schema.fromJsonString(Schema.Array(ProjectScript)),
     createdBy: Schema.NullOr(Schema.fromJsonString(CollaborationUser)),
   }),
@@ -38,6 +39,7 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           default_model_selection_json,
           default_thread_env_mode,
           favicon_path,
+          default_review_model_selection_json,
           scripts_json,
           created_at,
           updated_at,
@@ -51,6 +53,11 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           ${row.defaultModelSelection !== null ? JSON.stringify(row.defaultModelSelection) : null},
           ${row.defaultThreadEnvMode},
           ${row.faviconPath ?? null},
+          ${
+            row.defaultReviewModelSelection !== null
+              ? JSON.stringify(row.defaultReviewModelSelection)
+              : null
+          },
           ${JSON.stringify(row.scripts)},
           ${row.createdAt},
           ${row.updatedAt},
@@ -64,6 +71,7 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           default_model_selection_json = excluded.default_model_selection_json,
           default_thread_env_mode = excluded.default_thread_env_mode,
           favicon_path = excluded.favicon_path,
+          default_review_model_selection_json = excluded.default_review_model_selection_json,
           scripts_json = excluded.scripts_json,
           created_at = excluded.created_at,
           updated_at = excluded.updated_at,
@@ -84,6 +92,7 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           default_model_selection_json AS "defaultModelSelection",
           default_thread_env_mode AS "defaultThreadEnvMode",
           favicon_path AS "faviconPath",
+          default_review_model_selection_json AS "defaultReviewModelSelection",
           scripts_json AS "scripts",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
@@ -106,6 +115,7 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           default_model_selection_json AS "defaultModelSelection",
           default_thread_env_mode AS "defaultThreadEnvMode",
           favicon_path AS "faviconPath",
+          default_review_model_selection_json AS "defaultReviewModelSelection",
           scripts_json AS "scripts",
           created_at AS "createdAt",
           updated_at AS "updatedAt",

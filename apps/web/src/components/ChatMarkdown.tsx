@@ -185,6 +185,7 @@ interface ChatMarkdownProps {
   imageBaseDir?: string | undefined;
   onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
   extraRemarkPlugins?: NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
+  onReviewPullRequest?: ((pullRequestNumber: number) => void) | undefined;
 }
 
 export function canUseMarkdownFileShellActions(
@@ -438,6 +439,23 @@ const GITHUB_ALERT_PRESENTATIONS: Record<
     titleClassName: "text-red-600 dark:text-red-400",
   },
 };
+
+export function githubPullRequestNumber(href: string): number | null {
+  try {
+    const url = new URL(href);
+    if (
+      (url.protocol !== "https:" && url.protocol !== "http:") ||
+      url.hostname.toLowerCase() !== "github.com"
+    ) {
+      return null;
+    }
+    const match = url.pathname.match(/^\/[^/]+\/[^/]+\/pull\/([1-9]\d*)(?:\/|$)/u);
+    const pullRequestNumber = match?.[1] ? Number(match[1]) : NaN;
+    return Number.isSafeInteger(pullRequestNumber) ? pullRequestNumber : null;
+  } catch {
+    return null;
+  }
+}
 
 function extractFenceLanguage(className: string | undefined): string {
   const match = className?.match(CODE_FENCE_LANGUAGE_REGEX);
@@ -1835,6 +1853,7 @@ function ChatMarkdown({
   imageBaseDir,
   onImageExpand,
   extraRemarkPlugins = EMPTY_REMARK_PLUGINS,
+  onReviewPullRequest,
 }: ChatMarkdownProps) {
   const { resolvedTheme } = useTheme();
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
@@ -2257,6 +2276,8 @@ function ChatMarkdown({
           const onClick = props.onClick;
           const canOpenInPreview = Boolean(threadRef) && isPreviewSupportedInRuntime();
           const linkChildren = <MarkdownLinkContext value>{children}</MarkdownLinkContext>;
+          const pullRequestNumber =
+            href && onReviewPullRequest ? githubPullRequestNumber(href) : null;
           const link = (
             <a
               {...props}
@@ -2342,19 +2363,36 @@ function ChatMarkdown({
               )}
             </a>
           );
-          if (!faviconHost || !href) {
-            return link;
-          }
-          return (
-            <Tooltip>
-              <TooltipTrigger render={link} />
-              <TooltipPopup
-                side="top"
-                className="max-w-[min(36rem,calc(100vw-2rem))] whitespace-normal leading-tight wrap-anywhere"
+          const renderedLink =
+            faviconHost && href ? (
+              <Tooltip>
+                <TooltipTrigger render={link} />
+                <TooltipPopup
+                  side="top"
+                  className="max-w-[min(36rem,calc(100vw-2rem))] whitespace-normal leading-tight wrap-anywhere"
+                >
+                  {href}
+                </TooltipPopup>
+              </Tooltip>
+            ) : (
+              link
+            );
+          return pullRequestNumber === null ? (
+            renderedLink
+          ) : (
+            <span className="inline-flex max-w-full items-center gap-1 align-baseline">
+              {renderedLink}
+              <Button
+                type="button"
+                size="xs"
+                variant="outline"
+                className="h-5 px-1.5 text-[10px]"
+                aria-label={`Review pull request #${pullRequestNumber}`}
+                onClick={() => onReviewPullRequest?.(pullRequestNumber)}
               >
-                {href}
-              </TooltipPopup>
-            </Tooltip>
+                Review
+              </Button>
+            </span>
           );
         }
 
@@ -2484,6 +2522,7 @@ function ChatMarkdown({
     openMarkdownFileInPreview,
     preferredEditorMenuLabel,
     resolveThreadPullRequest,
+    onReviewPullRequest,
     resolvedTheme,
     revealMarkdownFileInFileManager,
     revealInFileManagerLabel,
