@@ -88,6 +88,7 @@ interface TimelineRowSharedState {
   onRevertUserMessage: (messageId: MessageId) => void;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
+  onReviewPullRequest?: ((pullRequestNumber: number) => void) | undefined;
 }
 
 interface TimelineRowActivityState {
@@ -121,6 +122,7 @@ interface MessagesTimelineProps {
   onRevertUserMessage: (messageId: MessageId) => void;
   isRevertingCheckpoint: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
+  onReviewPullRequest?: ((pullRequestNumber: number) => void) | undefined;
   activeThreadEnvironmentId: EnvironmentId;
   markdownCwd: string | undefined;
   resolvedTheme: "light" | "dark";
@@ -150,6 +152,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onRevertUserMessage,
   isRevertingCheckpoint,
   onImageExpand,
+  onReviewPullRequest,
   activeThreadEnvironmentId,
   markdownCwd,
   resolvedTheme,
@@ -222,6 +225,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onRevertUserMessage,
       onImageExpand,
       onOpenTurnDiff,
+      onReviewPullRequest,
     }),
     [
       timestampFormat,
@@ -234,6 +238,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onRevertUserMessage,
       onImageExpand,
       onOpenTurnDiff,
+      onReviewPullRequest,
     ],
   );
   const activityState = useMemo<TimelineRowActivityState>(
@@ -423,6 +428,7 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
           cwd={ctx.markdownCwd}
           isStreaming={Boolean(row.message.streaming)}
           skills={ctx.skills}
+          onReviewPullRequest={ctx.onReviewPullRequest}
         />
         <AssistantChangedFilesSection
           turnSummary={row.assistantTurnDiffSummary}
