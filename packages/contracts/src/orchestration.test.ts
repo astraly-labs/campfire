@@ -184,9 +184,17 @@ it.effect("decodes project.meta-updated payloads with explicit default provider"
         provider: "claudeAgent",
         model: "claude-opus-4-6",
       },
+      defaultReviewModelSelection: {
+        provider: "codex",
+        model: "gpt-5.4",
+      },
       updatedAt: "2026-01-01T00:00:00.000Z",
     });
     assert.strictEqual(parsed.defaultModelSelection?.instanceId, "claudeAgent");
+    assert.deepStrictEqual(parsed.defaultReviewModelSelection, {
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "gpt-5.4",
+    });
   }),
 );
 

@@ -49,6 +49,7 @@ import Migration0033 from "./Migrations/033_ProjectionThreadsSettled.ts";
 import Migration0034 from "./Migrations/034_ProjectionThreadSideThreads.ts";
 import Migration0035 from "./Migrations/035_ProjectionCollaborationIdentity.ts";
 import Migration0036 from "./Migrations/036_CanonicalizeProjectionSideThreads.ts";
+import Migration0037 from "./Migrations/037_ProjectionProjectsDefaultReviewModelSelection.ts";
 import Migration0038 from "./Migrations/038_ProjectionThreadsSnoozed.ts";
 
 /**
@@ -98,6 +99,7 @@ export const migrationEntries = [
   [34, "ProjectionThreadSideThreads", Migration0034],
   [35, "ProjectionCollaborationIdentity", Migration0035],
   [36, "CanonicalizeProjectionSideThreads", Migration0036],
+  [37, "ProjectionProjectsDefaultReviewModelSelection", Migration0037],
   [38, "ProjectionThreadsSnoozed", Migration0038],
 ] as const;
 

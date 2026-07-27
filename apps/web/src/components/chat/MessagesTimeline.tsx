@@ -143,6 +143,7 @@ interface TimelineRowSharedState {
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
   onToggleTurnFold: (turnId: TurnId) => void;
   onToggleWorkGroup: (groupId: string, anchorElement?: HTMLElement) => void;
+  onReviewPullRequest?: ((pullRequestNumber: number) => void) | undefined;
 }
 
 interface TimelineRowActivityState {
@@ -184,6 +185,7 @@ interface MessagesTimelineProps {
   currentGoogleSubject?: string | null;
   isRevertingCheckpoint: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
+  onReviewPullRequest?: ((pullRequestNumber: number) => void) | undefined;
   activeThreadEnvironmentId: EnvironmentId;
   markdownCwd: string | undefined;
   resolvedTheme: "light" | "dark";
@@ -223,6 +225,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   currentGoogleSubject = null,
   isRevertingCheckpoint,
   onImageExpand,
+  onReviewPullRequest,
   activeThreadEnvironmentId,
   markdownCwd,
   resolvedTheme,
@@ -452,6 +455,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onOpenTurnDiff,
       onToggleTurnFold,
       onToggleWorkGroup,
+      onReviewPullRequest,
     }),
     [
       timestampFormat,
@@ -470,6 +474,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onOpenTurnDiff,
       onToggleTurnFold,
       onToggleWorkGroup,
+      onReviewPullRequest,
     ],
   );
   const activityState = useMemo<TimelineRowActivityState>(
@@ -1083,6 +1088,7 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
             threadRef={ctx.threadRef ?? undefined}
             isStreaming={Boolean(row.message.streaming)}
             skills={ctx.skills}
+            onReviewPullRequest={ctx.onReviewPullRequest}
           />
         </QuoteOnSelection>
         <AssistantChangedFilesSection
