@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.campfire.worktree-maintenance</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/example/.local/libexec/campfire-worktree-maintenance.sh</string>
+    <string>/Users/example/Library/Application Support/Campfire-staging</string>
+    <string>7</string>
+  </array>
+  <key>StartInterval</key>
+  <integer>3600</integer>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>StandardOutPath</key>
+  <string>/Users/example/Library/Logs/Campfire-staging/worktree-maintenance.stdout.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/example/Library/Logs/Campfire-staging/worktree-maintenance.stderr.log</string>
+</dict>
+</plist>

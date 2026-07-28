@@ -146,9 +146,77 @@ campfire_restore="$campfire_fixture/restore"
   fail "restored database content mismatch"
 [ -f "$campfire_restore/worktrees/thread-a/proof.txt" ] || fail "worktree backup missing"
 
+campfire_maintenance_home="$campfire_fixture/maintenance-home"
+campfire_maintenance_active="$campfire_maintenance_home/worktrees/project/active"
+campfire_maintenance_idle="$campfire_maintenance_home/worktrees/project/idle"
+campfire_maintenance_source="$campfire_fixture/maintenance-source"
+campfire_maintenance_orphan="$campfire_maintenance_home/worktrees/project/orphan"
+campfire_maintenance_dirty="$campfire_maintenance_home/worktrees/project/dirty"
+campfire_maintenance_bin="$campfire_fixture/maintenance-bin"
+mkdir -p \
+  "$campfire_maintenance_home/userdata" \
+  "$campfire_maintenance_active/target" \
+  "$campfire_maintenance_idle/target" \
+  "$campfire_maintenance_bin"
+echo active >"$campfire_maintenance_active/target/proof.txt"
+echo idle >"$campfire_maintenance_idle/target/proof.txt"
+cat >"$campfire_maintenance_bin/cargo" <<'EOF'
+#!/bin/sh
+rm -rf "$CARGO_TARGET_DIR"
+EOF
+chmod 700 "$campfire_maintenance_bin/cargo"
+sqlite3 "$campfire_maintenance_home/userdata/state.sqlite" <<EOF
+CREATE TABLE projection_threads (
+  thread_id TEXT PRIMARY KEY,
+  worktree_path TEXT,
+  updated_at TEXT NOT NULL,
+  deleted_at TEXT
+);
+CREATE TABLE projection_turns (
+  row_id INTEGER PRIMARY KEY,
+  thread_id TEXT NOT NULL,
+  state TEXT NOT NULL
+);
+CREATE TABLE provider_session_runtime (
+  thread_id TEXT PRIMARY KEY,
+  status TEXT NOT NULL
+);
+INSERT INTO projection_threads VALUES
+  ('active', '$campfire_maintenance_active', '2026-01-01T00:00:00.000Z', NULL),
+  ('idle', '$campfire_maintenance_idle', '2026-01-01T00:00:00.000Z', NULL);
+INSERT INTO projection_turns VALUES
+  (1, 'active', 'running'),
+  (2, 'idle', 'completed');
+EOF
+git init -q "$campfire_maintenance_source"
+git -C "$campfire_maintenance_source" config user.name fixture
+git -C "$campfire_maintenance_source" config user.email fixture@example.com
+echo fixture >"$campfire_maintenance_source/proof.txt"
+git -C "$campfire_maintenance_source" add proof.txt
+git -C "$campfire_maintenance_source" commit -qm fixture
+git -C "$campfire_maintenance_source" worktree add -qb orphan "$campfire_maintenance_orphan"
+git -C "$campfire_maintenance_source" worktree add -qb dirty "$campfire_maintenance_dirty"
+echo dirty >"$campfire_maintenance_dirty/untracked.txt"
+
+PATH="$campfire_maintenance_bin:$PATH" \
+  "$campfire_repo_root/ops/macos/campfire-worktree-maintenance.sh" \
+  "$campfire_maintenance_home" 0 --dry-run >/dev/null
+[ -f "$campfire_maintenance_active/target/proof.txt" ] || fail "dry-run cleaned active target"
+[ -f "$campfire_maintenance_idle/target/proof.txt" ] || fail "dry-run cleaned idle target"
+[ -d "$campfire_maintenance_orphan" ] || fail "dry-run removed orphan worktree"
+
+PATH="$campfire_maintenance_bin:$PATH" \
+  "$campfire_repo_root/ops/macos/campfire-worktree-maintenance.sh" \
+  "$campfire_maintenance_home" 0 >/dev/null
+[ -f "$campfire_maintenance_active/target/proof.txt" ] || fail "active target was cleaned"
+[ ! -e "$campfire_maintenance_idle/target" ] || fail "idle target was not cleaned"
+[ ! -e "$campfire_maintenance_orphan" ] || fail "clean orphan worktree was not removed"
+[ -d "$campfire_maintenance_dirty" ] || fail "dirty orphan worktree was removed"
+
 expect_failure sh "$campfire_repo_root/scripts/campfire-soak.sh" 0
 plutil -lint "$campfire_repo_root/ops/macos/com.campfire.server.plist.example" >/dev/null
 plutil -lint "$campfire_repo_root/ops/macos/com.campfire.provider-host.plist.example" >/dev/null
+plutil -lint "$campfire_repo_root/ops/macos/com.campfire.worktree-maintenance.plist.example" >/dev/null
 sh -n "$campfire_repo_root/ops/macos/campfire-preflight.sh"
 sh -n "$campfire_repo_root/ops/macos/campfire-package-release.sh"
 sh -n "$campfire_repo_root/ops/macos/campfire-release.sh"
@@ -156,6 +224,7 @@ sh -n "$campfire_repo_root/ops/macos/run-campfire.sh"
 sh -n "$campfire_repo_root/ops/macos/run-campfire-provider-host.sh"
 sh -n "$campfire_repo_root/ops/macos/campfire-backup.sh"
 sh -n "$campfire_repo_root/ops/macos/campfire-restore.sh"
+sh -n "$campfire_repo_root/ops/macos/campfire-worktree-maintenance.sh"
 sh -n "$campfire_repo_root/scripts/campfire-soak.sh"
 
 echo "campfire ops fixtures passed"
