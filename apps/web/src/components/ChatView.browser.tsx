@@ -1797,6 +1797,18 @@ describe("ChatView timeline estimator parity (full app)", () => {
         };
       },
       resolveRpc: (body) => {
+        if (body._tag === WS_METHODS.gitResolvePullRequest) {
+          return {
+            pullRequest: {
+              number: 389,
+              title: "Halt on truncated history",
+              url: "https://github.com/astraly-labs/tessera/pull/389",
+              baseBranch: "main",
+              headBranch: "halt-on-truncated-history",
+              state: "open",
+            },
+          };
+        }
         if (body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
           return { sequence: fixture.snapshot.snapshotSequence + 1 };
         }

@@ -3379,6 +3379,18 @@ export default function ChatView(props: ChatViewProps) {
   const openPullRequestReview = useCallback((pullRequestNumber: number) => {
     setReviewPullRequestNumber(pullRequestNumber);
   }, []);
+  const resolvePullRequestState = useCallback(
+    async (pullRequestUrl: string) => {
+      const api = readEnvironmentApi(environmentId);
+      if (!api || !gitCwd) throw new Error("Pull request resolution is unavailable.");
+      const result = await api.git.resolvePullRequest({
+        cwd: gitCwd,
+        reference: pullRequestUrl,
+      });
+      return result.pullRequest.state;
+    },
+    [environmentId, gitCwd],
+  );
   const onStartPullRequestReview = useCallback(
     async (modelSelection: ModelSelection) => {
       const api = readEnvironmentApi(environmentId);
@@ -3680,6 +3692,9 @@ export default function ChatView(props: ChatViewProps) {
               skills={activeProviderStatus?.skills ?? EMPTY_PROVIDER_SKILLS}
               onReviewPullRequest={
                 activeEnvironmentUnavailable || !activeProject ? undefined : openPullRequestReview
+              }
+              resolvePullRequestState={
+                activeEnvironmentUnavailable || !activeProject ? undefined : resolvePullRequestState
               }
               onIsAtEndChange={onIsAtEndChange}
             />

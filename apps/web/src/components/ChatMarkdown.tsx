@@ -1,6 +1,6 @@
 import { DiffsHighlighter, getSharedHighlighter, SupportedLanguages } from "@pierre/diffs";
 import { CheckIcon, CopyIcon } from "lucide-react";
-import type { ServerProviderSkill } from "@t3tools/contracts";
+import type { GitResolvedPullRequest, ServerProviderSkill } from "@t3tools/contracts";
 import React, {
   Children,
   Suspense,
@@ -64,6 +64,9 @@ interface ChatMarkdownProps {
   isStreaming?: boolean;
   skills?: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
   onReviewPullRequest?: ((pullRequestNumber: number) => void) | undefined;
+  resolvePullRequestState?:
+    | ((pullRequestUrl: string) => Promise<GitResolvedPullRequest["state"]>)
+    | undefined;
 }
 
 const EMPTY_MARKDOWN_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
@@ -92,6 +95,47 @@ function githubPullRequestNumber(href: string): number | null {
   } catch {
     return null;
   }
+}
+
+function PullRequestReviewButton({
+  pullRequestNumber,
+  pullRequestUrl,
+  resolvePullRequestState,
+  onReviewPullRequest,
+}: {
+  pullRequestNumber: number;
+  pullRequestUrl: string;
+  resolvePullRequestState: (pullRequestUrl: string) => Promise<GitResolvedPullRequest["state"]>;
+  onReviewPullRequest: (pullRequestNumber: number) => void;
+}) {
+  const [openPullRequestUrl, setOpenPullRequestUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void resolvePullRequestState(pullRequestUrl)
+      .then((state) => {
+        if (!cancelled) setOpenPullRequestUrl(state === "open" ? pullRequestUrl : null);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [pullRequestUrl, resolvePullRequestState]);
+
+  if (openPullRequestUrl !== pullRequestUrl) return null;
+
+  return (
+    <Button
+      type="button"
+      size="xs"
+      variant="outline"
+      className="h-5 px-1.5 text-[10px]"
+      aria-label={`Review pull request #${pullRequestNumber}`}
+      onClick={() => onReviewPullRequest(pullRequestNumber)}
+    >
+      Review
+    </Button>
+  );
 }
 
 function extractFenceLanguage(className: string | undefined): string {
@@ -537,6 +581,7 @@ function ChatMarkdown({
   isStreaming = false,
   skills = EMPTY_MARKDOWN_SKILLS,
   onReviewPullRequest,
+  resolvePullRequestState,
 }: ChatMarkdownProps) {
   const { resolvedTheme } = useTheme();
   const diffThemeName = resolveDiffThemeName(resolvedTheme);
@@ -575,7 +620,9 @@ function ChatMarkdown({
         const fileLinkMeta = normalizedHref ? markdownFileLinkMetaByHref.get(normalizedHref) : null;
         if (!fileLinkMeta) {
           const pullRequestNumber =
-            href && onReviewPullRequest ? githubPullRequestNumber(href) : null;
+            href && onReviewPullRequest && resolvePullRequestState
+              ? githubPullRequestNumber(href)
+              : null;
           const link = (
             <a
               {...props}
@@ -585,21 +632,23 @@ function ChatMarkdown({
               className={cn("min-w-0", props.className)}
             />
           );
-          return pullRequestNumber === null ? (
-            link
-          ) : (
+          if (
+            pullRequestNumber === null ||
+            !href ||
+            !onReviewPullRequest ||
+            !resolvePullRequestState
+          ) {
+            return link;
+          }
+          return (
             <span className="inline-flex max-w-full items-center gap-1 align-baseline">
               {link}
-              <Button
-                type="button"
-                size="xs"
-                variant="outline"
-                className="h-5 px-1.5 text-[10px]"
-                aria-label={`Review pull request #${pullRequestNumber}`}
-                onClick={() => onReviewPullRequest?.(pullRequestNumber)}
-              >
-                Review
-              </Button>
+              <PullRequestReviewButton
+                pullRequestNumber={pullRequestNumber}
+                pullRequestUrl={href}
+                resolvePullRequestState={resolvePullRequestState}
+                onReviewPullRequest={onReviewPullRequest}
+              />
             </span>
           );
         }
@@ -655,6 +704,7 @@ function ChatMarkdown({
       isStreaming,
       markdownFileLinkMetaByHref,
       onReviewPullRequest,
+      resolvePullRequestState,
       resolvedTheme,
       skills,
     ],

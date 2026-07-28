@@ -141,20 +141,48 @@ describe("ChatMarkdown", () => {
 
   it("offers to review GitHub pull request links", async () => {
     const onReviewPullRequest = vi.fn();
+    const resolvePullRequestState = vi.fn(async () => "open" as const);
     const screen = await render(
       <ChatMarkdown
         text="PR draft ouverte : [#389 — halt on truncated history](https://github.com/astraly-labs/tessera/pull/389)"
         cwd="/repo/project"
         onReviewPullRequest={onReviewPullRequest}
+        resolvePullRequestState={resolvePullRequestState}
       />,
     );
 
     try {
       const reviewButton = page.getByRole("button", { name: "Review pull request #389" });
       await expect.element(reviewButton).toBeInTheDocument();
+      expect(resolvePullRequestState).toHaveBeenCalledWith(
+        "https://github.com/astraly-labs/tessera/pull/389",
+      );
       await reviewButton.click();
       expect(onReviewPullRequest).toHaveBeenCalledOnce();
       expect(onReviewPullRequest).toHaveBeenCalledWith(389);
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("does not offer to review merged GitHub pull requests", async () => {
+    const resolvePullRequestState = vi.fn(async () => "merged" as const);
+    const screen = await render(
+      <ChatMarkdown
+        text="Merged: [#389](https://github.com/astraly-labs/tessera/pull/389)"
+        cwd="/repo/project"
+        onReviewPullRequest={vi.fn()}
+        resolvePullRequestState={resolvePullRequestState}
+      />,
+    );
+
+    try {
+      await vi.waitFor(() => {
+        expect(resolvePullRequestState).toHaveBeenCalledOnce();
+      });
+      await expect
+        .element(page.getByRole("button", { name: "Review pull request #389" }))
+        .not.toBeInTheDocument();
     } finally {
       await screen.unmount();
     }
