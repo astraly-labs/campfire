@@ -14,6 +14,8 @@ import {
   ChangeRequestStatusIcon,
   prStatusIndicator,
   resolveThreadPr,
+  reviewThreadStatusIndicator,
+  ReviewThreadStatusIcon,
   terminalStatusFromRunningIds,
   ThreadStatusLabel,
 } from "./ThreadStatusIndicators";
@@ -384,7 +386,13 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     },
   });
   const pr = resolveThreadPr(thread.branch, gitStatus.data);
-  const prStatus = prStatusIndicator(pr, gitStatus.data?.sourceControlProvider);
+  const reviewStatus =
+    thread.kind === "review"
+      ? reviewThreadStatusIndicator(gitStatus.data?.sourceControlProvider)
+      : null;
+  const prStatus = reviewStatus
+    ? null
+    : prStatusIndicator(pr, gitStatus.data?.sourceControlProvider);
   const terminalStatus = terminalStatusFromRunningIds(runningTerminalIds);
   const isConfirmingArchive = confirmingArchiveThreadKey === threadKey && !isThreadRunning;
   const threadMetaClassName = isConfirmingArchive
@@ -559,6 +567,21 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         onContextMenu={handleRowContextMenu}
       >
         <div className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
+          {reviewStatus && (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <span
+                    aria-label={reviewStatus.tooltip}
+                    className={`inline-flex items-center justify-center ${reviewStatus.colorClass}`}
+                  >
+                    <ReviewThreadStatusIcon className="size-3" />
+                  </span>
+                }
+              />
+              <TooltipPopup side="top">{reviewStatus.tooltip}</TooltipPopup>
+            </Tooltip>
+          )}
           {prStatus && (
             <Tooltip>
               <TooltipTrigger

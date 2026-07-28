@@ -295,6 +295,7 @@ function mapThreadShell(
     projectId: thread.projectId,
     title: thread.title,
     interactionMode: thread.interactionMode,
+    kind: thread.kind,
     session,
     createdAt: thread.createdAt,
     archivedAt: thread.archivedAt,
@@ -396,6 +397,7 @@ function sidebarThreadSummariesEqual(
     left.projectId === right.projectId &&
     left.title === right.title &&
     left.interactionMode === right.interactionMode &&
+    left.kind === right.kind &&
     threadSessionsEqual(left.session, right.session) &&
     left.createdAt === right.createdAt &&
     left.archivedAt === right.archivedAt &&
@@ -1268,6 +1270,7 @@ function applyEnvironmentOrchestrationEvent(
           modelSelection: event.payload.modelSelection,
           runtimeMode: event.payload.runtimeMode,
           interactionMode: event.payload.interactionMode,
+          kind: event.payload.kind,
           branch: event.payload.branch,
           worktreePath: event.payload.worktreePath,
           latestTurn: null,

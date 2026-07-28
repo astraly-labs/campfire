@@ -388,6 +388,7 @@ describe("ProviderCommandReactor", () => {
         title: "Thread",
         modelSelection: modelSelection,
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        kind: "default",
         runtimeMode: "approval-required",
         branch: null,
         worktreePath: null,

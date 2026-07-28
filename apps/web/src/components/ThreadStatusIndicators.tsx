@@ -1,6 +1,6 @@
 import { scopeProjectRef, scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime";
 import type { VcsStatusResult } from "@t3tools/contracts";
-import { CloudIcon, GitPullRequestIcon, TerminalIcon } from "lucide-react";
+import { CloudIcon, GitPullRequestIcon, ScanEyeIcon, TerminalIcon } from "lucide-react";
 import { useMemo } from "react";
 import { usePrimaryEnvironmentId } from "../environments/primary";
 import {
@@ -67,6 +67,27 @@ export function prStatusIndicator(
 
 export function ChangeRequestStatusIcon({ className }: { className?: string }) {
   return <GitPullRequestIcon className={className} />;
+}
+
+export interface ReviewThreadIndicator {
+  label: string;
+  colorClass: string;
+  tooltip: string;
+}
+
+export function reviewThreadStatusIndicator(
+  provider: VcsStatusResult["sourceControlProvider"] | null | undefined,
+): ReviewThreadIndicator {
+  const presentation = resolveChangeRequestPresentation(provider);
+  return {
+    label: `${presentation.shortName} review`,
+    colorClass: "text-sky-600 dark:text-sky-300/90",
+    tooltip: `${presentation.shortName} review thread`,
+  };
+}
+
+export function ReviewThreadStatusIcon({ className }: { className?: string }) {
+  return <ScanEyeIcon className={className} />;
 }
 
 export function resolveThreadPr(
@@ -155,7 +176,13 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
     cwd: thread.branch != null ? gitCwd : null,
   });
   const pr = resolveThreadPr(thread.branch, gitStatus.data);
-  const prStatus = prStatusIndicator(pr, gitStatus.data?.sourceControlProvider);
+  const reviewStatus =
+    thread.kind === "review"
+      ? reviewThreadStatusIndicator(gitStatus.data?.sourceControlProvider)
+      : null;
+  const prStatus = reviewStatus
+    ? null
+    : prStatusIndicator(pr, gitStatus.data?.sourceControlProvider);
   const threadStatus = resolveThreadStatusPill({
     thread: {
       ...thread,
@@ -163,12 +190,27 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
     },
   });
 
-  if (!prStatus && !threadStatus) {
+  if (!reviewStatus && !prStatus && !threadStatus) {
     return null;
   }
 
   return (
     <span className="inline-flex shrink-0 items-center gap-1.5">
+      {reviewStatus ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <span
+                aria-label={reviewStatus.tooltip}
+                className={`inline-flex items-center justify-center ${reviewStatus.colorClass}`}
+              />
+            }
+          >
+            <ReviewThreadStatusIcon className="size-3" />
+          </TooltipTrigger>
+          <TooltipPopup side="top">{reviewStatus.tooltip}</TooltipPopup>
+        </Tooltip>
+      ) : null}
       {prStatus ? (
         <Tooltip>
           <TooltipTrigger

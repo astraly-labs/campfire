@@ -267,6 +267,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             instanceId: ProviderInstanceId.make("codex"),
             model: "gpt-5-codex",
           },
+          defaultReviewModelSelection: null,
           scripts: [
             {
               id: "script-1",
@@ -291,6 +292,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             model: "gpt-5-codex",
           },
           interactionMode: "default",
+          kind: "default",
           runtimeMode: "full-access",
           branch: null,
           worktreePath: null,
@@ -378,6 +380,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             instanceId: ProviderInstanceId.make("codex"),
             model: "gpt-5-codex",
           },
+          defaultReviewModelSelection: null,
           scripts: [
             {
               id: "script-1",
@@ -401,6 +404,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             model: "gpt-5-codex",
           },
           interactionMode: "default",
+          kind: "default",
           runtimeMode: "full-access",
           branch: null,
           worktreePath: null,
