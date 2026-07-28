@@ -42,31 +42,6 @@ cleanup() {
 }
 trap cleanup EXIT HUP INT TERM
 
-campfire_active_paths="$campfire_tmp/active-paths"
-sqlite3 "$campfire_database" >"$campfire_active_paths" <<'SQL'
-WITH latest_turn AS (
-  SELECT
-    thread_id,
-    state,
-    ROW_NUMBER() OVER (PARTITION BY thread_id ORDER BY row_id DESC) AS rank
-  FROM projection_turns
-),
-active_threads AS (
-  SELECT thread_id
-  FROM latest_turn
-  WHERE rank = 1 AND state IN ('pending', 'running')
-  UNION
-  SELECT thread_id
-  FROM provider_session_runtime
-  WHERE status = 'running'
-)
-SELECT DISTINCT thread.worktree_path
-FROM projection_threads AS thread
-JOIN active_threads AS active ON active.thread_id = thread.thread_id
-WHERE thread.deleted_at IS NULL
-  AND thread.worktree_path IS NOT NULL;
-SQL
-
 campfire_now=$(date +%s)
 campfire_cutoff=$((campfire_now - campfire_retention_days * 86400))
 campfire_cleaned=0
@@ -78,10 +53,37 @@ sql_quote() {
   printf '%s' "$1" | sed "s/'/''/g"
 }
 
+is_active_worktree() {
+  campfire_active_worktree_sql=$(sql_quote "$1")
+  campfire_active_count=$(sqlite3 "$campfire_database" "
+    WITH latest_turn AS (
+      SELECT
+        thread_id,
+        state,
+        ROW_NUMBER() OVER (PARTITION BY thread_id ORDER BY row_id DESC) AS rank
+      FROM projection_turns
+    ),
+    active_threads AS (
+      SELECT thread_id
+      FROM latest_turn
+      WHERE rank = 1 AND state IN ('pending', 'running')
+      UNION
+      SELECT thread_id
+      FROM provider_session_runtime
+      WHERE status = 'running'
+    )
+    SELECT COUNT(*)
+    FROM projection_threads AS thread
+    JOIN active_threads AS active ON active.thread_id = thread.thread_id
+    WHERE thread.deleted_at IS NULL
+      AND thread.worktree_path = '$campfire_active_worktree_sql';")
+  [ "$campfire_active_count" -gt 0 ]
+}
+
 for campfire_worktree in "$campfire_worktree_root"/*/*; do
   [ -d "$campfire_worktree" ] || continue
 
-  if grep -Fqx -- "$campfire_worktree" "$campfire_active_paths"; then
+  if is_active_worktree "$campfire_worktree"; then
     campfire_skipped_active=$((campfire_skipped_active + 1))
     continue
   fi
