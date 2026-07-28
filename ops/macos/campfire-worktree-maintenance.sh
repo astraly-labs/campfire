@@ -90,9 +90,10 @@ for campfire_worktree in "$campfire_worktree_root"/*/*; do
   if [ -d "$campfire_target" ]; then
     if [ "$campfire_dry_run" = "--dry-run" ]; then
       echo "would clean: $campfire_target"
-    elif [ -f "$campfire_worktree/Cargo.toml" ] && command -v cargo >/dev/null 2>&1; then
+    elif [ -f "$campfire_worktree/Cargo.toml" ] &&
+      command -v cargo >/dev/null 2>&1 &&
       CARGO_TARGET_DIR="$campfire_target" cargo clean \
-        --manifest-path "$campfire_worktree/Cargo.toml" >/dev/null
+        --manifest-path "$campfire_worktree/Cargo.toml" >/dev/null 2>&1; then
       echo "cleaned: $campfire_target"
     else
       rm -rf "$campfire_target"
