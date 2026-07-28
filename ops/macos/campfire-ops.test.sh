@@ -162,7 +162,7 @@ echo active >"$campfire_maintenance_active/target/proof.txt"
 echo idle >"$campfire_maintenance_idle/target/proof.txt"
 cat >"$campfire_maintenance_bin/cargo" <<'EOF'
 #!/bin/sh
-rm -rf "$CARGO_TARGET_DIR"
+exit 1
 EOF
 chmod 700 "$campfire_maintenance_bin/cargo"
 sqlite3 "$campfire_maintenance_home/userdata/state.sqlite" <<EOF
