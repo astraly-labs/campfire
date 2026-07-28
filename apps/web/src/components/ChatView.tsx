@@ -145,6 +145,7 @@ import { selectThreadTerminalState, useTerminalStateStore } from "../terminalSta
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
+import { PullRequestReviewDialog } from "./PullRequestReviewDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
 import { SideThreadDrawer } from "../sidethread/SideThreadDrawer";
 import { ChatHeader } from "./chat/ChatHeader";
@@ -714,6 +715,8 @@ export default function ChatView(props: ChatViewProps) {
   const [terminalFocusRequestId, setTerminalFocusRequestId] = useState(0);
   const [pullRequestDialogState, setPullRequestDialogState] =
     useState<PullRequestDialogState | null>(null);
+  const [reviewPullRequestNumber, setReviewPullRequestNumber] = useState<number | null>(null);
+  const [isStartingPullRequestReview, setIsStartingPullRequestReview] = useState(false);
   const [terminalLaunchContext, setTerminalLaunchContext] = useState<TerminalLaunchContext | null>(
     null,
   );
@@ -733,6 +736,7 @@ export default function ChatView(props: ChatViewProps) {
   const attachmentPreviewHandoffByMessageIdRef = useRef<Record<string, string[]>>({});
   const attachmentPreviewPromotionInFlightByMessageIdRef = useRef<Record<string, true>>({});
   const sendInFlightRef = useRef(false);
+  const reviewStartInFlightRef = useRef(false);
   const terminalOpenByThreadRef = useRef<Record<string, boolean>>({});
 
   const terminalState = useTerminalStateStore((state) =>
@@ -3367,6 +3371,115 @@ export default function ChatView(props: ChatViewProps) {
     environmentId,
   ]);
 
+  const reviewDefaultModelSelection =
+    activeProject?.defaultReviewModelSelection ??
+    activeProject?.defaultModelSelection ??
+    activeThread?.modelSelection ??
+    createModelSelection(ProviderInstanceId.make("codex"), DEFAULT_MODEL);
+  const openPullRequestReview = useCallback((pullRequestNumber: number) => {
+    setReviewPullRequestNumber(pullRequestNumber);
+  }, []);
+  const resolvePullRequestState = useCallback(
+    async (pullRequestUrl: string) => {
+      const api = readEnvironmentApi(environmentId);
+      if (!api || !gitCwd) throw new Error("Pull request resolution is unavailable.");
+      const result = await api.git.resolvePullRequest({
+        cwd: gitCwd,
+        reference: pullRequestUrl,
+      });
+      return result.pullRequest.state;
+    },
+    [environmentId, gitCwd],
+  );
+  const onStartPullRequestReview = useCallback(
+    async (modelSelection: ModelSelection) => {
+      const api = readEnvironmentApi(environmentId);
+      if (
+        !api ||
+        !activeThread ||
+        !activeProject ||
+        reviewPullRequestNumber === null ||
+        reviewStartInFlightRef.current
+      ) {
+        return;
+      }
+
+      const createdAt = new Date().toISOString();
+      const nextThreadId = newThreadId();
+      const title = `Review PR #${reviewPullRequestNumber}`;
+      reviewStartInFlightRef.current = true;
+      setIsStartingPullRequestReview(true);
+      try {
+        await api.orchestration.dispatchCommand({
+          type: "project.meta.update",
+          commandId: newCommandId(),
+          projectId: activeProject.id,
+          defaultReviewModelSelection: modelSelection,
+        });
+        await api.orchestration.dispatchCommand({
+          type: "thread.turn.start",
+          commandId: newCommandId(),
+          threadId: nextThreadId,
+          message: {
+            messageId: newMessageId(),
+            role: "user",
+            text: `/review #${reviewPullRequestNumber}`,
+            attachments: [],
+          },
+          modelSelection,
+          titleSeed: title,
+          runtimeMode,
+          interactionMode: "default",
+          bootstrap: {
+            createThread: {
+              projectId: activeProject.id,
+              title,
+              modelSelection,
+              runtimeMode,
+              interactionMode: "default",
+              branch: activeThreadBranch,
+              worktreePath: activeThread.worktreePath,
+              createdAt,
+            },
+          },
+          createdAt,
+        });
+        await waitForStartedServerThread(scopeThreadRef(activeThread.environmentId, nextThreadId));
+        setReviewPullRequestNumber(null);
+        await navigate({
+          to: "/$environmentId/$threadId",
+          params: {
+            environmentId: activeThread.environmentId,
+            threadId: nextThreadId,
+          },
+        });
+      } catch (error) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not start pull request review",
+            description:
+              error instanceof Error
+                ? error.message
+                : "An error occurred while creating the review thread.",
+          }),
+        );
+      } finally {
+        reviewStartInFlightRef.current = false;
+        setIsStartingPullRequestReview(false);
+      }
+    },
+    [
+      activeProject,
+      activeThread,
+      activeThreadBranch,
+      environmentId,
+      navigate,
+      reviewPullRequestNumber,
+      runtimeMode,
+    ],
+  );
+
   const onProviderModelSelect = useCallback(
     (instanceId: ProviderInstanceId, model: string) => {
       if (!activeThread) return;
@@ -3577,6 +3690,12 @@ export default function ChatView(props: ChatViewProps) {
               timestampFormat={timestampFormat}
               workspaceRoot={activeWorkspaceRoot}
               skills={activeProviderStatus?.skills ?? EMPTY_PROVIDER_SKILLS}
+              onReviewPullRequest={
+                activeEnvironmentUnavailable || !activeProject ? undefined : openPullRequestReview
+              }
+              resolvePullRequestState={
+                activeEnvironmentUnavailable || !activeProject ? undefined : resolvePullRequestState
+              }
               onIsAtEndChange={onIsAtEndChange}
             />
 
@@ -3779,6 +3898,22 @@ export default function ChatView(props: ChatViewProps) {
       {expandedImage && (
         <ExpandedImageDialog preview={expandedImage} onClose={closeExpandedImage} />
       )}
+      {reviewPullRequestNumber !== null ? (
+        <PullRequestReviewDialog
+          open
+          pullRequestNumber={reviewPullRequestNumber}
+          defaultModelSelection={reviewDefaultModelSelection}
+          providers={providerStatuses}
+          settings={settings}
+          isStarting={isStartingPullRequestReview}
+          onOpenChange={(open) => {
+            if (!open) {
+              setReviewPullRequestNumber(null);
+            }
+          }}
+          onStart={(modelSelection) => void onStartPullRequestReview(modelSelection)}
+        />
+      ) : null}
     </div>
   );
 }

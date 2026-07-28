@@ -1,5 +1,6 @@
 import {
   type EnvironmentId,
+  type GitResolvedPullRequest,
   type MessageId,
   type ServerProviderSkill,
   type ThreadId,
@@ -88,6 +89,10 @@ interface TimelineRowSharedState {
   onRevertUserMessage: (messageId: MessageId) => void;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
+  onReviewPullRequest?: ((pullRequestNumber: number) => void) | undefined;
+  resolvePullRequestState?:
+    | ((pullRequestUrl: string) => Promise<GitResolvedPullRequest["state"]>)
+    | undefined;
 }
 
 interface TimelineRowActivityState {
@@ -121,6 +126,10 @@ interface MessagesTimelineProps {
   onRevertUserMessage: (messageId: MessageId) => void;
   isRevertingCheckpoint: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
+  onReviewPullRequest?: ((pullRequestNumber: number) => void) | undefined;
+  resolvePullRequestState?:
+    | ((pullRequestUrl: string) => Promise<GitResolvedPullRequest["state"]>)
+    | undefined;
   activeThreadEnvironmentId: EnvironmentId;
   markdownCwd: string | undefined;
   resolvedTheme: "light" | "dark";
@@ -150,6 +159,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onRevertUserMessage,
   isRevertingCheckpoint,
   onImageExpand,
+  onReviewPullRequest,
+  resolvePullRequestState,
   activeThreadEnvironmentId,
   markdownCwd,
   resolvedTheme,
@@ -222,6 +233,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onRevertUserMessage,
       onImageExpand,
       onOpenTurnDiff,
+      onReviewPullRequest,
+      resolvePullRequestState,
     }),
     [
       timestampFormat,
@@ -234,6 +247,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onRevertUserMessage,
       onImageExpand,
       onOpenTurnDiff,
+      onReviewPullRequest,
+      resolvePullRequestState,
     ],
   );
   const activityState = useMemo<TimelineRowActivityState>(
@@ -423,6 +438,8 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
           cwd={ctx.markdownCwd}
           isStreaming={Boolean(row.message.streaming)}
           skills={ctx.skills}
+          onReviewPullRequest={ctx.onReviewPullRequest}
+          resolvePullRequestState={ctx.resolvePullRequestState}
         />
         <AssistantChangedFilesSection
           turnSummary={row.assistantTurnDiffSummary}

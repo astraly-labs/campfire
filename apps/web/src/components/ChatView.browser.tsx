@@ -478,6 +478,7 @@ function toShellSnapshot(snapshot: OrchestrationReadModel) {
       workspaceRoot: project.workspaceRoot,
       repositoryIdentity: project.repositoryIdentity ?? null,
       defaultModelSelection: project.defaultModelSelection,
+      defaultReviewModelSelection: project.defaultReviewModelSelection ?? null,
       scripts: project.scripts,
       createdAt: project.createdAt,
       updatedAt: project.updatedAt,
@@ -1737,6 +1738,146 @@ describe("ChatView timeline estimator parity (full app)", () => {
   afterEach(() => {
     customWsRpcResolver = null;
     document.body.innerHTML = "";
+  });
+
+  it("starts a PR review thread from an assistant GitHub link", async () => {
+    const baseSnapshot = createSnapshotForTargetUser({
+      targetMessageId: "msg-user-pr-review" as MessageId,
+      targetText: "find the pull request",
+    });
+    const snapshot: OrchestrationReadModel = {
+      ...baseSnapshot,
+      projects: baseSnapshot.projects.map((project) =>
+        Object.assign({}, project, {
+          defaultModelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "fable",
+          },
+          defaultReviewModelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "sol",
+          },
+        }),
+      ),
+      threads: baseSnapshot.threads.map((thread) =>
+        Object.assign({}, thread, {
+          messages: thread.messages.map((message, index) =>
+            index === thread.messages.length - 1
+              ? Object.assign({}, message, {
+                  text: "[#389 — halt on truncated history](https://github.com/astraly-labs/tessera/pull/389)",
+                })
+              : message,
+          ),
+        }),
+      ),
+    };
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot,
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          providers: nextFixture.serverConfig.providers.map((provider) => ({
+            ...provider,
+            models: [
+              {
+                slug: "fable",
+                name: "Fable",
+                isCustom: true,
+                capabilities: createModelCapabilities({ optionDescriptors: [] }),
+              },
+              {
+                slug: "sol",
+                name: "Sol",
+                isCustom: true,
+                capabilities: createModelCapabilities({ optionDescriptors: [] }),
+              },
+            ],
+          })),
+        };
+      },
+      resolveRpc: (body) => {
+        if (body._tag === WS_METHODS.gitResolvePullRequest) {
+          return {
+            pullRequest: {
+              number: 389,
+              title: "Halt on truncated history",
+              url: "https://github.com/astraly-labs/tessera/pull/389",
+              baseBranch: "main",
+              headBranch: "halt-on-truncated-history",
+              state: "open",
+            },
+          };
+        }
+        if (body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return { sequence: fixture.snapshot.snapshotSequence + 1 };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      await page.getByRole("button", { name: "Review pull request #389" }).click();
+
+      const dialog = page.getByRole("dialog", { name: "Review PR #389" });
+      await expect.element(dialog).toBeInTheDocument();
+      await expect.element(dialog).toHaveTextContent("/review #389");
+      await expect.element(dialog).toHaveTextContent("Sol");
+      await page.getByRole("button", { name: "Start review" }).click();
+
+      let reviewDefaultRequest: NormalizedWsRpcRequestBody | undefined;
+      let reviewRequest: NormalizedWsRpcRequestBody | undefined;
+      await vi.waitFor(() => {
+        reviewDefaultRequest = wsRequests.find(
+          (request) =>
+            request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+            request.type === "project.meta.update",
+        );
+        reviewRequest = wsRequests.find(
+          (request) =>
+            request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+            request.type === "thread.turn.start" &&
+            (request.message as { text?: unknown } | undefined)?.text === "/review #389",
+        );
+        expect(reviewDefaultRequest).toBeTruthy();
+        expect(reviewRequest).toBeTruthy();
+      });
+
+      expect(reviewDefaultRequest).toMatchObject({
+        projectId: PROJECT_ID,
+        defaultReviewModelSelection: {
+          instanceId: "codex",
+          model: "sol",
+        },
+      });
+      expect(reviewRequest).toMatchObject({
+        modelSelection: {
+          instanceId: "codex",
+          model: "sol",
+        },
+        bootstrap: {
+          createThread: {
+            projectId: PROJECT_ID,
+            title: "Review PR #389",
+            modelSelection: {
+              instanceId: "codex",
+              model: "sol",
+            },
+          },
+        },
+      });
+
+      const reviewThreadId = reviewRequest?.threadId as ThreadId;
+      await materializePromotedDraftThreadViaDomainEvent(reviewThreadId);
+      await startPromotedServerThreadViaDomainEvent(reviewThreadId);
+      await waitForURL(
+        mounted.router,
+        (path) => path === serverThreadPath(reviewThreadId),
+        "Review should navigate to the new thread.",
+      );
+    } finally {
+      await mounted.cleanup();
+    }
   });
 
   it("renders locked single-environment mobile run context as a static workspace label", async () => {

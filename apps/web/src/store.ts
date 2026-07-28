@@ -224,6 +224,9 @@ function mapProject(
     defaultModelSelection: project.defaultModelSelection
       ? normalizeModelSelection(project.defaultModelSelection)
       : null,
+    defaultReviewModelSelection: project.defaultReviewModelSelection
+      ? normalizeModelSelection(project.defaultReviewModelSelection)
+      : null,
     createdAt: project.createdAt,
     updatedAt: project.updatedAt,
     scripts: mapProjectScripts(project.scripts),
@@ -1159,6 +1162,7 @@ function applyEnvironmentOrchestrationEvent(
           workspaceRoot: event.payload.workspaceRoot,
           repositoryIdentity: event.payload.repositoryIdentity ?? null,
           defaultModelSelection: event.payload.defaultModelSelection,
+          defaultReviewModelSelection: event.payload.defaultReviewModelSelection ?? null,
           scripts: event.payload.scripts,
           createdAt: event.payload.createdAt,
           updatedAt: event.payload.updatedAt,
@@ -1218,6 +1222,13 @@ function applyEnvironmentOrchestrationEvent(
           ? {
               defaultModelSelection: event.payload.defaultModelSelection
                 ? normalizeModelSelection(event.payload.defaultModelSelection)
+                : null,
+            }
+          : {}),
+        ...(event.payload.defaultReviewModelSelection !== undefined
+          ? {
+              defaultReviewModelSelection: event.payload.defaultReviewModelSelection
+                ? normalizeModelSelection(event.payload.defaultReviewModelSelection)
                 : null,
             }
           : {}),

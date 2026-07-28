@@ -1,6 +1,6 @@
 import { DiffsHighlighter, getSharedHighlighter, SupportedLanguages } from "@pierre/diffs";
 import { CheckIcon, CopyIcon } from "lucide-react";
-import type { ServerProviderSkill } from "@t3tools/contracts";
+import type { GitResolvedPullRequest, ServerProviderSkill } from "@t3tools/contracts";
 import React, {
   Children,
   Suspense,
@@ -21,6 +21,7 @@ import { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { VscodeEntryIcon } from "./chat/VscodeEntryIcon";
 import { renderSkillInlineMarkdownChildren } from "./chat/SkillInlineText";
+import { Button } from "./ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { openInPreferredEditor } from "../editorPreferences";
@@ -62,6 +63,10 @@ interface ChatMarkdownProps {
   cwd: string | undefined;
   isStreaming?: boolean;
   skills?: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
+  onReviewPullRequest?: ((pullRequestNumber: number) => void) | undefined;
+  resolvePullRequestState?:
+    | ((pullRequestUrl: string) => Promise<GitResolvedPullRequest["state"]>)
+    | undefined;
 }
 
 const EMPTY_MARKDOWN_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
@@ -74,6 +79,64 @@ const highlightedCodeCache = new LRUCache<string>(
   MAX_HIGHLIGHT_CACHE_MEMORY_BYTES,
 );
 const highlighterPromiseCache = new Map<string, Promise<DiffsHighlighter>>();
+
+function githubPullRequestNumber(href: string): number | null {
+  try {
+    const url = new URL(href);
+    if (
+      (url.protocol !== "https:" && url.protocol !== "http:") ||
+      url.hostname.toLowerCase() !== "github.com"
+    ) {
+      return null;
+    }
+    const match = url.pathname.match(/^\/[^/]+\/[^/]+\/pull\/([1-9]\d*)(?:\/|$)/u);
+    const pullRequestNumber = match?.[1] ? Number(match[1]) : NaN;
+    return Number.isSafeInteger(pullRequestNumber) ? pullRequestNumber : null;
+  } catch {
+    return null;
+  }
+}
+
+function PullRequestReviewButton({
+  pullRequestNumber,
+  pullRequestUrl,
+  resolvePullRequestState,
+  onReviewPullRequest,
+}: {
+  pullRequestNumber: number;
+  pullRequestUrl: string;
+  resolvePullRequestState: (pullRequestUrl: string) => Promise<GitResolvedPullRequest["state"]>;
+  onReviewPullRequest: (pullRequestNumber: number) => void;
+}) {
+  const [openPullRequestUrl, setOpenPullRequestUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void resolvePullRequestState(pullRequestUrl)
+      .then((state) => {
+        if (!cancelled) setOpenPullRequestUrl(state === "open" ? pullRequestUrl : null);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [pullRequestUrl, resolvePullRequestState]);
+
+  if (openPullRequestUrl !== pullRequestUrl) return null;
+
+  return (
+    <Button
+      type="button"
+      size="xs"
+      variant="outline"
+      className="h-5 px-1.5 text-[10px]"
+      aria-label={`Review pull request #${pullRequestNumber}`}
+      onClick={() => onReviewPullRequest(pullRequestNumber)}
+    >
+      Review
+    </Button>
+  );
+}
 
 function extractFenceLanguage(className: string | undefined): string {
   const match = className?.match(CODE_FENCE_LANGUAGE_REGEX);
@@ -517,6 +580,8 @@ function ChatMarkdown({
   cwd,
   isStreaming = false,
   skills = EMPTY_MARKDOWN_SKILLS,
+  onReviewPullRequest,
+  resolvePullRequestState,
 }: ChatMarkdownProps) {
   const { resolvedTheme } = useTheme();
   const diffThemeName = resolveDiffThemeName(resolvedTheme);
@@ -554,7 +619,38 @@ function ChatMarkdown({
         const normalizedHref = href ? normalizeMarkdownLinkHrefKey(href) : "";
         const fileLinkMeta = normalizedHref ? markdownFileLinkMetaByHref.get(normalizedHref) : null;
         if (!fileLinkMeta) {
-          return <a {...props} href={href} target="_blank" rel="noopener noreferrer" />;
+          const pullRequestNumber =
+            href && onReviewPullRequest && resolvePullRequestState
+              ? githubPullRequestNumber(href)
+              : null;
+          const link = (
+            <a
+              {...props}
+              href={href}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={cn("min-w-0", props.className)}
+            />
+          );
+          if (
+            pullRequestNumber === null ||
+            !href ||
+            !onReviewPullRequest ||
+            !resolvePullRequestState
+          ) {
+            return link;
+          }
+          return (
+            <span className="inline-flex max-w-full items-center gap-1 align-baseline">
+              {link}
+              <PullRequestReviewButton
+                pullRequestNumber={pullRequestNumber}
+                pullRequestUrl={href}
+                resolvePullRequestState={resolvePullRequestState}
+                onReviewPullRequest={onReviewPullRequest}
+              />
+            </span>
+          );
         }
 
         const parentSuffix = fileLinkParentSuffixByPath.get(fileLinkMeta.filePath);
@@ -607,6 +703,8 @@ function ChatMarkdown({
       fileLinkParentSuffixByPath,
       isStreaming,
       markdownFileLinkMetaByHref,
+      onReviewPullRequest,
+      resolvePullRequestState,
       resolvedTheme,
       skills,
     ],
