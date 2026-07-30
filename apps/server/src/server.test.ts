@@ -1548,9 +1548,11 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(callbackResponse.status, 302);
       assert.equal(callbackResponse.headers.location, "/");
       const callbackCookies = Cookies.toRecord(callbackResponse.cookies);
-      const sessionToken = callbackCookies.t3_session;
-      assert.isDefined(sessionToken);
-      const sessionCookie = `t3_session=${sessionToken}`;
+      const sessionCookieEntry = Object.entries(callbackCookies).find(([name]) =>
+        name.startsWith("t3_session"),
+      );
+      assert.isDefined(sessionCookieEntry);
+      const sessionCookie = `${sessionCookieEntry![0]}=${sessionCookieEntry![1]}`;
 
       const clientsUrl = yield* getHttpServerUrl("/api/auth/clients");
       const clientsResponse = yield* fetchEffect(clientsUrl, {
@@ -1631,7 +1633,11 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         headers: { cookie: transactionCookie! },
       });
       assert.equal(replayResponse.status, 400);
-      assert.isUndefined(Cookies.toRecord(replayResponse.cookies).t3_session);
+      assert.isUndefined(
+        Object.keys(Cookies.toRecord(replayResponse.cookies)).find((name) =>
+          name.startsWith("t3_session"),
+        ),
+      );
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
@@ -7865,10 +7871,12 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             redirect: "manual",
             headers: { cookie: transactionCookie! },
           });
-          const token = Cookies.toRecord(callbackResponse.cookies).t3_session;
+          const sessionCookieEntry = Object.entries(
+            Cookies.toRecord(callbackResponse.cookies),
+          ).find(([name]) => name.startsWith("t3_session"));
           assert.equal(callbackResponse.status, 302);
-          assert.isDefined(token);
-          return `t3_session=${token}`;
+          assert.isDefined(sessionCookieEntry);
+          return `${sessionCookieEntry![0]}=${sessionCookieEntry![1]}`;
         });
 
       const sessionCookies = yield* Effect.forEach(

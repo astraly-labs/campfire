@@ -112,6 +112,7 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
   it.effect("issues attributable and revocable Google browser sessions", () =>
     Effect.gen(function* () {
       const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+      const sessions = yield* SessionStore.SessionStore;
       const issued = yield* serverAuth.issueTrustedBrowserSession(
         {
           subject: "google:alice-stable-subject",
@@ -120,13 +121,15 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
         requestMetadata,
       );
       const verified = yield* serverAuth.authenticateHttpRequest(
-        makeCookieRequest(issued.sessionToken),
+        makeCookieRequest(sessions.cookieName, issued.sessionToken),
       );
 
       expect(verified.subject).toBe("google:alice-stable-subject");
       expect(verified.displayName).toBe("Alice Example");
       expect(verified.scopes).toEqual(AuthAdministrativeScopes);
-      const state = yield* serverAuth.getSessionState(makeCookieRequest(issued.sessionToken));
+      const state = yield* serverAuth.getSessionState(
+        makeCookieRequest(sessions.cookieName, issued.sessionToken),
+      );
       expect(state.identity).toEqual({
         subject: "google:alice-stable-subject",
         displayName: "Alice Example",
@@ -134,7 +137,7 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
       expect(yield* serverAuth.revokeSession(verified.sessionId)).toBe(true);
 
       const revoked = yield* serverAuth
-        .authenticateHttpRequest(makeCookieRequest(issued.sessionToken))
+        .authenticateHttpRequest(makeCookieRequest(sessions.cookieName, issued.sessionToken))
         .pipe(Effect.flip);
       expect(revoked._tag).toBe("ServerAuthInvalidCredentialError");
     }).pipe(Effect.provide(makeEnvironmentAuthLayer())),

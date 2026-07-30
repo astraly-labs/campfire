@@ -1637,31 +1637,23 @@ export default function SidebarV2() {
     projectByKey,
     threadAffiliationOverrideByThreadKey,
   ]);
-  const orderedThreads = useMemo(
-    () => {
-      const byOwnership = (threads: readonly EnvironmentThreadShell[]) =>
-        threads.toSorted((left, right) => {
-          const leftIsMine = mineThreadKeys.has(
-            scopedThreadKey(scopeThreadRef(left.environmentId, left.id)),
-          );
-          const rightIsMine = mineThreadKeys.has(
-            scopedThreadKey(scopeThreadRef(right.environmentId, right.id)),
-          );
-          return Number(rightIsMine) - Number(leftIsMine);
-        });
-      return [
-        ...byOwnership(activeThreads),
-        ...byOwnership(visibleSnoozedThreads),
-        ...byOwnership(renderedSettledThreads),
-      ];
-    },
-    [
-      activeThreads,
-      mineThreadKeys,
-      renderedSettledThreads,
-      visibleSnoozedThreads,
-    ],
-  );
+  const orderedThreads = useMemo(() => {
+    const byOwnership = (threads: readonly EnvironmentThreadShell[]) =>
+      threads.toSorted((left, right) => {
+        const leftIsMine = mineThreadKeys.has(
+          scopedThreadKey(scopeThreadRef(left.environmentId, left.id)),
+        );
+        const rightIsMine = mineThreadKeys.has(
+          scopedThreadKey(scopeThreadRef(right.environmentId, right.id)),
+        );
+        return Number(rightIsMine) - Number(leftIsMine);
+      });
+    return [
+      ...byOwnership(activeThreads),
+      ...byOwnership(visibleSnoozedThreads),
+      ...byOwnership(renderedSettledThreads),
+    ];
+  }, [activeThreads, mineThreadKeys, renderedSettledThreads, visibleSnoozedThreads]);
   const orderedThreadKeys = useMemo(
     () =>
       orderedThreads.map((thread) =>
@@ -2649,13 +2641,11 @@ export default function SidebarV2() {
                 };
                 const orderByOwnership = (threads: readonly EnvironmentThreadShell[]) =>
                   threads.toSorted((left, right) => {
-                    const leftKey = scopedThreadKey(
-                      scopeThreadRef(left.environmentId, left.id),
+                    const leftKey = scopedThreadKey(scopeThreadRef(left.environmentId, left.id));
+                    const rightKey = scopedThreadKey(scopeThreadRef(right.environmentId, right.id));
+                    return (
+                      Number(mineThreadKeys.has(rightKey)) - Number(mineThreadKeys.has(leftKey))
                     );
-                    const rightKey = scopedThreadKey(
-                      scopeThreadRef(right.environmentId, right.id),
-                    );
-                    return Number(mineThreadKeys.has(rightKey)) - Number(mineThreadKeys.has(leftKey));
                   });
                 const items: ReactNode[] = [];
                 let previousOwnership: boolean | null = null;
@@ -2671,7 +2661,12 @@ export default function SidebarV2() {
                         data-thread-selection-safe
                         className="list-none"
                       >
-                        <div className={cn("mb-1 px-2.5", previousOwnership === null ? "mt-0" : "mt-4")}>
+                        <div
+                          className={cn(
+                            "mb-1 px-2.5",
+                            previousOwnership === null ? "mt-0" : "mt-4",
+                          )}
+                        >
                           <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
                             {isMine ? "My Projects" : "Projects"}
                           </span>

@@ -76,12 +76,7 @@ import { isElectron } from "../env";
 import { useOpenPrLink } from "../lib/openPullRequestLink";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { isMacPlatform } from "../lib/utils";
-import {
-  readThreadShell,
-  useProject,
-  useProjects,
-  useThreadShells,
-} from "../state/entities";
+import { readThreadShell, useProject, useProjects, useThreadShells } from "../state/entities";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { useThreadDiscoveredPorts } from "../portDiscoveryState";
