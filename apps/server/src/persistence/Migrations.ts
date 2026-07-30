@@ -60,6 +60,7 @@ import Migration0044 from "./Migrations/044_ProjectionThreadSideThreads.ts";
 import Migration0045 from "./Migrations/045_ProjectionCollaborationIdentity.ts";
 import Migration0046 from "./Migrations/046_CanonicalizeProjectionSideThreads.ts";
 import Migration0047 from "./Migrations/047_ProjectionProjectsDefaultReviewModelSelection.ts";
+import Migration0048 from "./Migrations/048_ProjectionThreadsReviewKind.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -119,6 +120,7 @@ export const migrationEntries = [
   [45, "ProjectionCollaborationIdentity", Migration0045],
   [46, "CanonicalizeProjectionSideThreads", Migration0046],
   [47, "ProjectionProjectsDefaultReviewModelSelection", Migration0047],
+  [48, "ProjectionThreadsReviewKind", Migration0048],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

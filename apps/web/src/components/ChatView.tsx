@@ -6877,6 +6877,8 @@ function ChatViewContent(props: ChatViewProps) {
             modelSelection,
             runtimeMode,
             interactionMode: "default",
+            kind: "review",
+            reviewPullRequestNumber,
             branch: activeThreadBranch,
             worktreePath: activeThread.worktreePath,
             createdAt,

@@ -151,6 +151,8 @@ import {
   ThreadWorktreeIndicator,
   nextThreadChangeRequestSnapshot,
   prStatusIndicator,
+  reviewThreadStatusIndicator,
+  ReviewThreadStatusIcon,
   resolveDisplayedThreadPr,
   resolveDisplayedThreadPrProvider,
   setThreadChangeRequestSnapshot,
@@ -160,6 +162,7 @@ import {
   type ThreadChangeRequestSnapshot,
   type TerminalStatusIndicator,
   useLinkedThreadPullRequest,
+  useReviewedPullRequest,
 } from "./ThreadStatusIndicators";
 import {
   resolveSnoozePresets,
@@ -921,7 +924,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     linkedPullRequest: thread.linkedPullRequest,
     linkedPullRequestStatus,
   });
-  const prStatus = prStatusIndicator(pr, prProvider);
+  const reviewedPullRequest = useReviewedPullRequest(thread, gitCwd);
+  const reviewStatus =
+    thread.kind === "review" ? reviewThreadStatusIndicator(prProvider, reviewedPullRequest) : null;
+  const prStatus = reviewStatus ? null : prStatusIndicator(pr, prProvider);
   const settledPrHoverClass = pr ? settledPrHoverColorClass(pr.state) : undefined;
   useEffect(() => {
     const nextSnapshot = nextThreadChangeRequestSnapshot({
@@ -1113,6 +1119,13 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     },
     [onThreadActivate, openPrLink, openPullRequestsInRightPanel, pr, props.isActive, threadRef],
   );
+  const handleReviewPrClick = useCallback(
+    (event: ReactMouseEvent<HTMLAnchorElement>) => {
+      if (!reviewStatus?.url) return;
+      openPrLink(event, reviewStatus.url);
+    },
+    [openPrLink, reviewStatus],
+  );
 
   // All sidebar rows share one surface model. Live threads used to look
   // like elevated cards while settled threads were plain rows, leaving neither
@@ -1202,6 +1215,32 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
         #{pr.number}
       </a>
     ) : null;
+  const reviewBadge = reviewStatus ? (
+    reviewStatus.url ? (
+      <a
+        href={reviewStatus.url}
+        target="_blank"
+        rel="noopener noreferrer"
+        onPointerDown={(event) => event.stopPropagation()}
+        onClick={handleReviewPrClick}
+        className={cn(
+          "inline-flex shrink-0 items-center gap-0.5 text-xs tabular-nums hover:underline",
+          reviewStatus.colorClass,
+        )}
+        aria-label={reviewStatus.tooltip}
+      >
+        <ReviewThreadStatusIcon className="size-3" />
+        {thread.reviewPullRequestNumber != null ? `#${thread.reviewPullRequestNumber}` : null}
+      </a>
+    ) : (
+      <span
+        aria-label={reviewStatus.tooltip}
+        className={cn("inline-flex shrink-0 items-center", reviewStatus.colorClass)}
+      >
+        <ReviewThreadStatusIcon className="size-3" />
+      </span>
+    )
+  ) : null;
   const terminalStatusIcon = terminalStatus ? (
     <span
       role="img"
@@ -1289,6 +1328,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
             {/* The PR badge stays outside the hover-fading slot: it must
               remain visible AND clickable while the row is hovered. Only
               the time/jump label yields to the settle affordance. */}
+            {reviewBadge}
             {prBadge}
             <span className="relative ml-auto flex h-6 min-w-8 shrink-0 items-center justify-end">
               <span
@@ -1574,6 +1614,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 <span className="flex-1" />
               )}
               {terminalStatusIcon}
+              {reviewBadge}
               {prBadge}
               {diff ? (
                 <span className="shrink-0 font-mono">

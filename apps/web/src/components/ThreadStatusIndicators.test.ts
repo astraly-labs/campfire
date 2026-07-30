@@ -6,6 +6,7 @@ import { AtomRegistry } from "effect/unstable/reactivity";
 import {
   nextThreadChangeRequestSnapshot,
   prStatusIndicator,
+  reviewThreadStatusIndicator,
   resolveDisplayedThreadPr,
   resolveDisplayedThreadPrProvider,
   resolveThreadPr,
@@ -557,6 +558,29 @@ describe("prStatusIndicator", () => {
     expect(prStatusIndicator({ ...closedPr, state: "closed" }, undefined)?.colorClass).toContain(
       "text-red-600",
     );
+  });
+});
+
+describe("reviewThreadStatusIndicator", () => {
+  it.each([
+    ["open", "text-sky-600"],
+    ["merged", "text-violet-600"],
+    ["closed", "text-zinc-500"],
+  ] as const)("uses the dedicated %s review-thread presentation", (state, colorClass) => {
+    const indicator = reviewThreadStatusIndicator(undefined, {
+      number: 42,
+      title: "Review this change",
+      url: "https://github.com/pingdotgg/t3code/pull/42",
+      baseBranch: "main",
+      headBranch: "feature/current",
+      state,
+    });
+
+    expect(indicator.colorClass).toContain(colorClass);
+    expect(indicator.tooltip).toContain(
+      `PR review · #42 - ${state[0]?.toUpperCase()}${state.slice(1)}`,
+    );
+    expect(indicator.url).toBe("https://github.com/pingdotgg/t3code/pull/42");
   });
 });
 

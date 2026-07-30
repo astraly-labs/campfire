@@ -321,6 +321,10 @@ export function projectEvent(
             modelSelection: payload.modelSelection,
             runtimeMode: payload.runtimeMode,
             interactionMode: payload.interactionMode,
+            ...(payload.kind !== undefined ? { kind: payload.kind } : {}),
+            ...(payload.reviewPullRequestNumber !== undefined
+              ? { reviewPullRequestNumber: payload.reviewPullRequestNumber }
+              : {}),
             branch: payload.branch,
             worktreePath: payload.worktreePath,
             latestTurn: null,

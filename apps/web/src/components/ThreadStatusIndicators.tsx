@@ -4,15 +4,27 @@ import {
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
 import { pullRequestDetailToVcsStatus } from "@t3tools/client-runtime/state/pull-requests";
-import type { EnvironmentId, ThreadLinkedPullRequest, VcsStatusResult } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  GitResolvedPullRequest,
+  ThreadLinkedPullRequest,
+  VcsStatusResult,
+} from "@t3tools/contracts";
 import { Atom } from "effect/unstable/reactivity";
-import { CloudIcon, FolderGit2Icon, GitPullRequestIcon, TerminalIcon } from "lucide-react";
+import {
+  CloudIcon,
+  FolderGit2Icon,
+  GitPullRequestIcon,
+  ScanEyeIcon,
+  TerminalIcon,
+} from "lucide-react";
 import { useMemo } from "react";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { useEnvironment, usePrimaryEnvironmentId } from "../state/environments";
 import { useProject } from "../state/entities";
 import { useEnvironmentQuery } from "../state/query";
 import { linkedPullRequestDetailAtom } from "../state/pullRequests";
+import { usePullRequestResolutionState } from "../state/sourceControlActions";
 import { useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { vcsEnvironment } from "../state/vcs";
 import { useUiStateStore } from "../uiStateStore";
@@ -140,6 +152,60 @@ export function prStatusIndicator(
 
 export function ChangeRequestStatusIcon({ className }: { className?: string }) {
   return <GitPullRequestIcon className={className} />;
+}
+
+export interface ReviewThreadIndicator {
+  label: string;
+  colorClass: string;
+  tooltip: string;
+  url: string | null;
+}
+
+const REVIEW_STATE_COLOR_CLASSES: Record<GitResolvedPullRequest["state"], string> = {
+  open: "text-sky-600 dark:text-sky-300/90",
+  merged: "text-violet-600 dark:text-violet-300/90",
+  closed: "text-zinc-500 dark:text-zinc-400/80",
+};
+
+export function reviewThreadStatusIndicator(
+  provider: VcsStatusResult["sourceControlProvider"] | null | undefined,
+  reviewedPullRequest?: GitResolvedPullRequest | null,
+): ReviewThreadIndicator {
+  const presentation = resolveChangeRequestPresentation(provider);
+  const label = `${presentation.shortName} review`;
+  if (!reviewedPullRequest) {
+    return {
+      label,
+      colorClass: REVIEW_STATE_COLOR_CLASSES.open,
+      tooltip: `${presentation.shortName} review thread`,
+      url: null,
+    };
+  }
+  const state =
+    reviewedPullRequest.state.charAt(0).toUpperCase() + reviewedPullRequest.state.slice(1);
+  return {
+    label,
+    colorClass: REVIEW_STATE_COLOR_CLASSES[reviewedPullRequest.state],
+    tooltip: `${presentation.shortName} review · #${reviewedPullRequest.number} - ${state}: ${reviewedPullRequest.title}`,
+    url: reviewedPullRequest.url,
+  };
+}
+
+export function ReviewThreadStatusIcon({ className }: { className?: string }) {
+  return <ScanEyeIcon className={className} />;
+}
+
+export function useReviewedPullRequest(
+  thread: Pick<SidebarThreadSummary, "environmentId" | "kind" | "reviewPullRequestNumber">,
+  gitCwd: string | null,
+): GitResolvedPullRequest | null {
+  const isReviewThread = thread.kind === "review" && thread.reviewPullRequestNumber != null;
+  const resolution = usePullRequestResolutionState({
+    environmentId: isReviewThread ? thread.environmentId : null,
+    cwd: gitCwd,
+    reference: isReviewThread ? `#${thread.reviewPullRequestNumber}` : null,
+  });
+  return resolution.data?.pullRequest ?? null;
 }
 
 export function PrStatusTooltipContent({ status }: { status: PrStatusIndicator }) {
@@ -550,10 +616,11 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
     thread.linkedPullRequest == null
       ? resolveThreadPr({ threadBranch: thread.branch, gitStatus: gitStatus.data })
       : (linkedPullRequest?.pr ?? null);
-  const prStatus = prStatusIndicator(
-    pr,
-    linkedPullRequest?.sourceControlProvider ?? gitStatus.data?.sourceControlProvider,
-  );
+  const provider = linkedPullRequest?.sourceControlProvider ?? gitStatus.data?.sourceControlProvider;
+  const reviewedPullRequest = useReviewedPullRequest(thread, gitCwd);
+  const reviewStatus =
+    thread.kind === "review" ? reviewThreadStatusIndicator(provider, reviewedPullRequest) : null;
+  const prStatus = reviewStatus ? null : prStatusIndicator(pr, provider);
   const threadStatus = resolveThreadStatusPill({
     thread: {
       ...thread,
@@ -561,12 +628,27 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
     },
   });
 
-  if (!prStatus && !threadStatus) {
+  if (!reviewStatus && !prStatus && !threadStatus) {
     return null;
   }
 
   return (
     <span className="inline-flex shrink-0 items-center gap-1.5">
+      {reviewStatus ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <span
+                aria-label={reviewStatus.tooltip}
+                className={`inline-flex items-center justify-center ${reviewStatus.colorClass}`}
+              />
+            }
+          >
+            <ReviewThreadStatusIcon className="size-3" />
+          </TooltipTrigger>
+          <TooltipPopup side="top">{reviewStatus.tooltip}</TooltipPopup>
+        </Tooltip>
+      ) : null}
       {prStatus ? (
         <Tooltip>
           <TooltipTrigger
