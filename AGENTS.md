@@ -2,6 +2,12 @@
 
 T3 Code is a minimal GUI for coding agents. A Node WebSocket server wraps provider CLIs (Codex, Claude Code, Cursor, Grok, OpenCode) and serves web, desktop, and mobile clients.
 
+## Staging Branch
+
+- `staging` is the canonical integration and Mac mini staging-deployment branch.
+- Start staging feature branches from `origin/staging`; do not implement features directly on `staging`.
+- Integrate and verify completed staging work on `staging` before packaging or deploying it.
+
 You can think of T3 Code as an open source "bring-your-own-subscription" alternative to apps like Claude Desktop, Codex App, Cursor Glass and Conductor.
 
 ## What makes T3 Code special?
