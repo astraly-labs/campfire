@@ -296,6 +296,7 @@ function mapThreadShell(
     title: thread.title,
     interactionMode: thread.interactionMode,
     kind: thread.kind,
+    reviewPullRequestNumber: thread.reviewPullRequestNumber ?? null,
     session,
     createdAt: thread.createdAt,
     archivedAt: thread.archivedAt,
@@ -398,6 +399,7 @@ function sidebarThreadSummariesEqual(
     left.title === right.title &&
     left.interactionMode === right.interactionMode &&
     left.kind === right.kind &&
+    left.reviewPullRequestNumber === right.reviewPullRequestNumber &&
     threadSessionsEqual(left.session, right.session) &&
     left.createdAt === right.createdAt &&
     left.archivedAt === right.archivedAt &&

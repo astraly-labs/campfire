@@ -3440,6 +3440,7 @@ export default function ChatView(props: ChatViewProps) {
               runtimeMode,
               interactionMode: "default",
               kind: "review",
+              reviewPullRequestNumber,
               branch: activeThreadBranch,
               worktreePath: activeThread.worktreePath,
               createdAt,

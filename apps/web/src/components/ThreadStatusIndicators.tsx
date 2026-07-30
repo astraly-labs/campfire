@@ -1,5 +1,6 @@
 import { scopeProjectRef, scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime";
-import type { VcsStatusResult } from "@t3tools/contracts";
+import type { GitResolvedPullRequest, VcsStatusResult } from "@t3tools/contracts";
+import { useQuery } from "@tanstack/react-query";
 import { CloudIcon, GitPullRequestIcon, ScanEyeIcon, TerminalIcon } from "lucide-react";
 import { useMemo } from "react";
 import { usePrimaryEnvironmentId } from "../environments/primary";
@@ -8,6 +9,7 @@ import {
   useSavedEnvironmentRuntimeStore,
 } from "../environments/runtime";
 import { useGitStatus } from "../lib/gitStatusState";
+import { gitResolvePullRequestQueryOptions } from "../lib/gitReactQuery";
 import { type AppState, selectProjectByRef, useStore } from "../store";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { useUiStateStore } from "../uiStateStore";
@@ -73,17 +75,50 @@ export interface ReviewThreadIndicator {
   label: string;
   colorClass: string;
   tooltip: string;
+  url: string | null;
 }
+
+const REVIEW_STATE_COLOR_CLASSES: Record<GitResolvedPullRequest["state"], string> = {
+  open: "text-sky-600 dark:text-sky-300/90",
+  merged: "text-violet-600 dark:text-violet-300/90",
+  closed: "text-zinc-500 dark:text-zinc-400/80",
+};
 
 export function reviewThreadStatusIndicator(
   provider: VcsStatusResult["sourceControlProvider"] | null | undefined,
+  reviewedPullRequest?: GitResolvedPullRequest | null,
 ): ReviewThreadIndicator {
   const presentation = resolveChangeRequestPresentation(provider);
+  const label = `${presentation.shortName} review`;
+  if (!reviewedPullRequest) {
+    return {
+      label,
+      colorClass: REVIEW_STATE_COLOR_CLASSES.open,
+      tooltip: `${presentation.shortName} review thread`,
+      url: null,
+    };
+  }
   return {
-    label: `${presentation.shortName} review`,
-    colorClass: "text-sky-600 dark:text-sky-300/90",
-    tooltip: `${presentation.shortName} review thread`,
+    label,
+    colorClass: REVIEW_STATE_COLOR_CLASSES[reviewedPullRequest.state],
+    tooltip: `${presentation.shortName} review thread · #${reviewedPullRequest.number} ${reviewedPullRequest.state}`,
+    url: reviewedPullRequest.url,
   };
+}
+
+export function useReviewedPullRequest(thread: SidebarThreadSummary, gitCwd: string | null) {
+  const reviewedPullRequestQuery = useQuery(
+    gitResolvePullRequestQueryOptions({
+      environmentId:
+        thread.kind === "review" && thread.reviewPullRequestNumber !== null
+          ? thread.environmentId
+          : null,
+      cwd: gitCwd,
+      reference:
+        thread.reviewPullRequestNumber !== null ? `#${thread.reviewPullRequestNumber}` : null,
+    }),
+  );
+  return reviewedPullRequestQuery.data?.pullRequest ?? null;
 }
 
 export function ReviewThreadStatusIcon({ className }: { className?: string }) {
@@ -176,9 +211,10 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
     cwd: thread.branch != null ? gitCwd : null,
   });
   const pr = resolveThreadPr(thread.branch, gitStatus.data);
+  const reviewedPullRequest = useReviewedPullRequest(thread, gitCwd);
   const reviewStatus =
     thread.kind === "review"
-      ? reviewThreadStatusIndicator(gitStatus.data?.sourceControlProvider)
+      ? reviewThreadStatusIndicator(gitStatus.data?.sourceControlProvider, reviewedPullRequest)
       : null;
   const prStatus = reviewStatus
     ? null

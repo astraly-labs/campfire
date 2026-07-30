@@ -148,6 +148,7 @@ export interface SidebarThreadSummary {
   title: string;
   interactionMode: ProviderInteractionMode;
   kind: ThreadKind;
+  reviewPullRequestNumber: number | null;
   session: ThreadSession | null;
   createdAt: string;
   archivedAt: string | null;

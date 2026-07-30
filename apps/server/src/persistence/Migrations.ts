@@ -48,6 +48,7 @@ import Migration0032 from "./Migrations/032_SideThreadEvents.ts";
 import Migration0033 from "./Migrations/033_ProjectionSideThreads.ts";
 import Migration0034 from "./Migrations/034_ProjectionProjectsDefaultReviewModelSelection.ts";
 import Migration0035 from "./Migrations/035_ProjectionThreadsKind.ts";
+import Migration0036 from "./Migrations/036_ProjectionThreadsReviewPullRequestNumber.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -95,6 +96,7 @@ export const migrationEntries = [
   [33, "ProjectionSideThreads", Migration0033],
   [34, "ProjectionProjectsDefaultReviewModelSelection", Migration0034],
   [35, "ProjectionThreadsKind", Migration0035],
+  [36, "ProjectionThreadsReviewPullRequestNumber", Migration0036],
 ] as const;
 
 export const makeMigrationLoader = (throughId?: number) =>

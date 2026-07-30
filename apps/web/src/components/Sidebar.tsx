@@ -17,6 +17,7 @@ import {
   reviewThreadStatusIndicator,
   ReviewThreadStatusIcon,
   terminalStatusFromRunningIds,
+  useReviewedPullRequest,
   ThreadStatusLabel,
 } from "./ThreadStatusIndicators";
 import { ProjectFavicon } from "./ProjectFavicon";
@@ -386,9 +387,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     },
   });
   const pr = resolveThreadPr(thread.branch, gitStatus.data);
+  const reviewedPullRequest = useReviewedPullRequest(thread, gitCwd);
   const reviewStatus =
     thread.kind === "review"
-      ? reviewThreadStatusIndicator(gitStatus.data?.sourceControlProvider)
+      ? reviewThreadStatusIndicator(gitStatus.data?.sourceControlProvider, reviewedPullRequest)
       : null;
   const prStatus = reviewStatus
     ? null
@@ -460,6 +462,13 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       openPrLink(event, prStatus.url);
     },
     [openPrLink, prStatus],
+  );
+  const handleReviewPrClick = useCallback(
+    (event: React.MouseEvent<HTMLButtonElement>) => {
+      if (!reviewStatus?.url) return;
+      openPrLink(event, reviewStatus.url);
+    },
+    [openPrLink, reviewStatus],
   );
   const handleRenameInputRef = useCallback(
     (element: HTMLInputElement | null) => {
@@ -571,12 +580,23 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             <Tooltip>
               <TooltipTrigger
                 render={
-                  <span
-                    aria-label={reviewStatus.tooltip}
-                    className={`inline-flex items-center justify-center ${reviewStatus.colorClass}`}
-                  >
-                    <ReviewThreadStatusIcon className="size-3" />
-                  </span>
+                  reviewStatus.url ? (
+                    <button
+                      type="button"
+                      aria-label={reviewStatus.tooltip}
+                      className={`inline-flex items-center justify-center ${reviewStatus.colorClass} cursor-pointer rounded-sm outline-hidden focus-visible:ring-1 focus-visible:ring-ring`}
+                      onClick={handleReviewPrClick}
+                    >
+                      <ReviewThreadStatusIcon className="size-3" />
+                    </button>
+                  ) : (
+                    <span
+                      aria-label={reviewStatus.tooltip}
+                      className={`inline-flex items-center justify-center ${reviewStatus.colorClass}`}
+                    >
+                      <ReviewThreadStatusIcon className="size-3" />
+                    </span>
+                  )
                 }
               />
               <TooltipPopup side="top">{reviewStatus.tooltip}</TooltipPopup>

@@ -512,6 +512,9 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                 runtimeMode: bootstrap.createThread.runtimeMode,
                 interactionMode: bootstrap.createThread.interactionMode,
                 kind: bootstrap.createThread.kind,
+                ...(bootstrap.createThread.reviewPullRequestNumber !== undefined
+                  ? { reviewPullRequestNumber: bootstrap.createThread.reviewPullRequestNumber }
+                  : {}),
                 branch: bootstrap.createThread.branch,
                 worktreePath: bootstrap.createThread.worktreePath,
                 createdAt: bootstrap.createThread.createdAt,
