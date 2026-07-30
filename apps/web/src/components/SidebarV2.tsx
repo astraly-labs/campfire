@@ -127,9 +127,12 @@ import { resolveLocalCheckoutBranchMismatch } from "./BranchToolbar.logic";
 import {
   prStatusIndicator,
   resolveThreadPr,
+  reviewThreadStatusIndicator,
+  ReviewThreadStatusIcon,
   settledPrHoverColorClass,
   terminalStatusFromRunningIds,
   type TerminalStatusIndicator,
+  useReviewedPullRequest,
 } from "./ThreadStatusIndicators";
 import {
   resolveSnoozePresets,
@@ -543,7 +546,14 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
     threadBranch: thread.branch,
     gitStatus: gitStatus.data,
   });
-  const prStatus = prStatusIndicator(pr, gitStatus.data?.sourceControlProvider);
+  const reviewedPullRequest = useReviewedPullRequest(thread, gitCwd);
+  const reviewStatus =
+    thread.kind === "review"
+      ? reviewThreadStatusIndicator(gitStatus.data?.sourceControlProvider, reviewedPullRequest)
+      : null;
+  const prStatus = reviewStatus
+    ? null
+    : prStatusIndicator(pr, gitStatus.data?.sourceControlProvider);
   const settledPrHoverClass = pr ? settledPrHoverColorClass(pr.state) : undefined;
   // Report the PR state up: the parent partitions rows with effectiveSettled,
   // and a merged/closed PR auto-settles a thread — data only rows have.
@@ -689,6 +699,12 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
     },
     [openPrLink, pr],
   );
+  const handleReviewPrClick = useCallback(
+    (event: ReactMouseEvent<HTMLElement>) => {
+      if (reviewStatus?.url) openPrLink(event, reviewStatus.url);
+    },
+    [openPrLink, reviewStatus],
+  );
 
   // All Sidebar V2 rows share one surface model. Live threads used to look
   // like elevated cards while settled threads were plain rows, leaving neither
@@ -781,6 +797,25 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
     </span>
   ) : null;
 
+  const reviewBadge = reviewStatus ? (
+    <button
+      type="button"
+      onClick={handleReviewPrClick}
+      className={cn(
+        "inline-flex shrink-0 items-center gap-0.5 font-mono text-xs hover:underline",
+        variant === "slim" && variantAction === "unsettle"
+          ? props.isActive
+            ? "text-muted-foreground/70"
+            : "text-muted-foreground/35 transition-colors group-hover/v2-row:text-muted-foreground/65"
+          : reviewStatus.colorClass,
+      )}
+      aria-label={reviewStatus.tooltip}
+    >
+      <ReviewThreadStatusIcon className="size-3" />
+      {thread.reviewPullRequestNumber != null ? <>#{thread.reviewPullRequestNumber}</> : null}
+    </button>
+  ) : null;
+
   if (variant === "slim") {
     return (
       <li
@@ -824,6 +859,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
             {/* The PR badge stays outside the hover-fading slot: it must
               remain visible AND clickable while the row is hovered. Only
               the time/jump label yields to the settle affordance. */}
+            {reviewBadge}
             {prBadge}
             <span className="relative ml-auto flex h-6 min-w-8 shrink-0 items-center justify-end">
               <span className="inline-flex justify-end tabular-nums text-muted-foreground/55 transition-opacity group-hover/v2-row:opacity-0">
@@ -1012,6 +1048,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                 <span className="flex-1" />
               )}
               {terminalStatusIcon}
+              {reviewBadge}
               {prBadge}
               {diff ? (
                 <span className="shrink-0 font-mono">
