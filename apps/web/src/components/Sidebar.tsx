@@ -17,9 +17,12 @@ import {
   prStatusIndicator,
   PrStatusTooltipContent,
   resolveThreadPr,
+  reviewThreadStatusIndicator,
+  ReviewThreadStatusIcon,
   terminalStatusFromRunningIds,
   ThreadStatusLabel,
   ThreadWorktreeIndicator,
+  useReviewedPullRequest,
 } from "./ThreadStatusIndicators";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { useAtomValue } from "@effect/atom-react";
@@ -454,7 +457,14 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
     threadBranch: thread.branch,
     gitStatus: gitStatus.data,
   });
-  const prStatus = prStatusIndicator(pr, gitStatus.data?.sourceControlProvider);
+  const reviewedPullRequest = useReviewedPullRequest(thread, gitCwd);
+  const reviewStatus =
+    thread.kind === "review"
+      ? reviewThreadStatusIndicator(gitStatus.data?.sourceControlProvider, reviewedPullRequest)
+      : null;
+  const prStatus = reviewStatus
+    ? null
+    : prStatusIndicator(pr, gitStatus.data?.sourceControlProvider);
   const terminalStatus = terminalStatusFromRunningIds(runningTerminalIds);
   const isConfirmingArchive = confirmingArchiveThreadKey === threadKey && !isThreadRunning;
   const threadMetaClassName = isConfirmingArchive
@@ -569,6 +579,13 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
     },
     [openPrLink, prStatus],
   );
+  const handleReviewPrClick = useCallback(
+    (event: React.MouseEvent<HTMLButtonElement>) => {
+      if (!reviewStatus?.url) return;
+      openPrLink(event, reviewStatus.url);
+    },
+    [openPrLink, reviewStatus],
+  );
   const handleRenameInputRef = useCallback(
     (element: HTMLInputElement | null) => {
       if (element && renamingInputRef.current !== element) {
@@ -679,6 +696,32 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
         onContextMenu={handleRowContextMenu}
       >
         <div className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
+          {reviewStatus && (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  reviewStatus.url ? (
+                    <button
+                      type="button"
+                      aria-label={reviewStatus.tooltip}
+                      className={`inline-flex items-center justify-center ${reviewStatus.colorClass} cursor-pointer rounded-sm outline-hidden focus-visible:ring-1 focus-visible:ring-ring`}
+                      onClick={handleReviewPrClick}
+                    >
+                      <ReviewThreadStatusIcon className="size-3" />
+                    </button>
+                  ) : (
+                    <span
+                      aria-label={reviewStatus.tooltip}
+                      className={`inline-flex items-center justify-center ${reviewStatus.colorClass}`}
+                    >
+                      <ReviewThreadStatusIcon className="size-3" />
+                    </span>
+                  )
+                }
+              />
+              <TooltipPopup side="top">{reviewStatus.tooltip}</TooltipPopup>
+            </Tooltip>
+          )}
           {prStatus && (
             <Tooltip>
               <TooltipTrigger

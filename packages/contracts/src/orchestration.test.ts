@@ -735,7 +735,6 @@ it.effect("decodes orchestration session runtime mode defaults", () =>
       status: "idle",
       providerName: null,
       providerSessionId: null,
-      providerThreadId: null,
       activeTurnId: null,
       lastError: null,
       updatedAt: "2026-01-01T00:00:00.000Z",
