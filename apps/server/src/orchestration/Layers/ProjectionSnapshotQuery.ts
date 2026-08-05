@@ -680,6 +680,21 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     Result: ProjectionThreadActivityDbRowSchema,
     execute: () =>
       sql`
+        WITH ranked_activities AS (
+          SELECT
+            *,
+            CASE
+              WHEN kind = 'context-window.updated'
+                AND json_type(payload_json, '$.usedTokens') IN ('integer', 'real')
+                AND json_extract(payload_json, '$.usedTokens') >= 0
+              THEN ROW_NUMBER() OVER (
+                PARTITION BY thread_id, turn_id, kind
+                ORDER BY sequence DESC, created_at DESC, activity_id DESC
+              )
+              ELSE 1
+            END AS retention_rank
+          FROM projection_thread_activities
+        )
         SELECT
           activity_id AS "activityId",
           thread_id AS "threadId",
@@ -687,10 +702,19 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           tone,
           kind,
           summary,
-          payload_json AS "payload",
+          CASE
+            WHEN json_extract(payload_json, '$.itemType') = 'command_execution'
+            THEN json_remove(
+              payload_json,
+              '$.data.item.aggregatedOutput',
+              '$.data.item.commandActions'
+            )
+            ELSE payload_json
+          END AS "payload",
           sequence,
           created_at AS "createdAt"
-        FROM projection_thread_activities
+        FROM ranked_activities
+        WHERE retention_rank = 1
         ORDER BY
           thread_id ASC,
           sequence ASC,
@@ -1136,6 +1160,22 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     Result: ProjectionThreadActivityDbRowSchema,
     execute: ({ threadId }) =>
       sql`
+        WITH ranked_activities AS (
+          SELECT
+            *,
+            CASE
+              WHEN kind = 'context-window.updated'
+                AND json_type(payload_json, '$.usedTokens') IN ('integer', 'real')
+                AND json_extract(payload_json, '$.usedTokens') >= 0
+              THEN ROW_NUMBER() OVER (
+                PARTITION BY turn_id, kind
+                ORDER BY sequence DESC, created_at DESC, activity_id DESC
+              )
+              ELSE 1
+            END AS retention_rank
+          FROM projection_thread_activities
+          WHERE thread_id = ${threadId}
+        )
         SELECT
           activity_id AS "activityId",
           thread_id AS "threadId",
@@ -1143,7 +1183,18 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           tone,
           kind,
           summary,
-          payload_json AS "payload",
+          CASE
+            -- Command output is projected away before reaching clients. Remove the two
+            -- unbounded fields before JSON decoding so a long thread cannot transiently
+            -- inflate hundreds of persisted megabytes into a multi-gigabyte V8 heap.
+            WHEN json_extract(payload_json, '$.itemType') = 'command_execution'
+            THEN json_remove(
+              payload_json,
+              '$.data.item.aggregatedOutput',
+              '$.data.item.commandActions'
+            )
+            ELSE payload_json
+          END AS "payload",
           sequence,
           created_at AS "createdAt"
         FROM (
@@ -1157,8 +1208,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             payload_json,
             sequence,
             created_at
-          FROM projection_thread_activities
-          WHERE thread_id = ${threadId}
+          FROM ranked_activities
+          WHERE retention_rank = 1
           ORDER BY
             sequence DESC,
             created_at DESC,
