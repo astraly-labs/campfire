@@ -2479,7 +2479,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
     }),
   );
 
-  it.effect("reads only user-input activities when refreshing shell summaries", () =>
+  it.effect("refreshes user-input summaries only for relevant activities", () =>
     Effect.gen(function* () {
       const projectionPipeline = yield* OrchestrationProjectionPipeline;
       const eventStore = yield* OrchestrationEventStore;
@@ -2640,8 +2640,47 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
           )
       `;
 
+      yield* sql`
+        UPDATE projection_threads
+        SET pending_user_input_count = 7
+        WHERE thread_id = 'thread-stale-user-input'
+      `;
+
       yield* appendAndProject({
-        type: "thread.message-sent",
+        type: "thread.activity-appended",
+        eventId: EventId.make("evt-stale-user-input-unrelated"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-stale-user-input"),
+        occurredAt: "2026-02-26T12:35:08.500Z",
+        commandId: CommandId.make("cmd-stale-user-input-unrelated"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-stale-user-input-unrelated"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.make("thread-stale-user-input"),
+          activity: {
+            id: EventId.make("activity-stale-user-input-unrelated"),
+            tone: "info",
+            kind: "context-window.updated",
+            summary: "Context window updated",
+            payload: {},
+            turnId: null,
+            createdAt: "2026-02-26T12:35:08.500Z",
+          },
+        },
+      });
+
+      const unchangedRows = yield* sql<{
+        readonly pendingUserInputCount: number;
+      }>`
+        SELECT pending_user_input_count AS "pendingUserInputCount"
+        FROM projection_threads
+        WHERE thread_id = 'thread-stale-user-input'
+      `;
+      assert.deepEqual(unchangedRows, [{ pendingUserInputCount: 7 }]);
+
+      yield* appendAndProject({
+        type: "thread.activity-appended",
         eventId: EventId.make("evt-stale-user-input-3"),
         aggregateKind: "thread",
         aggregateId: ThreadId.make("thread-stale-user-input"),
@@ -2652,13 +2691,18 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
         metadata: {},
         payload: {
           threadId: ThreadId.make("thread-stale-user-input"),
-          messageId: MessageId.make("message-stale-user-input"),
-          role: "user",
-          text: "Continue",
-          turnId: null,
-          streaming: false,
-          createdAt: "2026-02-26T12:35:09.000Z",
-          updatedAt: "2026-02-26T12:35:09.000Z",
+          activity: {
+            id: EventId.make("activity-stale-user-input-refresh"),
+            tone: "error",
+            kind: "provider.user-input.respond.failed",
+            summary: "Provider user input response failed",
+            payload: {
+              requestId: "user-input-stale",
+              detail: "Unknown pending Codex user input request: user-input-stale",
+            },
+            turnId: null,
+            createdAt: "2026-02-26T12:35:09.000Z",
+          },
         },
       });
 
