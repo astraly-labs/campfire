@@ -1177,10 +1177,17 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
 
       const snapshot = yield* snapshotQuery.getSnapshot();
       const threadDetail = yield* snapshotQuery.getThreadDetailById(ThreadId.make("thread-1"));
+      const commandContext = yield* snapshotQuery.getThreadDetailById(ThreadId.make("thread-1"), {
+        includeActivities: false,
+      });
 
       assert.equal(threadDetail._tag, "Some");
       if (threadDetail._tag === "Some") {
         assert.deepEqual(threadDetail.value.activities, snapshot.threads[0]?.activities ?? []);
+      }
+      assert.equal(commandContext._tag, "Some");
+      if (commandContext._tag === "Some") {
+        assert.deepEqual(commandContext.value.activities, []);
       }
 
       assert.deepEqual(snapshot.threads[0]?.activities ?? [], [
