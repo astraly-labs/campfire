@@ -1176,7 +1176,13 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     Result: ProjectionThreadActivityDbRowSchema,
     execute: ({ threadId }) =>
       sql`
-        WITH ranked_activities AS (
+        WITH bounded_activities AS (
+          SELECT *
+          FROM projection_thread_activities
+          WHERE thread_id = ${threadId}
+          ORDER BY sequence DESC, created_at DESC, activity_id DESC
+          LIMIT ${THREAD_ACTIVITY_SNAPSHOT_LIMIT}
+        ), ranked_activities AS (
           SELECT
             *,
             CASE
@@ -1189,19 +1195,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               )
               ELSE 1
             END AS retention_rank
-          FROM projection_thread_activities
-          WHERE thread_id = ${threadId}
-        ), retained_activities AS (
-          SELECT *
-          FROM ranked_activities
-          WHERE retention_rank = 1
-        ), bounded_activities AS (
-          SELECT
-            *,
-            ROW_NUMBER() OVER (
-              ORDER BY sequence DESC, created_at DESC, activity_id DESC
-            ) AS recent_rank
-          FROM retained_activities
+          FROM bounded_activities
         )
         SELECT
           activity_id AS "activityId",
