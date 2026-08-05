@@ -1244,6 +1244,44 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           createdAt: "2026-04-01T00:00:09.000Z",
         },
       ]);
+
+      yield* sql`
+        WITH RECURSIVE activity_numbers(value) AS (
+          VALUES (1)
+          UNION ALL
+          SELECT value + 1 FROM activity_numbers WHERE value < 10001
+        )
+        INSERT INTO projection_thread_activities (
+          activity_id,
+          thread_id,
+          turn_id,
+          tone,
+          kind,
+          summary,
+          payload_json,
+          sequence,
+          created_at
+        )
+        SELECT
+          'activity-bulk-' || value,
+          'thread-1',
+          'turn-bulk',
+          'info',
+          'runtime.note',
+          'bulk ' || value,
+          '{}',
+          100 + value,
+          '2026-04-02T00:00:00.000Z'
+        FROM activity_numbers
+      `;
+
+      const boundedDetail = yield* snapshotQuery.getThreadDetailById(ThreadId.make("thread-1"));
+      assert.equal(boundedDetail._tag, "Some");
+      if (boundedDetail._tag === "Some") {
+        assert.equal(boundedDetail.value.activities.length, 10_000);
+        assert.equal(boundedDetail.value.activities[0]?.id, asEventId("activity-bulk-2"));
+        assert.equal(boundedDetail.value.activities.at(-1)?.id, asEventId("activity-bulk-10001"));
+      }
     }),
   );
 

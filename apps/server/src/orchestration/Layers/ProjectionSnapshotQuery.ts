@@ -324,6 +324,10 @@ function toPersistenceSqlOrDecodeError(sqlOperation: string, decodeOperation: st
       : toPersistenceSqlError(sqlOperation)(cause);
 }
 
+// ponytail: bounded snapshots keep one pathological thread from blocking the server;
+// replace the ceiling with cursor pagination when clients can request older activity history.
+const THREAD_ACTIVITY_SNAPSHOT_LIMIT = 10_000;
+
 const makeProjectionSnapshotQuery = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const repositoryIdentityResolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
@@ -552,6 +556,18 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               ELSE 1
             END AS retention_rank
           FROM projection_thread_activities
+        ), retained_activities AS (
+          SELECT *
+          FROM ranked_activities
+          WHERE retention_rank = 1
+        ), bounded_activities AS (
+          SELECT
+            *,
+            ROW_NUMBER() OVER (
+              PARTITION BY thread_id
+              ORDER BY sequence DESC, created_at DESC, activity_id DESC
+            ) AS recent_rank
+          FROM retained_activities
         )
         SELECT
           activity_id AS "activityId",
@@ -571,8 +587,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           END AS "payload",
           sequence,
           created_at AS "createdAt"
-        FROM ranked_activities
-        WHERE retention_rank = 1
+        FROM bounded_activities
+        WHERE recent_rank <= ${THREAD_ACTIVITY_SNAPSHOT_LIMIT}
         ORDER BY
           thread_id ASC,
           sequence ASC,
@@ -955,6 +971,17 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             END AS retention_rank
           FROM projection_thread_activities
           WHERE thread_id = ${threadId}
+        ), retained_activities AS (
+          SELECT *
+          FROM ranked_activities
+          WHERE retention_rank = 1
+        ), bounded_activities AS (
+          SELECT
+            *,
+            ROW_NUMBER() OVER (
+              ORDER BY sequence DESC, created_at DESC, activity_id DESC
+            ) AS recent_rank
+          FROM retained_activities
         )
         SELECT
           activity_id AS "activityId",
@@ -977,8 +1004,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           END AS "payload",
           sequence,
           created_at AS "createdAt"
-        FROM ranked_activities
-        WHERE retention_rank = 1
+        FROM bounded_activities
+        WHERE recent_rank <= ${THREAD_ACTIVITY_SNAPSHOT_LIMIT}
         ORDER BY
           sequence ASC,
           created_at ASC,
