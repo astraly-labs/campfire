@@ -1022,7 +1022,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
     }),
   );
 
-  it.effect("keeps thread detail activity ordering consistent with shell snapshot ordering", () =>
+  it.effect("bounds activity hydration while preserving snapshot ordering", () =>
     Effect.gen(function* () {
       const snapshotQuery = yield* ProjectionSnapshotQuery;
       const sql = yield* SqlClient.SqlClient;
@@ -1139,6 +1139,39 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             '{"source":"sequence-1"}',
             1,
             '2026-04-01T00:00:05.000Z'
+          ),
+          (
+            'activity-context-old',
+            'thread-1',
+            'turn-1',
+            'info',
+            'context-window.updated',
+            'old context window',
+            '{"usedTokens":100}',
+            3,
+            '2026-04-01T00:00:07.000Z'
+          ),
+          (
+            'activity-context-new',
+            'thread-1',
+            'turn-1',
+            'info',
+            'context-window.updated',
+            'new context window',
+            '{"usedTokens":200}',
+            4,
+            '2026-04-01T00:00:08.000Z'
+          ),
+          (
+            'activity-command',
+            'thread-1',
+            'turn-1',
+            'info',
+            'tool.completed',
+            'command completed',
+            '{"itemType":"command_execution","data":{"item":{"command":"echo ok","aggregatedOutput":"unbounded output","commandActions":[{"type":"read"}]}}}',
+            5,
+            '2026-04-01T00:00:09.000Z'
           )
       `;
 
@@ -1179,6 +1212,29 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           turnId: null,
           sequence: 2,
           createdAt: "2026-04-01T00:00:04.000Z",
+        },
+        {
+          id: asEventId("activity-context-new"),
+          tone: "info",
+          kind: "context-window.updated",
+          summary: "new context window",
+          payload: { usedTokens: 200 },
+          turnId: asTurnId("turn-1"),
+          sequence: 4,
+          createdAt: "2026-04-01T00:00:08.000Z",
+        },
+        {
+          id: asEventId("activity-command"),
+          tone: "info",
+          kind: "tool.completed",
+          summary: "command completed",
+          payload: {
+            itemType: "command_execution",
+            data: { item: { command: "echo ok" } },
+          },
+          turnId: asTurnId("turn-1"),
+          sequence: 5,
+          createdAt: "2026-04-01T00:00:09.000Z",
         },
       ]);
     }),
