@@ -4,7 +4,6 @@ import {
   type CollaborationUser,
   type OrchestrationEvent,
   type OrchestrationSessionStatus,
-  ThreadId,
 } from "@t3tools/contracts";
 import { canonicalizeSideThreads, sideThreadIdForThread } from "@t3tools/shared/sideThread";
 import * as Effect from "effect/Effect";
@@ -561,8 +560,52 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
     });
 
     const refreshThreadShellSummary = Effect.fn("refreshThreadShellSummary")(function* (
-      threadId: ThreadId,
+      event: OrchestrationEvent,
     ) {
+      if (
+        event.type !== "thread.message-sent" &&
+        event.type !== "thread.proposed-plan-upserted" &&
+        event.type !== "thread.activity-appended" &&
+        event.type !== "thread.approval-response-requested" &&
+        event.type !== "thread.session-set" &&
+        event.type !== "thread.turn-diff-completed" &&
+        event.type !== "thread.reverted"
+      ) {
+        return;
+      }
+
+      const refreshAll = event.type === "thread.reverted";
+      const activityKind =
+        event.type === "thread.activity-appended" ? event.payload.activity.kind : null;
+      const refreshPendingApprovals =
+        refreshAll ||
+        event.type === "thread.approval-response-requested" ||
+        activityKind === "approval.requested" ||
+        activityKind === "approval.resolved" ||
+        activityKind === "provider.approval.respond.failed";
+      const refreshPendingUserInput =
+        refreshAll ||
+        activityKind === "user-input.requested" ||
+        activityKind === "user-input.resolved" ||
+        activityKind === "provider.user-input.respond.failed";
+      const refreshProposedPlan =
+        refreshAll ||
+        event.type === "thread.proposed-plan-upserted" ||
+        event.type === "thread.session-set" ||
+        event.type === "thread.turn-diff-completed";
+      const refreshLatestUserMessage =
+        refreshAll || (event.type === "thread.message-sent" && event.payload.role === "user");
+
+      if (
+        !refreshPendingApprovals &&
+        !refreshPendingUserInput &&
+        !refreshProposedPlan &&
+        !refreshLatestUserMessage
+      ) {
+        return;
+      }
+
+      const threadId = event.payload.threadId;
       const existingRow = yield* projectionThreadRepository.getById({
         threadId,
       });
@@ -571,30 +614,54 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       }
 
       const [messages, proposedPlans, activities, pendingApprovals] = yield* Effect.all([
-        projectionThreadMessageRepository.listByThreadId({ threadId }),
-        projectionThreadProposedPlanRepository.listByThreadId({ threadId }),
-        projectionThreadActivityRepository.listByThreadId({ threadId }),
-        projectionPendingApprovalRepository.listByThreadId({ threadId }),
+        refreshAll
+          ? projectionThreadMessageRepository.listByThreadId({ threadId })
+          : Effect.succeed(null),
+        refreshProposedPlan
+          ? projectionThreadProposedPlanRepository.listByThreadId({ threadId })
+          : Effect.succeed(null),
+        refreshPendingUserInput
+          ? projectionThreadActivityRepository.listByThreadId({ threadId })
+          : Effect.succeed(null),
+        refreshPendingApprovals
+          ? projectionPendingApprovalRepository.listByThreadId({ threadId })
+          : Effect.succeed(null),
       ]);
 
-      let latestUserMessageAt: string | null = null;
-      for (const message of messages) {
-        if (
-          message.role === "user" &&
-          (latestUserMessageAt === null || message.createdAt > latestUserMessageAt)
-        ) {
-          latestUserMessageAt = message.createdAt;
+      let latestUserMessageAt = existingRow.value.latestUserMessageAt;
+      if (messages !== null) {
+        latestUserMessageAt = null;
+        for (const message of messages) {
+          if (
+            message.role === "user" &&
+            (latestUserMessageAt === null || message.createdAt > latestUserMessageAt)
+          ) {
+            latestUserMessageAt = message.createdAt;
+          }
         }
+      } else if (
+        event.type === "thread.message-sent" &&
+        event.payload.role === "user" &&
+        (latestUserMessageAt === null || event.payload.createdAt > latestUserMessageAt)
+      ) {
+        latestUserMessageAt = event.payload.createdAt;
       }
 
-      const pendingApprovalCount = pendingApprovals.filter(
-        (approval) => approval.status === "pending",
-      ).length;
-      const pendingUserInputCount = derivePendingUserInputCountFromActivities(activities);
-      const hasActionableProposedPlan = deriveHasActionableProposedPlan({
-        latestTurnId: existingRow.value.latestTurnId,
-        proposedPlans,
-      });
+      const pendingApprovalCount =
+        pendingApprovals === null
+          ? existingRow.value.pendingApprovalCount
+          : pendingApprovals.filter((approval) => approval.status === "pending").length;
+      const pendingUserInputCount =
+        activities === null
+          ? existingRow.value.pendingUserInputCount
+          : derivePendingUserInputCountFromActivities(activities);
+      const hasActionableProposedPlan =
+        proposedPlans === null
+          ? existingRow.value.hasActionableProposedPlan === 1
+          : deriveHasActionableProposedPlan({
+              latestTurnId: existingRow.value.latestTurnId,
+              proposedPlans,
+            });
 
       yield* projectionThreadRepository.upsert({
         ...existingRow.value,
@@ -1034,7 +1101,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             ...existingRow.value,
             updatedAt: event.occurredAt,
           });
-          yield* refreshThreadShellSummary(event.payload.threadId);
+          yield* refreshThreadShellSummary(event);
           return;
         }
 
@@ -1050,7 +1117,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             latestTurnId: event.payload.session.activeTurnId,
             updatedAt: event.occurredAt,
           });
-          yield* refreshThreadShellSummary(event.payload.threadId);
+          yield* refreshThreadShellSummary(event);
           return;
         }
 
@@ -1066,7 +1133,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             latestTurnId: event.payload.turnId,
             updatedAt: event.occurredAt,
           });
-          yield* refreshThreadShellSummary(event.payload.threadId);
+          yield* refreshThreadShellSummary(event);
           return;
         }
 
@@ -1104,7 +1171,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             latestTurnId,
             updatedAt: event.occurredAt,
           });
-          yield* refreshThreadShellSummary(event.payload.threadId);
+          yield* refreshThreadShellSummary(event);
           return;
         }
 

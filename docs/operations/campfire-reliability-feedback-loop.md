@@ -768,3 +768,55 @@ Decision:
 Next:
 
 - Supply the three Google values, run preflight, then start the isolated H17 artifact on 3774/10000.
+
+### H19: A server-side hot loop retains orchestration state and stalls new turns
+
+Status: confirmed
+
+The staging server is reachable but one server process consumes multiple CPU cores and several
+gigabytes of resident memory. A shared server loop, rather than provider/model work, is expected to
+dominate a native process sample and explain both unbounded resource growth and the earlier stuck
+`ProviderCommandReactor`.
+
+Expected signal:
+
+- A native sample attributes most server CPU to one repeatable application stack.
+- The responsible data structure or loop grows with durable events, sessions, or subscriptions.
+- A focused regression test fails before the fix and proves bounded work or retained state after it.
+
+Validation:
+
+- Command/query: macOS `sample`, process RSS/CPU snapshots, recent trace-name frequencies, and a
+  focused test at the identified shared boundary.
+- Dataset/window: staging release `046682bdd5749c98c58c5f0298718138ab043283` after about 23.5 hours
+  of uptime, using its existing 1.5 GiB SQLite state.
+- Control/baseline: HTTP remains 200 while PID 61778 uses 294-350% CPU and 5,577,888 KiB RSS; host
+  load average is about 27.
+
+Result:
+
+- The native sample attributes the hot main thread to Node immediate callbacks entering
+  `node::sqlite::StatementSync::All`, SQLite sorting/temp-PMA I/O, row conversion into V8 objects,
+  and garbage collection.
+- The hottest thread contains 102,967 projected activities and about 227 MB of activity payloads.
+  Its indexed `listByThreadId` query still builds a temporary sort tree and materializes every row.
+- `thread.activity-appended` called `refreshThreadShellSummary` for every provider activity. That
+  shared refresh loaded all messages, plans, activities, and approvals even though ordinary tool
+  and context activities cannot change any shell-summary field. Repeating the full activity scan
+  as the thread grows is quadratic work and explains the concurrent CPU, RSS, and event-loop stall.
+- The shared refresh now selects only the projection affected by the event. Ordinary activity and
+  assistant-message traffic does no summary read; user messages update their timestamp directly;
+  approval, user-input, and plan events retain their existing semantics.
+- The focused projection test passes 22 tests and proves an unrelated context activity leaves the
+  pending-user-input summary untouched. The server typecheck passes with only pre-existing Effect
+  suggestions outside this change.
+
+Decision:
+
+- Keep the event-aware refresh at the shared projector boundary. Do not add a cache, migration, or
+  new summary subsystem unless a measured relevant-event scan becomes material.
+
+Next:
+
+- Package the tested commit, restart only `com.campfire.staging`, then record fresh PID CPU, RSS,
+  readiness, and provider progress against the same database.

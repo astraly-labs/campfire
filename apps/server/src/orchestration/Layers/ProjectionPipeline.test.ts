@@ -2140,7 +2140,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
     }),
   );
 
-  it.effect("clears stale pending user input from projected shell summaries", () =>
+  it.effect("only refreshes pending user input summaries for relevant activities", () =>
     Effect.gen(function* () {
       const projectionPipeline = yield* OrchestrationProjectionPipeline;
       const eventStore = yield* OrchestrationEventStore;
@@ -2236,6 +2236,45 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
           },
         },
       });
+
+      yield* sql`
+        UPDATE projection_threads
+        SET pending_user_input_count = 7
+        WHERE thread_id = 'thread-stale-user-input'
+      `;
+
+      yield* appendAndProject({
+        type: "thread.activity-appended",
+        eventId: EventId.make("evt-stale-user-input-unrelated"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-stale-user-input"),
+        occurredAt: "2026-02-26T12:35:02.500Z",
+        commandId: CommandId.make("cmd-stale-user-input-unrelated"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-stale-user-input-unrelated"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.make("thread-stale-user-input"),
+          activity: {
+            id: EventId.make("activity-stale-user-input-unrelated"),
+            tone: "info",
+            kind: "context-window.updated",
+            summary: "Context window updated",
+            payload: {},
+            turnId: null,
+            createdAt: "2026-02-26T12:35:02.500Z",
+          },
+        },
+      });
+
+      const unchangedRows = yield* sql<{
+        readonly pendingUserInputCount: number;
+      }>`
+        SELECT pending_user_input_count AS "pendingUserInputCount"
+        FROM projection_threads
+        WHERE thread_id = 'thread-stale-user-input'
+      `;
+      assert.deepEqual(unchangedRows, [{ pendingUserInputCount: 7 }]);
 
       yield* appendAndProject({
         type: "thread.activity-appended",
