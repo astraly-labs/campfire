@@ -1,3 +1,5 @@
+import { execFileSync } from "node:child_process";
+
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it, describe, expect } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -138,6 +140,24 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           resolvedPath,
         });
         expect("cause" in error).toBe(false);
+      }),
+    );
+
+    it.effect("rejects FIFOs without blocking the filesystem worker pool", () =>
+      Effect.gen(function* () {
+        if (process.platform === "win32") return;
+
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const fifoPath = path.join(cwd, "agent-output.fifo");
+        execFileSync("mkfifo", [fifoPath]);
+
+        const error = yield* workspaceFileSystem
+          .readFile({ cwd, relativePath: "agent-output.fifo" })
+          .pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(WorkspaceFileSystem.WorkspacePathNotFileError);
       }),
     );
 
