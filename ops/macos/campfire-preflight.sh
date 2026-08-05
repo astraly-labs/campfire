@@ -119,9 +119,9 @@ export T3CODE_GOOGLE_OIDC_REDIRECT_URI T3CODE_GOOGLE_OIDC_ALLOWED_EMAILS
     fail("Google client ID has an unexpected format");
   }
   const emails = process.env.T3CODE_GOOGLE_OIDC_ALLOWED_EMAILS.split(",").map((value) => value.trim());
-  if (emails.length < 1 || emails.length > 5 || new Set(emails.map((email) => email.toLowerCase())).size !== emails.length ||
+  if (emails.length < 1 || emails.length > 6 || new Set(emails.map((email) => email.toLowerCase())).size !== emails.length ||
       emails.some((email) => !/^[^@\s,]+@[^@\s,]+\.[^@\s,]+$/.test(email))) {
-    fail("Google allowlist must contain one to five unique email addresses");
+    fail("Google allowlist must contain one to six unique email addresses");
   }
 ' || exit $?
 

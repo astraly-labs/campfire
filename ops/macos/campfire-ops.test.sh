@@ -111,6 +111,13 @@ write_env staging "$campfire_fake_node24" "$campfire_staging_home" \
   'https://fixture.tail000000.ts.net:10000/auth/google/callback'
 "$campfire_repo_root/ops/macos/campfire-preflight.sh" "$campfire_env_file" >/dev/null
 
+sed -i '' \
+  "s/alice@example.com,bob@example.com/alice@example.com,bob@example.com,carol@example.com,dave@example.com,eve@example.com,frank@example.com/" \
+  "$campfire_env_file"
+"$campfire_repo_root/ops/macos/campfire-preflight.sh" "$campfire_env_file" >/dev/null
+sed -i '' 's/frank@example.com/frank@example.com,grace@example.com/' "$campfire_env_file"
+expect_failure "$campfire_repo_root/ops/macos/campfire-preflight.sh" "$campfire_env_file"
+
 campfire_current="$campfire_service_root/current"
 ln -s "$campfire_release_a" "$campfire_current"
 campfire_outside_release="$campfire_fixture/outside-release"
