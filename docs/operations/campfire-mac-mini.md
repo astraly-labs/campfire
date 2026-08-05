@@ -1,6 +1,6 @@
 # Campfire Mac mini Runbook
 
-This is the production path for a trusted team of at most five people. The Mac mini owns every
+This is the production path for a trusted team of at most six people. The Mac mini owns every
 Codex process, worktree, terminal, event log, and secret. Browsers are replaceable views.
 
 ## Production invariants
@@ -114,7 +114,7 @@ T3CODE_OTLP_SERVICE_NAME='campfire-mac-mini'
 
 Never put this file, its backup, or the client secret in Git, Telegram, traces, or shell history.
 Before loading it, Campfire requires a non-symlink file owned by the service user with mode `0600`,
-a built release, Node 24, an exact Tailnet callback whose port matches Serve, one to five unique
+a built release, Node 24, an exact Tailnet callback whose port matches Serve, one to six unique
 allowlisted emails, and non-overlapping code/data directories:
 
 ```bash
