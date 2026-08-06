@@ -38,7 +38,7 @@ Use a fictional team throughout: **Northwind Labs**, with **Ada Okafor**, **Ben 
 
 The product captures are 1600x1000 and use only isolated synthetic data. Capture the team inbox and a dark-mode variant only if the launch channel needs them.
 
-Regenerate the launch film with `corepack pnpm -C apps/marketing video:render`. The Remotion source lives in `apps/marketing/video/`; its soundtrack is original and uses no samples or third-party audio.
+Regenerate the launch film with `corepack pnpm -C apps/marketing video:render`. The macOS renderer lives at `scripts/render-campfire-launch.swift`; its 126 BPM soundtrack is synthesized in place and uses no samples or third-party audio.
 
 ## 15-second launch film
 
