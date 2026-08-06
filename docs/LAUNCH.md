@@ -25,12 +25,11 @@ Campfire is an open-source shared workspace for small, trusted teams running cod
 
 Use a fictional team throughout: **Northwind Labs**, with **Ada Okafor**, **Ben Roy**, and **Priya Shah**, working in `northwind/api`. Never capture real repositories, people, conversations, hostnames, or credentials.
 
-| Asset                                                                                       | Visible proof                                    | Caption                                            |
-| ------------------------------------------------------------------------------------------- | ------------------------------------------------ | -------------------------------------------------- |
-| [`docs/assets/campfire-app-thread.png`](./assets/campfire-app-thread.png)                   | Active thread, project list, authors, and branch | One room for your team's agent work                |
-| [`docs/assets/campfire-app-team-discussion.png`](./assets/campfire-app-team-discussion.png) | Agent transcript and human conversation together | Discuss the run, in the run                        |
-| [`docs/assets/campfire-landing.png`](./assets/campfire-landing.png)                         | Full landing page                                | Run coding agents with your team, not next to them |
-| [`apps/marketing/public/og.png`](../apps/marketing/public/og.png)                           | 1200x630 social card                             | Open source · Built on T3 Code                     |
+| Asset                                                                                       | Visible proof                                    | Caption                             |
+| ------------------------------------------------------------------------------------------- | ------------------------------------------------ | ----------------------------------- |
+| [`docs/assets/campfire-app-thread.png`](./assets/campfire-app-thread.png)                   | Active thread, project list, authors, and branch | One room for your team's agent work |
+| [`docs/assets/campfire-app-team-discussion.png`](./assets/campfire-app-team-discussion.png) | Agent transcript and human conversation together | Discuss the run, in the run         |
+| [`apps/marketing/public/og.png`](../apps/marketing/public/og.png)                           | 1200x630 social card                             | Open source · Built on T3 Code      |
 
 The product captures are 1600x1000 and use only isolated synthetic data. Capture the team inbox and a dark-mode variant only if the launch channel needs them.
 

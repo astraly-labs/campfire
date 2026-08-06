@@ -1,240 +1,275 @@
 ---
+import productScreenshot from "../../../../docs/assets/campfire-app-team-discussion.png?url";
 import Layout from "../layouts/Layout.astro";
 import { GITHUB_REPOSITORY_URL } from "../lib/site";
 
-const features = [
+const capabilities = [
   {
-    number: "01",
-    title: "See who is here",
-    body: "Live presence and typing state show who is viewing a task before two people steer the same run in different directions.",
+    title: "Presence and typing state",
+    body: "See who is already viewing a task before two people steer the same run in opposite directions.",
   },
   {
-    number: "02",
-    title: "Discuss the run, in the run",
-    body: "A durable team side conversation keeps questions, links, corrections, and decisions attached to the agent work they concern.",
+    title: "Durable side discussions",
+    body: "Keep questions, links, and corrections attached to the agent thread that produced them.",
   },
   {
-    number: "03",
-    title: "Bring in the right teammate",
-    body: "Mentions, Take a Look, unread state, notifications, and a team inbox surface work without moving the context to another tool.",
+    title: "Mentions and a team inbox",
+    body: "Bring the right teammate into a specific run. Unread state and notifications follow them; the context does not move.",
   },
   {
-    number: "04",
-    title: "Keep long-running work visible",
-    body: "Follow active threads and send, interrupt, redirect, resume, or archive agent work from another trusted machine.",
+    title: "Shared controls",
+    body: "Send, interrupt, redirect, resume, or archive long-running agent work from any trusted machine on the team.",
   },
 ] as const;
 
-const providers = ["Codex", "Claude Code", "Cursor", "Grok Build", "OpenCode"] as const;
+const quickstart = `git clone https://github.com/astraly-labs/campfire.git
+cd campfire
+corepack enable
+corepack pnpm install --frozen-lockfile
+corepack pnpm dev`;
 ---
 
 <Layout>
-  <section class="hero">
+  <section class="hero section-shell">
     <div class="hero-copy">
-      <p class="eyebrow"><span></span> Open source · A thin fork of T3 Code</p>
-      <h1>Run coding agents with your team, <em>not next to them.</em></h1>
-      <p class="hero-lede">
-        Campfire gives a small, trusted team one shared workspace for agent threads across projects
-        and machines. See who is watching, discuss every run, and keep long-running work visible.
+      <p class="eyebrow">Open source · A thin fork of T3 Code</p>
+      <h1>Run coding agents with your team, not next to them.</h1>
+      <p class="lede">
+        Campfire is a shared workspace for small, fully trusted teams running coding agents across
+        projects and machines. Presence, side discussions, mentions, and unread state live directly
+        on the agent threads you already run.
       </p>
-      <div class="hero-actions">
-        <a class="button primary" href={`${GITHUB_REPOSITORY_URL}#quick-start`}>Get started</a>
-        <a class="button secondary" href={GITHUB_REPOSITORY_URL}>View on GitHub ↗</a>
+      <div class="actions">
+        <a class="button primary" href={GITHUB_REPOSITORY_URL}>View on GitHub</a>
+        <a class="button secondary" href="#quickstart">Read the quickstart</a>
       </div>
     </div>
 
-    <div class="product-frame" aria-label="Campfire collaboration workspace preview">
-      <div class="window-bar">
-        <div class="window-dots" aria-hidden="true"><span></span><span></span><span></span></div>
-        <span>northwind / api</span>
-        <div class="presence" aria-label="Ada, Ben, and Priya are present">
-          <span class="avatar ada">AO</span><span class="avatar ben">BR</span><span class="avatar priya">PS</span>
-        </div>
-      </div>
-      <div class="workspace">
-        <aside>
-          <p class="aside-label">Active tasks</p>
-          <div class="task active"><span class="status running"></span><div><strong>Fix flaky auth tests</strong><small>Claude Code · working</small></div></div>
-          <div class="task"><span class="status review"></span><div><strong>Review billing refactor</strong><small>Codex · needs review</small></div></div>
-          <div class="task"><span class="status done"></span><div><strong>Document rate limits</strong><small>OpenCode · done</small></div></div>
-          <div class="inbox-row"><span>Team inbox</span><b>3</b></div>
-        </aside>
-        <div class="thread">
-          <div class="thread-head">
-            <div><small>fix/auth-timeout</small><strong>Fix flaky auth tests</strong></div>
-            <span class="live-pill">● Agent working</span>
-          </div>
-          <div class="messages">
-            <div class="agent-message">
-              <span class="agent-mark">C</span>
-              <div><small>Claude Code</small><p>I found a race between session refresh and the first authenticated request. I’m adding a focused regression test at the shared boundary.</p></div>
-            </div>
-            <div class="activity"><span></span> Editing <code>EnvironmentAuth.ts</code></div>
-          </div>
-        </div>
-        <aside class="side-thread">
-          <div class="side-title"><span>Team discussion</span><b>2</b></div>
-          <div class="human-message"><span class="avatar ben">BR</span><div><strong>Ben</strong><p>This also explains yesterday’s reconnect failure.</p></div></div>
-          <div class="human-message"><span class="avatar ada">AO</span><div><strong>Ada</strong><p><span class="mention">@Priya</span> take a look at the session boundary?</p></div></div>
-          <div class="composer">Reply to your team…</div>
-        </aside>
-      </div>
-    </div>
+    <aside class="near-fold-credit" aria-labelledby="near-fold-credit-title">
+      <p class="eyebrow" id="near-fold-credit-title">Built on T3 Code</p>
+      <p>
+        The provider integrations, remote architecture, worktrees, and core clients are upstream
+        work by <a href="https://github.com/juliusmarminge">Julius Marminge</a>,
+        {" "}<a href="https://github.com/t3dotgg">Theo Browne</a>, the pingdotgg maintainers, and
+        contributors.
+      </p>
+      <a class="text-link" href="https://github.com/pingdotgg/t3code">Visit T3 Code ↗</a>
+      <small>Campfire is independently maintained and is not endorsed by T3 Tools Inc.</small>
+    </aside>
   </section>
 
-  <section id="product" class="features section-shell">
-    <div class="section-heading">
-      <p class="eyebrow">Built for shared agent work</p>
-      <h2>The context stays where the work happens.</h2>
+  <figure class="product-proof page-shell">
+    <div class="screenshot-frame">
+      <img
+        src={productScreenshot}
+        alt="Campfire showing a coding agent thread with a teammate discussion open beside it"
+        width="1600"
+        height="1000"
+        loading="eager"
+        decoding="async"
+      />
     </div>
-    <div class="feature-grid">
-      {features.map((feature) => (
-        <article>
-          <span>{feature.number}</span>
-          <h3>{feature.title}</h3>
-          <p>{feature.body}</p>
-        </article>
+    <figcaption>
+      One agent thread, one durable team discussion. The run and the decisions around it stay in
+      the same place.
+    </figcaption>
+  </figure>
+
+  <section id="product" class="capabilities section-shell">
+    <header class="section-intro">
+      <p class="eyebrow">The team layer</p>
+      <h2>Shared context without replacing your agent tools.</h2>
+    </header>
+
+    <dl>
+      {capabilities.map((capability) => (
+        <div>
+          <dt>{capability.title}</dt>
+          <dd>{capability.body}</dd>
+        </div>
       ))}
+    </dl>
+
+    <p class="upstream-note">
+      Codex, Claude Code, Cursor, Grok Build, and OpenCode support, along with remote sessions,
+      worktrees, and the web, desktop, and early mobile clients, come from T3 Code.
+    </p>
+  </section>
+
+  <section id="quickstart" class="quickstart section-shell">
+    <div class="section-intro">
+      <p class="eyebrow">Source first</p>
+      <h2>Run Campfire from source.</h2>
+      <p>
+        Campfire does not have a stable packaged release yet. You need Node.js 24.13.1 or newer
+        within major 24 and at least one T3 Code provider already installed and authenticated.
+      </p>
+      <div class="inline-links">
+        <a href="https://github.com/pingdotgg/t3code#installation">Provider setup ↗</a>
+        <a href={`${GITHUB_REPOSITORY_URL}/blob/staging/docs/operations/campfire-mac-mini.md`}>
+          Trusted-team deployment ↗
+        </a>
+      </div>
+    </div>
+
+    <div class="code-block">
+      <div class="code-label">Clone and start the development server</div>
+      <pre><code>{quickstart}</code></pre>
+      <p>Open the pairing URL printed by the server. Local development state stays in <code>.t3</code>.</p>
     </div>
   </section>
 
   <section id="trust" class="trust section-shell">
-    <div>
-      <p class="eyebrow">The boundary is intentional</p>
-      <h2>Designed for teams that already trust each other.</h2>
-    </div>
-    <div class="trust-copy">
-      <p>
-        Campfire has no RBAC, tenant isolation, or granular permissions. Everyone connected can see
-        and act on shared agent work.
-      </p>
-      <p>
-        Run it on a dedicated host behind a private network, and only invite people you would
-        already trust with repository access. If you need isolation between users, Campfire is not
-        the right tool.
-      </p>
-      <a href={`${GITHUB_REPOSITORY_URL}/blob/staging/SECURITY.md`}>Read the security model →</a>
-    </div>
-  </section>
-
-  <section class="providers section-shell">
-    <div>
-      <p class="eyebrow">Bring your provider</p>
-      <h2>Keep the coding agents you already use.</h2>
-    </div>
-    <div class="provider-list">
-      {providers.map((provider) => <span>{provider}</span>)}
-    </div>
-  </section>
-
-  <section id="upstream" class="upstream section-shell">
-    <div class="upstream-mark" aria-hidden="true">T3</div>
-    <div>
-      <p class="eyebrow">Campfire stands on T3 Code</p>
-      <h2>Built on an excellent open-source foundation.</h2>
-      <p>
-        T3 Code created the provider integrations, remote architecture, and core web, desktop, and
-        mobile clients underneath Campfire. We add a small-team collaboration layer while changing
-        as little else as possible, so rebasing onto upstream stays straightforward.
-      </p>
-      <p class="independent">
-        Campfire is an independent community fork. It is not affiliated with, endorsed by, or
-        supported by the T3 Code maintainers.
-      </p>
-      <div class="upstream-links">
-        <a href="https://github.com/pingdotgg/t3code">Star T3 Code ↗</a>
-        <a href={`${GITHUB_REPOSITORY_URL}/blob/staging/NOTICE.md`}>Read the attribution →</a>
+    <div class="boundary">
+      <p class="eyebrow">Read this before deploying</p>
+      <h2>Campfire has no permissions model. That is the design.</h2>
+      <div class="boundary-copy">
+        <p>
+          There is no RBAC, tenant isolation, or per-user workspace permission. Anyone admitted to
+          an instance can see and act on every shared agent thread and every project the Campfire
+          service can reach.
+        </p>
+        <p>
+          Campfire authenticates teammates and records who did what. It does not authorize them
+          differently. Authentication is not isolation.
+        </p>
+        <p>
+          Run it on a dedicated host behind a network boundary you control, use an explicit identity
+          allowlist, and invite only people you would already trust with repository access. If you
+          need isolation between users or teams, Campfire is the wrong tool.
+        </p>
+        <a class="text-link" href={`${GITHUB_REPOSITORY_URL}/blob/staging/SECURITY.md`}>
+          Read the security model →
+        </a>
       </div>
     </div>
   </section>
 
-  <section class="cta section-shell">
-    <p class="eyebrow">Source-first</p>
-    <h2>Bring the team around the same fire.</h2>
-    <p>Clone Campfire, connect an authenticated provider, and follow the trusted-team deployment guide when you are ready to share it.</p>
-    <div class="hero-actions">
-      <a class="button primary" href={`${GITHUB_REPOSITORY_URL}#quick-start`}>Get started on GitHub</a>
-      <a class="button secondary" href={`${GITHUB_REPOSITORY_URL}/blob/staging/docs/operations/campfire-mac-mini.md`}>Deployment guide</a>
+  <section id="upstream" class="upstream section-shell">
+    <header class="section-intro">
+      <p class="eyebrow">Upstream</p>
+      <h2>T3 Code did the hard part.</h2>
+    </header>
+    <div class="upstream-copy">
+      <p>
+        Campfire exists because <a href="https://github.com/pingdotgg/t3code">T3 Code</a> built an
+        excellent open-source foundation for driving Codex, Claude Code, Cursor, Grok Build, and
+        OpenCode from web, desktop, and mobile clients. The architecture, provider integrations,
+        remote workflow, worktree handling, and substantial portions of this repository are the work
+        of <a href="https://github.com/juliusmarminge">Julius Marminge</a>,
+        {" "}<a href="https://github.com/t3dotgg">Theo Browne</a>, the T3 Code maintainers, and
+        {" "}<a href="https://github.com/pingdotgg/t3code/graphs/contributors">upstream contributors</a>.
+      </p>
+      <p>
+        Our strategy is minimal divergence. We rebase onto upstream regularly, avoid renames and
+        rewrites that create conflicts for no user-visible gain, contribute broadly useful fixes
+        upstream when practical, and keep Campfire-only behavior at narrow boundaries.
+      </p>
+      <p class="independent">
+        Campfire is independently maintained and is not affiliated with, sponsored by, or endorsed
+        by T3 Tools Inc. T3 Code and related names and marks belong to their respective owners.
+      </p>
+      <div class="inline-links">
+        <a href="https://github.com/pingdotgg/t3code">Star T3 Code ↗</a>
+        <a href={`${GITHUB_REPOSITORY_URL}/blob/staging/NOTICE.md`}>Read NOTICE.md →</a>
+        <a href={`${GITHUB_REPOSITORY_URL}/blob/staging/docs/UPSTREAM.md`}>
+          Read our upstream policy →
+        </a>
+      </div>
     </div>
   </section>
 </Layout>
 
 <style>
-  .hero,
+  .page-shell,
   .section-shell {
-    width: min(1180px, calc(100% - 48px));
+    width: min(1080px, calc(100% - 40px));
     margin: 0 auto;
   }
 
+  .section-shell {
+    padding: clamp(72px, 9vw, 112px) 0;
+    border-top: 1px solid var(--line);
+  }
+
   .hero {
-    padding: clamp(88px, 11vw, 148px) 0 96px;
+    display: grid;
+    grid-template-columns: minmax(0, 1.15fr) minmax(280px, 0.65fr);
+    gap: clamp(48px, 8vw, 112px);
+    align-items: end;
+    padding-top: clamp(96px, 13vw, 160px);
+    border-top: 0;
   }
 
   .hero-copy {
-    max-width: 940px;
+    max-width: 720px;
   }
 
   .eyebrow {
     color: var(--ember-soft);
     font-family: var(--font-mono);
     font-size: 11px;
-    font-weight: 500;
-    letter-spacing: 0.13em;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    line-height: 1.4;
     text-transform: uppercase;
   }
 
-  .eyebrow span {
-    display: inline-block;
-    width: 6px;
-    height: 6px;
-    margin: 0 7px 1px 0;
-    border-radius: 50%;
-    background: var(--ember);
+  h1,
+  h2 {
+    text-wrap: balance;
   }
 
   h1 {
-    max-width: 1040px;
-    margin-top: 25px;
-    font-size: clamp(3.2rem, 7.8vw, 7rem);
-    font-weight: 500;
-    letter-spacing: -0.065em;
-    line-height: 0.94;
+    max-width: 700px;
+    margin-top: 24px;
+    font-size: clamp(2.75rem, 6.4vw, 5.15rem);
+    font-weight: 560;
+    letter-spacing: -0.045em;
+    line-height: 0.98;
   }
 
-  h1 em {
+  h2 {
+    margin-top: 14px;
+    font-size: clamp(2rem, 4vw, 3.65rem);
+    font-weight: 540;
+    letter-spacing: -0.035em;
+    line-height: 1.04;
+  }
+
+  .lede {
+    max-width: 650px;
+    margin-top: 28px;
     color: var(--muted);
-    font-style: normal;
+    font-size: clamp(1.05rem, 1.7vw, 1.2rem);
+    line-height: 1.7;
   }
 
-  .hero-lede {
-    max-width: 720px;
-    margin-top: 32px;
-    color: var(--muted);
-    font-size: clamp(1.08rem, 2vw, 1.3rem);
-    line-height: 1.65;
-  }
-
-  .hero-actions {
+  .actions,
+  .inline-links {
     display: flex;
     flex-wrap: wrap;
-    gap: 12px;
-    margin-top: 34px;
+    gap: 12px 22px;
+  }
+
+  .actions {
+    margin-top: 32px;
   }
 
   .button {
     display: inline-flex;
-    min-height: 48px;
+    min-height: 46px;
     align-items: center;
     justify-content: center;
-    padding: 0 20px;
+    padding: 0 18px;
     border: 1px solid var(--line-strong);
-    border-radius: 10px;
+    border-radius: 7px;
     font-size: 14px;
-    font-weight: 600;
+    font-weight: 650;
   }
 
   .button:hover {
-    border-color: rgba(255, 176, 124, 0.6);
+    border-color: var(--ember-soft);
   }
 
   .button.primary {
@@ -243,538 +278,261 @@ const providers = ["Codex", "Claude Code", "Cursor", "Grok Build", "OpenCode"] a
     color: #1b0d07;
   }
 
-  .button.secondary {
-    background: rgba(255, 255, 255, 0.025);
+  .button.primary:hover {
+    background: #ff8c55;
   }
 
-  .product-frame {
-    margin-top: 72px;
-    overflow: hidden;
-    border: 1px solid var(--line-strong);
-    border-radius: 16px;
-    background: #11100e;
-    box-shadow: 0 36px 100px rgba(0, 0, 0, 0.42);
+  .button:active {
+    transform: translateY(1px);
   }
 
-  .window-bar {
-    display: grid;
-    grid-template-columns: 1fr auto 1fr;
-    min-height: 54px;
-    align-items: center;
-    padding: 0 18px;
-    border-bottom: 1px solid var(--line);
-    color: var(--dim);
-    font-family: var(--font-mono);
-    font-size: 11px;
+  .near-fold-credit {
+    padding-top: 22px;
+    border-top: 1px solid var(--line-strong);
   }
 
-  .window-dots,
-  .presence {
-    display: flex;
-    align-items: center;
-  }
-
-  .window-dots {
-    gap: 6px;
-  }
-
-  .window-dots span {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: var(--line-strong);
-  }
-
-  .presence {
-    justify-content: flex-end;
-  }
-
-  .avatar {
-    display: grid;
-    width: 28px;
-    height: 28px;
-    place-items: center;
-    border: 2px solid #11100e;
-    border-radius: 50%;
-    color: #18130f;
-    font-family: var(--font-mono);
-    font-size: 8px;
-    font-weight: 600;
-  }
-
-  .presence .avatar + .avatar {
-    margin-left: -6px;
-  }
-
-  .ada { background: #ffb07c; }
-  .ben { background: #87b9ff; }
-  .priya { background: #9ddcae; }
-
-  .workspace {
-    display: grid;
-    min-height: 470px;
-    grid-template-columns: 230px minmax(0, 1fr) 285px;
-  }
-
-  .workspace > * + * {
-    border-left: 1px solid var(--line);
-  }
-
-  aside,
-  .thread {
-    min-width: 0;
-  }
-
-  aside {
-    padding: 22px 14px;
-  }
-
-  .aside-label,
-  .thread-head small,
-  .agent-message small {
-    color: var(--dim);
-    font-family: var(--font-mono);
-    font-size: 9px;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-  }
-
-  .task {
-    display: grid;
-    grid-template-columns: 8px minmax(0, 1fr);
-    gap: 10px;
-    margin-top: 8px;
-    padding: 12px 10px;
-    border-radius: 9px;
-  }
-
-  .task.active {
-    background: rgba(255, 122, 61, 0.09);
-  }
-
-  .task strong,
-  .task small {
-    display: block;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .task strong {
-    font-size: 12px;
-    font-weight: 500;
-  }
-
-  .task small {
-    margin-top: 4px;
-    color: var(--dim);
-    font-size: 10px;
-  }
-
-  .status {
-    width: 6px;
-    height: 6px;
-    margin-top: 5px;
-    border-radius: 50%;
-  }
-
-  .running { background: var(--ember); }
-  .review { background: #f1c46a; }
-  .done { background: var(--green); }
-
-  .inbox-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-top: 22px;
-    padding: 12px 10px;
-    border-top: 1px solid var(--line);
+  .near-fold-credit > p:not(.eyebrow) {
+    margin-top: 18px;
     color: var(--muted);
-    font-size: 12px;
-  }
-
-  .inbox-row b,
-  .side-title b {
-    display: grid;
-    min-width: 19px;
-    height: 19px;
-    place-items: center;
-    border-radius: 999px;
-    background: var(--ember);
-    color: #190c06;
-    font-family: var(--font-mono);
-    font-size: 9px;
-  }
-
-  .thread-head {
-    display: flex;
-    min-height: 72px;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0 22px;
-    border-bottom: 1px solid var(--line);
-  }
-
-  .thread-head strong,
-  .thread-head small {
-    display: block;
-  }
-
-  .thread-head strong {
-    margin-top: 3px;
     font-size: 14px;
-  }
-
-  .live-pill {
-    padding: 6px 9px;
-    border: 1px solid rgba(255, 122, 61, 0.25);
-    border-radius: 999px;
-    color: var(--ember-soft);
-    font-family: var(--font-mono);
-    font-size: 9px;
-  }
-
-  .messages {
-    padding: 38px 30px;
-  }
-
-  .agent-message {
-    display: grid;
-    grid-template-columns: 30px minmax(0, 1fr);
-    gap: 12px;
-  }
-
-  .agent-mark {
-    display: grid;
-    width: 30px;
-    height: 30px;
-    place-items: center;
-    border: 1px solid var(--line-strong);
-    border-radius: 8px;
-    font-family: var(--font-mono);
-    font-size: 11px;
-  }
-
-  .agent-message p {
-    max-width: 520px;
-    margin-top: 8px;
-    color: #d6d0c7;
-    font-size: 13px;
     line-height: 1.7;
   }
 
-  .activity {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin: 32px 0 0 42px;
-    color: var(--dim);
-    font-family: var(--font-mono);
-    font-size: 10px;
+  .near-fold-credit p a,
+  .upstream-copy p a {
+    color: var(--text);
+    text-decoration: underline;
+    text-decoration-color: var(--line-strong);
+    text-underline-offset: 3px;
   }
 
-  .activity span {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--ember);
-  }
-
-  .side-thread {
-    display: flex;
-    flex-direction: column;
-    background: rgba(255, 255, 255, 0.012);
-  }
-
-  .side-title {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0 4px 18px;
-    border-bottom: 1px solid var(--line);
-    font-size: 12px;
-    font-weight: 600;
-  }
-
-  .human-message {
-    display: grid;
-    grid-template-columns: 28px minmax(0, 1fr);
-    gap: 10px;
-    padding: 18px 4px 0;
-  }
-
-  .human-message strong {
+  .near-fold-credit small {
     display: block;
-    font-size: 11px;
-  }
-
-  .human-message p {
-    margin-top: 4px;
-    color: var(--muted);
-    font-size: 11px;
+    margin-top: 18px;
+    color: var(--dim);
+    font-size: 12px;
     line-height: 1.5;
   }
 
-  .mention { color: var(--ember-soft); }
-
-  .composer {
-    margin-top: auto;
-    padding: 12px;
-    border: 1px solid var(--line);
-    border-radius: 9px;
-    color: var(--dim);
-    font-size: 10px;
-  }
-
-  .section-shell {
-    padding: 112px 0;
-    border-top: 1px solid var(--line);
-  }
-
-  .section-heading {
-    max-width: 680px;
-  }
-
-  h2 {
-    margin-top: 16px;
-    font-size: clamp(2.25rem, 5vw, 4.4rem);
-    font-weight: 500;
-    letter-spacing: -0.05em;
-    line-height: 1.02;
-  }
-
-  .feature-grid {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    margin-top: 68px;
-    border-top: 1px solid var(--line);
-  }
-
-  .feature-grid article {
-    min-height: 260px;
-    padding: 28px 24px 28px 0;
-    border-bottom: 1px solid var(--line);
-  }
-
-  .feature-grid article + article {
-    padding-left: 24px;
-    border-left: 1px solid var(--line);
-  }
-
-  .feature-grid article > span {
+  .text-link,
+  .inline-links a {
     color: var(--ember-soft);
-    font-family: var(--font-mono);
-    font-size: 10px;
-  }
-
-  .feature-grid h3 {
-    margin-top: 42px;
-    font-size: 18px;
-    font-weight: 500;
-    letter-spacing: -0.02em;
-  }
-
-  .feature-grid p,
-  .upstream p,
-  .cta > p:not(.eyebrow) {
-    margin-top: 16px;
-    color: var(--muted);
     font-size: 14px;
-    line-height: 1.7;
+    font-weight: 600;
   }
 
-  .trust,
-  .providers,
-  .upstream {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(320px, 0.8fr);
-    gap: clamp(56px, 9vw, 130px);
-    align-items: start;
+  .text-link {
+    display: inline-block;
+    margin-top: 20px;
   }
 
-  .trust-copy {
-    padding-top: 28px;
+  .text-link:hover,
+  .inline-links a:hover,
+  .near-fold-credit p a:hover,
+  .upstream-copy p a:hover {
+    color: var(--text);
   }
 
-  .trust-copy p {
+  .product-proof {
+    padding-bottom: clamp(72px, 9vw, 112px);
+  }
+
+  .screenshot-frame {
+    overflow: hidden;
+    border: 1px solid var(--line-strong);
+    border-radius: 10px;
+    background: #f8f8f7;
+  }
+
+  .screenshot-frame :global(img) {
+    display: block;
+    width: 100%;
+    height: auto;
+  }
+
+  figcaption {
+    max-width: 680px;
+    margin-top: 18px;
+    color: var(--dim);
+    font-size: 13px;
+    line-height: 1.6;
+  }
+
+  .section-intro {
+    max-width: 720px;
+  }
+
+  .section-intro > p:not(.eyebrow) {
+    max-width: 640px;
+    margin-top: 22px;
     color: var(--muted);
     font-size: 17px;
     line-height: 1.7;
   }
 
-  .trust-copy p + p {
-    margin-top: 20px;
-  }
-
-  .trust-copy a,
-  .upstream-links a {
-    display: inline-block;
-    margin-top: 28px;
-    color: var(--ember-soft);
-    font-size: 14px;
-    font-weight: 500;
-  }
-
-  .provider-list {
-    display: grid;
+  .capabilities dl {
+    margin-top: 56px;
     border-top: 1px solid var(--line);
   }
 
-  .provider-list span {
-    padding: 17px 0;
-    border-bottom: 1px solid var(--line);
-    color: var(--muted);
-    font-family: var(--font-mono);
-    font-size: 13px;
-  }
-
-  .upstream {
-    grid-template-columns: 260px minmax(0, 1fr);
-  }
-
-  .upstream-mark {
+  .capabilities dl > div {
     display: grid;
-    aspect-ratio: 1;
-    place-items: center;
+    grid-template-columns: minmax(200px, 0.65fr) minmax(0, 1fr);
+    gap: 24px 48px;
+    padding: 24px 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .capabilities dt {
+    font-size: 16px;
+    font-weight: 650;
+  }
+
+  .capabilities dd,
+  .upstream-note {
+    color: var(--muted);
+    font-size: 15px;
+    line-height: 1.7;
+  }
+
+  .upstream-note {
+    max-width: 740px;
+    margin-top: 30px;
+  }
+
+  .quickstart,
+  .upstream {
+    display: grid;
+    grid-template-columns: minmax(0, 0.85fr) minmax(420px, 1.15fr);
+    gap: clamp(48px, 8vw, 108px);
+    align-items: start;
+  }
+
+  .quickstart .inline-links {
+    margin-top: 24px;
+  }
+
+  .code-block {
+    overflow: hidden;
     border: 1px solid var(--line-strong);
-    border-radius: 24px;
-    background: var(--panel);
+    border-radius: 8px;
+    background: var(--surface);
+  }
+
+  .code-label {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--line);
+    color: var(--dim);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+  }
+
+  pre {
+    overflow-x: auto;
+    padding: 22px 20px;
+    color: #ddd6cc;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.8;
+    tab-size: 2;
+  }
+
+  .code-block > p {
+    padding: 14px 16px;
+    border-top: 1px solid var(--line);
+    color: var(--dim);
+    font-size: 12px;
+    line-height: 1.6;
+  }
+
+  .code-block p code {
     color: var(--muted);
     font-family: var(--font-mono);
-    font-size: 54px;
-    letter-spacing: -0.08em;
   }
 
-  .upstream p {
-    max-width: 720px;
+  .boundary {
+    padding-left: clamp(22px, 4vw, 44px);
+    border-left: 2px solid var(--ember);
+  }
+
+  .boundary h2 {
+    max-width: 760px;
+  }
+
+  .boundary-copy {
+    max-width: 750px;
+    margin-top: 34px;
+  }
+
+  .boundary-copy p,
+  .upstream-copy p {
+    color: var(--muted);
     font-size: 16px;
+    line-height: 1.75;
   }
 
-  .upstream .independent {
+  .boundary-copy p + p,
+  .upstream-copy p + p {
+    margin-top: 18px;
+  }
+
+  .upstream-copy {
+    padding-top: 26px;
+  }
+
+  .upstream-copy .independent {
     color: var(--dim);
     font-size: 13px;
   }
 
-  .upstream-links {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 24px;
+  .upstream-copy .inline-links {
+    margin-top: 28px;
   }
 
-  .cta {
-    padding-bottom: 140px;
-    text-align: center;
-  }
-
-  .cta h2,
-  .cta > p {
-    max-width: 760px;
-    margin-right: auto;
-    margin-left: auto;
-  }
-
-  .cta .hero-actions {
-    justify-content: center;
-  }
-
-  @media (max-width: 980px) {
-    .workspace {
-      grid-template-columns: 210px minmax(0, 1fr);
-    }
-
-    .side-thread {
-      display: none;
-    }
-
-    .feature-grid {
-      grid-template-columns: repeat(2, 1fr);
-    }
-
-    .feature-grid article:nth-child(3) {
-      padding-left: 0;
-      border-left: 0;
-    }
-
-    .trust,
-    .providers {
-      grid-template-columns: 1fr;
-    }
-  }
-
-  @media (max-width: 680px) {
+  @media (max-width: 860px) {
     .hero,
-    .section-shell {
-      width: min(100% - 32px, 1180px);
-    }
-
-    .hero {
-      padding-top: 72px;
-    }
-
-    h1 {
-      font-size: clamp(3rem, 15vw, 4.8rem);
-    }
-
-    .product-frame {
-      margin-top: 52px;
-    }
-
-    .window-bar {
-      grid-template-columns: 1fr auto;
-    }
-
-    .window-bar > span {
-      display: none;
-    }
-
-    .workspace {
-      min-height: 430px;
-      grid-template-columns: 1fr;
-    }
-
-    .workspace > aside:first-child {
-      display: none;
-    }
-
-    .workspace > * + * {
-      border-left: 0;
-    }
-
-    .thread-head {
-      padding: 0 16px;
-    }
-
-    .messages {
-      padding: 30px 20px;
-    }
-
-    .feature-grid {
-      grid-template-columns: 1fr;
-    }
-
-    .feature-grid article,
-    .feature-grid article + article {
-      min-height: auto;
-      padding: 28px 0 36px;
-      border-left: 0;
-    }
-
-    .feature-grid h3 {
-      margin-top: 24px;
-    }
-
+    .quickstart,
     .upstream {
       grid-template-columns: 1fr;
     }
 
-    .upstream-mark {
-      width: 110px;
-      border-radius: 18px;
-      font-size: 30px;
+    .hero {
+      align-items: start;
     }
 
+    .near-fold-credit {
+      max-width: 640px;
+    }
+  }
+
+  @media (max-width: 620px) {
+    .page-shell,
     .section-shell {
-      padding: 80px 0;
+      width: min(100% - 32px, 1080px);
+    }
+
+    h1 {
+      font-size: clamp(2.65rem, 14vw, 4rem);
+    }
+
+    .actions {
+      align-items: stretch;
+      flex-direction: column;
+    }
+
+    .button {
+      width: 100%;
+    }
+
+    .capabilities dl > div {
+      grid-template-columns: 1fr;
+      gap: 8px;
+    }
+
+    .boundary {
+      padding-left: 20px;
     }
   }
 </style>
