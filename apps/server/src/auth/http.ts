@@ -65,6 +65,13 @@ const appendDpopChallengeOnUnauthorized = (error: EnvironmentAuthInvalidError) =
     return yield* error;
   });
 
+function requestUsesHttps(request: HttpServerRequest.HttpServerRequest): boolean {
+  const forwardedProtocol = request.headers["x-forwarded-proto"]?.split(",")[0]?.trim();
+  if (forwardedProtocol === "https") return true;
+  const url = HttpServerRequest.toURL(request);
+  return url._tag === "Some" && url.value.protocol === "https:";
+}
+
 export const currentEnvironmentTraceId = Effect.currentParentSpan.pipe(
   Effect.map((span) => span.traceId),
   Effect.orElseSucceed(() => "unavailable"),
@@ -171,13 +178,19 @@ export function failEnvironmentInternal(reason: EnvironmentInternalErrorReason, 
   });
 }
 
-const appendSessionCookie = (cookieName: string, token: string, expiresAt: DateTime.DateTime) =>
+const appendSessionCookie = (
+  cookieName: string,
+  token: string,
+  expiresAt: DateTime.DateTime,
+  secure: boolean,
+) =>
   Effect.fromResult(
     Cookies.set(Cookies.empty, cookieName, token, {
       expires: DateTime.toDate(expiresAt),
       httpOnly: true,
       path: "/",
       sameSite: "lax",
+      secure,
     }),
   ).pipe(
     Effect.catch(() => failEnvironmentInternal("browser_session_cookie_failed")),
@@ -253,7 +266,12 @@ export const authHttpApiLayer = HttpApiBuilder.group(
               result.sessionMethod === "browser-session-cookie" &&
               result.expiresAt
             ) {
-              yield* appendSessionCookie(sessions.cookieName, credential.token, result.expiresAt);
+              yield* appendSessionCookie(
+                sessions.cookieName,
+                credential.token,
+                result.expiresAt,
+                requestUsesHttps(request),
+              );
               yield* appendCredentialResponseHeaders;
             }
             return result;
@@ -277,6 +295,7 @@ export const authHttpApiLayer = HttpApiBuilder.group(
               sessions.cookieName,
               result.sessionToken,
               result.response.expiresAt,
+              requestUsesHttps(request),
             );
             yield* appendCredentialResponseHeaders;
             return result.response;
