@@ -60,18 +60,22 @@ corepack pnpm dev`;
 
   <figure class="product-proof page-shell">
     <div class="screenshot-frame">
-      <img
-        src={productScreenshot}
-        alt="Campfire showing a coding agent thread with a teammate discussion open beside it"
+      <video
+        aria-label="T3 Code's agent workspace gaining Campfire presence, team discussion, mentions, and inbox features"
+        autoplay
+        controls
+        muted
+        playsinline
+        poster={productScreenshot}
         width="1600"
         height="1000"
-        loading="eager"
-        decoding="async"
-      />
+      >
+        <source src="/campfire-feature-reveal.mp4" type="video/mp4" />
+      </video>
     </div>
     <figcaption>
-      One agent thread, one durable team discussion. The run and the decisions around it stay in
-      the same place.
+      Campfire keeps the T3 Code workspace intact and adds the trusted-team layer progressively:
+      presence, a durable discussion, mentions, and an inbox.
     </figcaption>
   </figure>
 
@@ -182,7 +186,7 @@ corepack pnpm dev`;
 
 <style>
   .page-shell {
-    width: min(1080px, calc(100% - 40px));
+    width: min(1180px, calc(100% - 24px));
     margin: 0 auto;
   }
 
@@ -332,15 +336,16 @@ corepack pnpm dev`;
 
   .screenshot-frame {
     overflow: hidden;
-    border: 1px solid var(--line-strong);
-    border-radius: 2px;
-    background: #fff;
+    padding: clamp(8px, 1.6vw, 18px);
+    background: #edf1fa;
   }
 
-  .screenshot-frame :global(img) {
+  .screenshot-frame :global(video) {
     display: block;
     width: 100%;
     height: auto;
+    border: 1px solid var(--line-strong);
+    background: #fff;
   }
 
   figcaption {
@@ -501,7 +506,7 @@ corepack pnpm dev`;
 
   @media (max-width: 620px) {
     .page-shell {
-      width: min(100% - 32px, 1080px);
+      width: calc(100% - 16px);
     }
 
     .section-shell {
