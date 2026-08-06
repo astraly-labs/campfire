@@ -181,23 +181,28 @@ corepack pnpm dev`;
 </Layout>
 
 <style>
-  .page-shell,
-  .section-shell {
+  .page-shell {
     width: min(1080px, calc(100% - 40px));
     margin: 0 auto;
   }
 
   .section-shell {
-    padding: clamp(72px, 9vw, 112px) 0;
+    width: min(860px, calc(100% - 48px));
+    margin: 0 auto;
+  }
+
+  .section-shell {
+    padding: 96px 0;
     border-top: 1px solid var(--line);
   }
 
   .hero {
     display: grid;
-    grid-template-columns: minmax(0, 1.15fr) minmax(280px, 0.65fr);
-    gap: clamp(48px, 8vw, 112px);
+    grid-template-columns: minmax(0, 1fr) 260px;
+    gap: clamp(48px, 8vw, 72px);
     align-items: end;
-    padding-top: clamp(96px, 13vw, 160px);
+    padding-top: 120px;
+    padding-bottom: 96px;
     border-top: 0;
   }
 
@@ -221,20 +226,22 @@ corepack pnpm dev`;
   }
 
   h1 {
-    max-width: 700px;
+    max-width: 620px;
     margin-top: 24px;
-    font-size: clamp(2.75rem, 6.4vw, 5.15rem);
-    font-weight: 560;
-    letter-spacing: -0.045em;
-    line-height: 0.98;
+    font-family: var(--font-display);
+    font-size: clamp(2.2rem, 4.4vw, 3.4rem);
+    font-weight: 450;
+    letter-spacing: -0.025em;
+    line-height: 1.05;
   }
 
   h2 {
     margin-top: 14px;
-    font-size: clamp(2rem, 4vw, 3.65rem);
-    font-weight: 540;
-    letter-spacing: -0.035em;
-    line-height: 1.04;
+    font-family: var(--font-display);
+    font-size: clamp(1.9rem, 3.4vw, 2.8rem);
+    font-weight: 450;
+    letter-spacing: -0.02em;
+    line-height: 1.08;
   }
 
   .lede {
@@ -257,33 +264,19 @@ corepack pnpm dev`;
   }
 
   .button {
-    display: inline-flex;
-    min-height: 46px;
-    align-items: center;
-    justify-content: center;
-    padding: 0 18px;
-    border: 1px solid var(--line-strong);
-    border-radius: 7px;
+    display: inline-block;
+    padding-bottom: 2px;
+    border-bottom: 1px solid currentColor;
     font-size: 14px;
-    font-weight: 650;
+    font-weight: 600;
   }
 
   .button:hover {
-    border-color: var(--ember-soft);
+    color: var(--text);
   }
 
   .button.primary {
-    border-color: var(--ember);
-    background: var(--ember);
-    color: #1b0d07;
-  }
-
-  .button.primary:hover {
-    background: #ff8c55;
-  }
-
-  .button:active {
-    transform: translateY(1px);
+    color: var(--ember);
   }
 
   .near-fold-credit {
@@ -340,8 +333,8 @@ corepack pnpm dev`;
   .screenshot-frame {
     overflow: hidden;
     border: 1px solid var(--line-strong);
-    border-radius: 10px;
-    background: #f8f8f7;
+    border-radius: 2px;
+    background: #fff;
   }
 
   .screenshot-frame :global(img) {
@@ -415,7 +408,6 @@ corepack pnpm dev`;
   .code-block {
     overflow: hidden;
     border: 1px solid var(--line-strong);
-    border-radius: 8px;
     background: var(--surface);
   }
 
@@ -432,7 +424,7 @@ corepack pnpm dev`;
   pre {
     overflow-x: auto;
     padding: 22px 20px;
-    color: #ddd6cc;
+    color: var(--text);
     font-family: var(--font-mono);
     font-size: 12px;
     line-height: 1.8;
@@ -454,7 +446,7 @@ corepack pnpm dev`;
 
   .boundary {
     padding-left: clamp(22px, 4vw, 44px);
-    border-left: 2px solid var(--ember);
+    border-left: 1px solid var(--ember);
   }
 
   .boundary h2 {
@@ -508,22 +500,21 @@ corepack pnpm dev`;
   }
 
   @media (max-width: 620px) {
-    .page-shell,
-    .section-shell {
+    .page-shell {
       width: min(100% - 32px, 1080px);
     }
 
+    .section-shell {
+      width: min(100% - 32px, 860px);
+    }
+
     h1 {
-      font-size: clamp(2.65rem, 14vw, 4rem);
+      font-size: clamp(2.15rem, 11vw, 3.1rem);
     }
 
     .actions {
       align-items: stretch;
       flex-direction: column;
-    }
-
-    .button {
-      width: 100%;
     }
 
     .capabilities dl > div {
