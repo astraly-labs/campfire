@@ -8,9 +8,7 @@
     "build": "astro build",
     "preview": "astro preview",
     "typecheck": "astro check",
-    "video:studio": "remotion studio video/index.tsx --public-dir ../..",
-    "video:render": "remotion render video/index.tsx CampfireLaunch public/campfire-feature-reveal.mp4 --public-dir ../.. --codec h264 --crf 24 --audio-codec aac --overwrite",
-    "video:poster": "remotion still video/index.tsx CampfireLaunch public/campfire-feature-reveal-poster.jpg --frame 90 --public-dir ../.. --image-format jpeg --jpeg-quality 88 --overwrite"
+    "video:render": "cd ../.. && swift scripts/render-campfire-launch.swift"
   },
   "dependencies": {
     "@t3tools/shared": "workspace:*",
@@ -19,13 +17,7 @@
   },
   "devDependencies": {
     "@astrojs/check": "^0.9.7",
-    "@remotion/cli": "4.0.506",
-    "@types/react": "~19.2.14",
-    "@types/react-dom": "~19.2.3",
     "@vercel/config": "^0.3.0",
-    "react": "19.2.6",
-    "react-dom": "19.2.6",
-    "remotion": "4.0.506",
     "typescript": "catalog:"
   }
 }
