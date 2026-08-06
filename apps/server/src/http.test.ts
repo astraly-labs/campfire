@@ -1,7 +1,22 @@
 import { expect, it } from "@effect/vitest";
 import { describe } from "vite-plus/test";
 
-import { isLoopbackHostname, resolveDevRedirectUrl } from "./http.ts";
+import { assetResponseHeaders, isLoopbackHostname, resolveDevRedirectUrl } from "./http.ts";
+
+describe("asset response security", () => {
+  it("sandboxes SVG documents served from the application origin", () => {
+    expect(assetResponseHeaders("/workspace/diagram.SVG")).toMatchObject({
+      "Content-Security-Policy": expect.stringContaining("sandbox"),
+      "X-Content-Type-Options": "nosniff",
+    });
+  });
+
+  it("does not sandbox HTML assets rendered inside the existing iframe sandbox", () => {
+    expect(assetResponseHeaders("/workspace/report.html")).not.toHaveProperty(
+      "Content-Security-Policy",
+    );
+  });
+});
 
 describe("http dev routing", () => {
   it("treats localhost and loopback addresses as local", () => {

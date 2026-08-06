@@ -41,7 +41,11 @@ interface PendingTransaction {
 }
 
 export class GoogleOidcTransactionError extends Data.TaggedError("GoogleOidcTransactionError")<{
-  readonly reason: "invalid_return_to" | "invalid_state" | "expired_or_replayed";
+  readonly reason:
+    | "invalid_return_to"
+    | "invalid_state"
+    | "expired_or_replayed"
+    | "too_many_pending";
 }> {
   override get message(): string {
     return `Google OIDC transaction failed: ${this.reason}.`;
@@ -146,16 +150,17 @@ export function makeGoogleOidcFlow<R>(
           returnTo: normalizedReturnTo,
           expiresAtMs: now + TRANSACTION_TTL_MS,
         };
-        yield* Ref.update(pending, (current) => {
+        const accepted = yield* Ref.modify(pending, (current) => {
           const next = new Map(Array.from(current).filter(([, entry]) => entry.expiresAtMs > now));
-          while (next.size >= MAX_PENDING_TRANSACTIONS) {
-            const oldest = next.keys().next().value as string | undefined;
-            if (oldest === undefined) break;
-            next.delete(oldest);
+          if (next.size >= MAX_PENDING_TRANSACTIONS) {
+            return [false, next] as const;
           }
           next.set(transaction.state, transaction);
-          return next;
+          return [true, next] as const;
         });
+        if (!accepted) {
+          return yield* new GoogleOidcTransactionError({ reason: "too_many_pending" });
+        }
 
         const authorizationUrl = new URL(GOOGLE_AUTHORIZATION_ENDPOINT);
         authorizationUrl.search = new URLSearchParams({
