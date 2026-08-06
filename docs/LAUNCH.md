@@ -14,9 +14,9 @@ Campfire is an open-source shared workspace for small, trusted teams running cod
 
 ## Launch thread
 
-1. We were all running coding agents alone: same repos, different laptops, no shared context. You often learned a teammate was on the same problem when both changes were already underway. We built Campfire to make that work visible.
-2. Campfire gives a small, trusted team one shared workspace for long-running agent threads across projects and machines. See who is watching, talk beside the run, and keep the context attached to the work.
-3. It adds live presence and typing state, durable side discussions, mentions, notifications, a team inbox, and shared controls to send, interrupt, resume, and archive agent work.
+1. Most multiplayer agent tools put agents back into chat. Campfire takes the opposite bet: bring your teammates into the agent workspace where the work already happens.
+2. Campfire gives a small, trusted team one shared workspace for long-running agent threads across projects and machines. See every teammate's runs, who is watching, and the decisions beside the work.
+3. Take a Look brings the right teammate into the exact thread, where they can talk to the same agent. Campfire also adds a team discussion, inbox, presence, PR review chats, private briefings, and shared controls.
 4. The boundary is intentional: no RBAC, tenant isolation, or granular permissions. Everyone connected is trusted and can act on the team's work. Only invite people you would already trust with repository access.
 5. Campfire changes as little as possible so rebasing onto T3 Code stays straightforward. The runtime, provider integrations, remote architecture, and core clients remain upstream work.
 6. Huge thanks to the T3 Code team, especially @theo, @jullerino, and every upstream contributor. Campfire is an independent community fork, not an official or endorsed T3 Code release: https://github.com/astraly-labs/campfire
@@ -29,9 +29,24 @@ Use a fictional team throughout: **Northwind Labs**, with **Ada Okafor**, **Ben 
 | ------------------------------------------------------------------------------------------- | ------------------------------------------------ | ----------------------------------- |
 | [`docs/assets/campfire-app-thread.png`](./assets/campfire-app-thread.png)                   | Active thread, project list, authors, and branch | One room for your team's agent work |
 | [`docs/assets/campfire-app-team-discussion.png`](./assets/campfire-app-team-discussion.png) | Agent transcript and human conversation together | Discuss the run, in the run         |
+| [`apps/marketing/public/campfire-feature-reveal.mp4`](../apps/marketing/public/campfire-feature-reveal.mp4) | 15-second H.264/AAC launch film | Bring teammates into the agent workspace |
 | [`apps/marketing/public/og.png`](../apps/marketing/public/og.png)                           | 1200x630 social card                             | Open source · Built on T3 Code      |
 
 The product captures are 1600x1000 and use only isolated synthetic data. Capture the team inbox and a dark-mode variant only if the launch channel needs them.
+
+Regenerate the launch film on macOS with `swift scripts/render-campfire-launch.swift`. Its music is synthesized in the renderer; it uses no samples or third-party audio.
+
+## 15-second launch film
+
+| Time    | Beat                                                     | Proof                                  |
+| ------- | -------------------------------------------------------- | -------------------------------------- |
+| 0-2s    | Campfire positioning                                     | The agent workspace was already here   |
+| 2-3s    | Shared task sidebar                                      | Every teammate's threads in one place  |
+| 3-6s    | Take a Look pings Ben from an agent answer               | Bring in the person who can unblock it |
+| 6-9s    | Ben opens the notification and lands in the exact thread | Context survives the handoff           |
+| 9-11s   | Ben joins and sends a direction to the same agent         | The run is truly shared                |
+| 11-13s  | Team discussion opens beside the agent transcript         | Human context stays with the work      |
+| 13-15s  | End card and T3 Code credit                              | Thin fork, clear upstream credit       |
 
 ## 45-second demo
 
