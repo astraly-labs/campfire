@@ -162,8 +162,15 @@ corepack pnpm dev`;
           service can reach.
         </p>
         <p>
-          Campfire authenticates teammates and records who did what. It does not authorize them
-          differently. Authentication is not isolation.
+          The reference deployment binds Campfire to localhost, exposes it only through Tailscale
+          Serve, and admits Google OIDC users whose verified email is on an explicit allowlist.
+          Campfire records who did what, but does not authorize teammates differently.
+          Authentication is not isolation.
+        </p>
+        <p>
+          Google is the current identity integration, not a requirement of the trust model. Another
+          authentication provider can enforce the same identity boundary and allowlist before a
+          request reaches Campfire.
         </p>
         <p>
           Run it on a dedicated host behind a network boundary you control, use an explicit identity
