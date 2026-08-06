@@ -7,9 +7,9 @@ interface Props {
 }
 
 const {
-  title = "Campfire — Coding agents, together",
+  title = "Campfire — T3 Code, multiplayer",
   description =
-    "An open-source shared workspace for small, trusted teams running coding agents together.",
+    "An open-source shared workspace for small, fully trusted teams. A thin multiplayer fork of T3 Code.",
 } = Astro.props;
 ---
 
@@ -17,6 +17,8 @@ const {
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" sizes="any" />
+    <meta name="theme-color" content="#2f5cd8" />
     <meta name="description" content={description} />
     <meta property="og:title" content={title} />
     <meta property="og:description" content={description} />

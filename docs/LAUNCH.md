@@ -8,17 +8,17 @@ Campfire is an open-source shared workspace for small, trusted teams running cod
 
 ## Launch post
 
-> Most teams put coding agents back into Slack. That’s backwards.
+> T3 Code is our daily driver. Campfire makes it multiplayer.
 >
-> Campfire makes T3 Code multiplayer: shared threads, presence, and Take a Look handoffs that let teammates jump into live agent conversations.
+> A thin, open-source fork for small teams that trust each other.
 >
-> Open source. Thin fork.
->
-> https://github.com/astraly-labs/campfire
+> https://campfire.markets
+
+Attach the 15-second demo. Let the product show the features; keep the main post this short.
 
 ## Launch thread
 
-1. Most multiplayer agent tools put agents back into chat. Campfire takes the opposite bet: bring your teammates into the agent workspace where the work already happens.
+1. Most multiplayer agent tools put agents back into chat. Campfire takes the opposite bet: bring your teammates into the agent workspace where the work already happens. Source: https://github.com/astraly-labs/campfire
 2. Campfire gives a small, trusted team one shared workspace for long-running agent threads across projects and machines. See every teammate's runs, who is watching, and the decisions beside the work.
 3. Take a Look brings the right teammate into the exact thread, where they can talk to the same agent. Campfire also adds a team discussion, inbox, presence, PR review chats, private briefings, and shared controls.
 4. The boundary is intentional: no RBAC, tenant isolation, or granular permissions. Everyone connected is trusted and can act on the team's work. Only invite people you would already trust with repository access.

@@ -4,28 +4,28 @@ import { GITHUB_REPOSITORY_URL } from "../lib/site";
 
 const capabilities = [
   {
-    title: "One shared task sidebar",
-    body: "See the agent threads every teammate starts, who owns them, and what needs attention. Jump into the same run instead of opening another silo.",
+    title: "Every run, one sidebar",
+    body: "See every agent thread your teammates start, who owns it, and what needs attention. Join the same work instead of opening another silo.",
   },
   {
-    title: "Take a Look",
-    body: "Ping a teammate from the agent answer that needs judgment. They land on the exact thread and can continue the conversation with the agent.",
+    title: "Bring in the right teammate",
+    body: "Use Take a Look on the agent answer that needs judgment. Your teammate lands in the exact thread and can continue with the same agent.",
   },
   {
-    title: "Talk beside the run",
+    title: "Keep team context beside the run",
     body: "Keep questions, links, and corrections in a durable team discussion attached to the agent thread that produced them.",
   },
   {
-    title: "Private briefing",
-    body: "Ask a temporary, read-only assistant to catch you up. Its answers stay private to you and never pollute the shared conversation.",
+    title: "Catch up without adding noise",
+    body: "Ask a temporary, read-only assistant to brief you on a thread. Its answers stay private to you and out of the shared conversation.",
   },
   {
-    title: "PR review threads",
-    body: "Use Review beside a pull request link to start a dedicated review thread, with a distinct icon and status in the sidebar.",
+    title: "Start reviews from the PR",
+    body: "Use Review beside a pull request link to start a dedicated review thread, with its own icon and status in the sidebar.",
   },
   {
-    title: "Presence and shared control",
-    body: "See who is already there, then send, interrupt, redirect, resume, or archive the same long-running agent work together.",
+    title: "Steer the same run together",
+    body: "See who is already in a thread, then send, interrupt, redirect, resume, or archive the same long-running agent work together.",
   },
 ] as const;
 
@@ -67,16 +67,16 @@ corepack pnpm dev`;
 <Layout>
   <section class="hero section-shell">
     <div class="hero-copy">
-      <p class="eyebrow">Open source · T3 Code, now multiplayer</p>
-      <h1>The agent workspace was already here. We brought the team into it.</h1>
+      <p class="eyebrow">Open source · A multiplayer fork of T3 Code</p>
+      <h1>T3 Code, now multiplayer.</h1>
       <p class="lede">
-        Campfire is a thin fork of T3 Code for small, fully trusted teams: shared agent threads,
-        presence, Take a Look, side discussions, review chats, and private briefings — without
-        turning agent work into another Slack.
+        Campfire is a thin fork for small teams that fully trust each other. See every run in one
+        sidebar, bring a teammate into the exact thread, and steer the same agent together — without
+        moving the work back into Slack.
       </p>
       <div class="actions">
         <a class="button primary" href={GITHUB_REPOSITORY_URL}>View on GitHub</a>
-        <a class="button secondary" href="#quickstart">Read the quickstart</a>
+        <a class="button secondary" href="#quickstart">Run it from source</a>
       </div>
     </div>
 
@@ -109,19 +109,19 @@ corepack pnpm dev`;
       </video>
     </div>
     <figcaption>
-      Every teammate's runs in one sidebar, Take a Look, direct agent control, and a side discussion:
-      the T3 Code workspace becomes a shared room.
+      Shared runs, a Take a Look handoff, direct agent control, and a side discussion — the T3 Code
+      workspace as one room.
     </figcaption>
   </figure>
 
   <section class="thesis section-shell">
     <header class="section-intro">
-      <p class="eyebrow">Agent-first collaboration</p>
-      <h2>Don’t rebuild Slack around agents. Make the agent workspace multiplayer.</h2>
+      <p class="eyebrow">The opposite of agent Slack</p>
+      <h2>Bring your team to the work. Not the work back to chat.</h2>
       <p>
-        Chat-first tools pull agent work back into another channel. Campfire takes the opposite bet:
-        start with T3 Code’s purpose-built agent workspace, then bring your teammates into it. The
-        run, its controls, and the human decisions around it stay together.
+        Most multiplayer agent tools start from chat and add agents. Campfire starts from T3 Code’s
+        purpose-built workspace and adds teammates. The run, its controls, and the human judgment
+        around it stay together.
       </p>
     </header>
   </section>
@@ -129,7 +129,7 @@ corepack pnpm dev`;
   <section id="product" class="capabilities section-shell">
     <header class="section-intro">
       <p class="eyebrow">The team layer</p>
-      <h2>The workflows we wanted from an agent workspace.</h2>
+      <h2>Everything your team needs around the same run.</h2>
     </header>
 
     <dl>
@@ -146,13 +146,13 @@ corepack pnpm dev`;
       <p>
         Staying close to upstream does not mean staying frozen. T3 Code can remain focused while
         Campfire ships opinionated workflows for teams who live in it all day. The code is open:
-        add the feature your team needs, keep it local, or upstream the parts that generalize.
+        add what your team needs, keep it local, or upstream the parts that generalize.
       </p>
     </div>
 
     <p class="upstream-note">
-      Codex, Claude Code, Cursor, Grok Build, and OpenCode support, along with remote sessions,
-      worktrees, and the web, desktop, and early mobile clients, come from T3 Code.
+      The providers — Codex, Claude Code, Cursor, Grok Build, and OpenCode — plus remote sessions,
+      worktrees, and the web, desktop, and early mobile clients all come from T3 Code.
     </p>
   </section>
 
@@ -161,8 +161,8 @@ corepack pnpm dev`;
       <p class="eyebrow">Source first</p>
       <h2>Run Campfire from source.</h2>
       <p>
-        Campfire does not have a stable packaged release yet. You need Node.js 24.13.1 or newer
-        within major 24 and at least one T3 Code provider already installed and authenticated.
+        There is no packaged release yet. You need Node.js 24.13.1 or newer within major 24 and at
+        least one T3 Code provider installed and authenticated.
       </p>
       <div class="inline-links">
         <a href="https://github.com/pingdotgg/t3code#installation">Provider setup ↗</a>
@@ -182,7 +182,7 @@ corepack pnpm dev`;
   <section id="trust" class="trust section-shell">
     <div class="boundary">
       <p class="eyebrow">Read this before deploying</p>
-      <h2>Campfire has no permissions model. That is the design.</h2>
+      <h2>Campfire has no permissions model. That’s the trade we made.</h2>
       <div class="boundary-copy">
         <p>
           There is no RBAC, tenant isolation, or per-user workspace permission. Anyone admitted to
@@ -217,8 +217,8 @@ corepack pnpm dev`;
       <p class="eyebrow">Roadmap</p>
       <h2>Make shared agent work safer, richer, and more remote.</h2>
       <p>
-        These are directions, not promised dates. We want to stay close to upstream and ship each
-        layer only when its security boundary is clear.
+        Directions, not dates. We want to stay close to upstream and ship each layer only when its
+        security boundary is clear.
       </p>
     </header>
 
