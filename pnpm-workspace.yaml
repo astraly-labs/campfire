@@ -48,9 +48,11 @@ catalog:
   effect: 4.0.0-beta.103
   jose: 6.2.2
   typescript: ~6.0.3
-  vite: npm:@voidzero-dev/vite-plus-core@0.2.2
-  vite-plus: 0.2.2
+  vite: npm:@voidzero-dev/vite-plus-core@0.2.8
+  vite-plus: 0.2.8
   yaml: ^2.9.0
+
+minimumReleaseAge: 1440
 
 minimumReleaseAgeExclude:
   - "@clerk/backend@3.14.0"
@@ -59,6 +61,16 @@ minimumReleaseAgeExclude:
   - "@clerk/expo@4.2.0"
   - "@clerk/react@6.14.7"
   - "@clerk/shared@4.30.1"
+  - "@vitest/browser-preview@4.1.10"
+  - "@vitest/browser@4.1.10"
+  - "@vitest/expect@4.1.10"
+  - "@vitest/mocker@4.1.10"
+  - "@vitest/pretty-format@4.1.10"
+  - "@vitest/runner@4.1.10"
+  - "@vitest/snapshot@4.1.10"
+  - "@vitest/spy@4.1.10"
+  - "@vitest/utils@4.1.10"
+  - "@voidzero-dev/vite-plus-core@0.2.8"
   - "@distilled.cloud/aws@0.30.2"
   - "@distilled.cloud/axiom@0.30.2"
   - "@distilled.cloud/cloudflare@0.30.2"
@@ -85,6 +97,22 @@ minimumReleaseAgeExclude:
   - expo-updates@57.0.19
   - expo@57.0.18
   - expo-widgets@57.0.15
+  - brace-expansion@1.1.18
+  - brace-expansion@2.1.4
+  - brace-expansion@5.0.9
+  - builder-util-runtime@9.7.0
+  - electron-updater@6.8.9
+  - fast-uri@3.1.5
+  - form-data@4.0.6
+  - hono@4.12.34
+  - ip-address@10.3.1
+  - path-to-regexp@6.3.0
+  - postcss@8.5.26
+  - tar@7.5.22
+  - undici@6.28.0
+  - undici@7.29.0
+  - vite-plus@0.2.8
+  - vitest@4.1.10
 
 overrides:
   # The SDK always receives the user's Claude executable, so its bundled binaries are unused.
@@ -123,17 +151,27 @@ overrides:
   "@hono/node-server@<2.0.5": 2.0.11
   "@pierre/diffs>@shikijs/transformers": ^4.2.0
   "@types/node": "catalog:"
-  "brace-expansion@>=3.0.0 <5.0.7": 5.0.7
+  "brace-expansion@<1.1.18": 1.1.18
+  "brace-expansion@>=2.0.0 <3.0.0": 2.1.4
+  "brace-expansion@>=3.0.0 <5.0.9": 5.0.9
+  "builder-util-runtime@<9.7.0": 9.7.0
   effect: "catalog:"
   expo-router: 57.0.17
   "expo-sharing>@expo/config-plugins": 57.0.9
   "expo-sharing>@expo/config-types": 57.0.2
-  "fast-uri@>=3.0.0 <3.1.4": 3.1.4
+  "fast-uri@>=3.0.0 <3.1.5": 3.1.5
+  "form-data@>=4.0.0 <4.0.6": 4.0.6
+  "hono@<4.12.34": 4.12.34
+  "ip-address@<10.3.1": 10.3.1
   "js-yaml@>=4.0.0 <4.3.0": 4.3.0
+  "path-to-regexp@>=4.0.0 <6.3.0": 6.3.0
+  "postcss@>=8.0.0 <8.5.26": 8.5.26
   "sharp@<0.35.0": 0.35.0
   "shell-quote@<1.8.5": 1.10.0
   "svgo@>=4.0.0 <4.0.2": 4.0.2
-  "undici@>=7.0.0 <7.28.0": 7.28.0
+  "tar@>=7.0.0 <=7.5.18": 7.5.22
+  "undici@>=6.0.0 <6.28.0": 6.28.0
+  "undici@>=7.0.0 <7.29.0": 7.29.0
   "undici@>=8.0.0 <8.5.0": 8.5.0
   "uuid@>=7.0.0 <11.1.1": 11.1.1
   vite: "catalog:"
