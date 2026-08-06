@@ -36,10 +36,10 @@ jobs:
     timeout-minutes: 60
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@v1
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
         with:
           node-version-file: package.json
           cache: true
@@ -60,7 +60,7 @@ jobs:
 
       - name: Upload iOS screenshots
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: app-store-connect-screenshots
           path: artifacts/app-store/screenshots/apple/
@@ -76,10 +76,10 @@ jobs:
       T3_SHOWCASE_ANDROID_ABI: x86_64
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@v1
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
         with:
           node-version-file: package.json
           cache: true
@@ -93,13 +93,13 @@ jobs:
           "$vp_pnpm_bin/pnpm" --version
 
       - name: Setup Java
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
         with:
           distribution: temurin
           java-version: 17
 
       - name: Setup Gradle cache
-        uses: gradle/actions/setup-gradle@v5
+        uses: gradle/actions/setup-gradle@0723195856401067f7a2779048b490ace7a47d7c # v5
 
       - name: Enable KVM
         run: |
@@ -109,7 +109,7 @@ jobs:
           sudo udevadm trigger --name-match=kvm
 
       - name: Capture Android showcase
-        uses: reactivecircus/android-emulator-runner@v2
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
         with:
           api-level: 36
           target: google_apis
@@ -126,7 +126,7 @@ jobs:
 
       - name: Upload Android screenshots
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: google-play-screenshots
           path: artifacts/app-store/screenshots/google-play/

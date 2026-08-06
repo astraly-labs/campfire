@@ -31,13 +31,13 @@ jobs:
 
       - name: Checkout
         if: steps.expo-token.outputs.present == 'true'
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
 
       - name: Setup Vite+
         if: steps.expo-token.outputs.present == 'true'
-        uses: voidzero-dev/setup-vp@v1
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
         with:
           node-version-file: package.json
           cache: true
@@ -53,9 +53,9 @@ jobs:
 
       - name: Setup EAS
         if: steps.expo-token.outputs.present == 'true'
-        uses: expo/expo-github-action@v8
+        uses: expo/expo-github-action@c7b66a9c327a43a8fa7c0158e7f30d6040d2481e # v8
         with:
-          eas-version: latest
+          eas-version: 21.6.0
           token: ${{ secrets.EXPO_TOKEN }}
           # npm, not pnpm: this only installs eas-cli into the action's own
           # tool dir, and pnpm 11 hard-fails that install on dtrace-provider's
@@ -71,7 +71,7 @@ jobs:
 
       - name: Deploy with fingerprint check
         if: steps.expo-token.outputs.present == 'true'
-        uses: expo/expo-github-action/continuous-deploy-fingerprint@main
+        uses: expo/expo-github-action/continuous-deploy-fingerprint@eab7a230208c952974db8c3245cfd78402c7b385
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         with:
