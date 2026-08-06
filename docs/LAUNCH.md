@@ -8,7 +8,11 @@ Campfire is an open-source shared workspace for small, trusted teams running cod
 
 ## Launch post
 
-> Campfire is open source: a shared workspace for small, trusted teams running coding agents together. Built as a deliberately thin fork of T3 Code, with huge thanks to @theo, @jullerino, and every upstream contributor.
+> Most teams put coding agents back into Slack. That’s backwards.
+>
+> Campfire makes T3 Code multiplayer: shared threads, presence, and Take a Look handoffs that let teammates jump into live agent conversations.
+>
+> Open source. Thin fork.
 >
 > https://github.com/astraly-labs/campfire
 
@@ -25,28 +29,28 @@ Campfire is an open-source shared workspace for small, trusted teams running cod
 
 Use a fictional team throughout: **Northwind Labs**, with **Ada Okafor**, **Ben Roy**, and **Priya Shah**, working in `northwind/api`. Never capture real repositories, people, conversations, hostnames, or credentials.
 
-| Asset                                                                                       | Visible proof                                    | Caption                             |
-| ------------------------------------------------------------------------------------------- | ------------------------------------------------ | ----------------------------------- |
-| [`docs/assets/campfire-app-thread.png`](./assets/campfire-app-thread.png)                   | Active thread, project list, authors, and branch | One room for your team's agent work |
-| [`docs/assets/campfire-app-team-discussion.png`](./assets/campfire-app-team-discussion.png) | Agent transcript and human conversation together | Discuss the run, in the run         |
-| [`apps/marketing/public/campfire-feature-reveal.mp4`](../apps/marketing/public/campfire-feature-reveal.mp4) | 15-second H.264/AAC launch film | Bring teammates into the agent workspace |
-| [`apps/marketing/public/og.png`](../apps/marketing/public/og.png)                           | 1200x630 social card                             | Open source · Built on T3 Code      |
+| Asset                                                                                                       | Visible proof                                    | Caption                                  |
+| ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------ | ---------------------------------------- |
+| [`docs/assets/campfire-app-thread.png`](./assets/campfire-app-thread.png)                                   | Active thread, project list, authors, and branch | One room for your team's agent work      |
+| [`docs/assets/campfire-app-team-discussion.png`](./assets/campfire-app-team-discussion.png)                 | Agent transcript and human conversation together | Discuss the run, in the run              |
+| [`apps/marketing/public/campfire-feature-reveal.mp4`](../apps/marketing/public/campfire-feature-reveal.mp4) | 15-second H.264/AAC launch film                  | Bring teammates into the agent workspace |
+| [`apps/marketing/public/og.png`](../apps/marketing/public/og.png)                                           | 1200x630 social card                             | Open source · Built on T3 Code           |
 
 The product captures are 1600x1000 and use only isolated synthetic data. Capture the team inbox and a dark-mode variant only if the launch channel needs them.
 
-Regenerate the launch film on macOS with `swift scripts/render-campfire-launch.swift`. Its music is synthesized in the renderer; it uses no samples or third-party audio.
+Regenerate the launch film with `corepack pnpm -C apps/marketing video:render`. The Remotion source lives in `apps/marketing/video/`; its soundtrack is original and uses no samples or third-party audio.
 
 ## 15-second launch film
 
-| Time    | Beat                                                     | Proof                                  |
-| ------- | -------------------------------------------------------- | -------------------------------------- |
-| 0-2s    | Campfire positioning                                     | The agent workspace was already here   |
-| 2-3s    | Shared task sidebar                                      | Every teammate's threads in one place  |
-| 3-6s    | Take a Look pings Ben from an agent answer               | Bring in the person who can unblock it |
-| 6-9s    | Ben opens the notification and lands in the exact thread | Context survives the handoff           |
-| 9-11s   | Ben joins and sends a direction to the same agent         | The run is truly shared                |
-| 11-13s  | Team discussion opens beside the agent transcript         | Human context stays with the work      |
-| 13-15s  | End card and T3 Code credit                              | Thin fork, clear upstream credit       |
+| Time   | Beat                                                     | Proof                                  |
+| ------ | -------------------------------------------------------- | -------------------------------------- |
+| 0-2s   | Campfire positioning                                     | The agent workspace was already here   |
+| 2-3s   | Shared task sidebar                                      | Every teammate's threads in one place  |
+| 3-6s   | Take a Look pings Ben from an agent answer               | Bring in the person who can unblock it |
+| 6-9s   | Ben opens the notification and lands in the exact thread | Context survives the handoff           |
+| 9-11s  | Ben joins and sends a direction to the same agent        | The run is truly shared                |
+| 11-13s | Team discussion opens beside the agent transcript        | Human context stays with the work      |
+| 13-15s | End card and T3 Code credit                              | Thin fork, clear upstream credit       |
 
 ## 45-second demo
 
