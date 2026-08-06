@@ -158,6 +158,47 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(testLayer)),
   );
 
+  it.effect("falls back when an earlier visualization directory lacks the requested file", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const codexHomePath = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-codex-home-fallback-",
+      });
+      const providerThreadId = "019f9357-c3d2-7d13-b612-ef565c945b42";
+      const worktreePath = path.join(codexHomePath, "worktrees", "t3code-fallback");
+      const datedRoot = path.join(codexHomePath, "visualizations", "2026", "07", "24");
+      const worktreeDirectory = path.join(datedRoot, path.basename(worktreePath));
+      const providerThreadDirectory = path.join(datedRoot, providerThreadId);
+      yield* fileSystem.makeDirectory(worktreeDirectory, { recursive: true });
+      yield* fileSystem.makeDirectory(providerThreadDirectory, { recursive: true });
+      yield* fileSystem.writeFileString(
+        path.join(worktreeDirectory, "another-visualization.html"),
+        "<p>wrong directory</p>",
+      );
+      const visualizationPath = path.join(providerThreadDirectory, "requested.html");
+      yield* fileSystem.writeFileString(visualizationPath, "<p>correct directory</p>");
+      const canonicalVisualizationPath = yield* fileSystem.realPath(visualizationPath);
+
+      const result = yield* issueAssetUrl({
+        resource: {
+          _tag: "codex-visualization",
+          threadId: ThreadId.make("thread-fallback"),
+          fileName: "requested.html",
+        },
+        codexVisualization: { codexHomePath, providerThreadId, worktreePath },
+      });
+      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separatorIndex = suffix.indexOf("/");
+      const token = suffix.slice(0, separatorIndex);
+
+      expect(yield* resolveAsset(token, "requested.html")).toEqual({
+        kind: "file",
+        path: canonicalVisualizationPath,
+      });
+    }).pipe(Effect.provide(testLayer)),
+  );
+
   it.effect("rejects preview files outside the workspace and temporary directories", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
