@@ -47,6 +47,18 @@ import { browserApiCorsAllowedHeaders, browserApiCorsAllowedMethods } from "./ht
 const OTLP_TRACES_PROXY_PATH = "/api/observability/v1/traces";
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "::1", "localhost"]);
 const GZIP_MIN_BYTES = 1024;
+const ASSET_HEADERS = {
+  "Cache-Control": "private, max-age=3600",
+  "X-Content-Type-Options": "nosniff",
+} as const;
+const SVG_CONTENT_SECURITY_POLICY =
+  "sandbox; default-src 'none'; base-uri 'none'; form-action 'none'; style-src 'unsafe-inline'; img-src data:";
+
+export function assetResponseHeaders(assetPath: string): Readonly<Record<string, string>> {
+  return assetPath.toLowerCase().endsWith(".svg")
+    ? { ...ASSET_HEADERS, "Content-Security-Policy": SVG_CONTENT_SECURITY_POLICY }
+    : ASSET_HEADERS;
+}
 
 function acceptsGzip(value: string | undefined): boolean {
   if (!value) return false;
@@ -219,7 +231,6 @@ export const serverEnvironmentHttpApiLayer = HttpApiBuilder.group(
 
 class DecodeOtlpTraceRecordsError extends Data.TaggedError("DecodeOtlpTraceRecordsError")<{
   readonly cause: unknown;
-  readonly bodyJson: OtlpTracer.TraceData;
 }> {}
 
 export const otlpTracesProxyRouteLayer = HttpRouter.add(
@@ -236,13 +247,12 @@ export const otlpTracesProxyRouteLayer = HttpRouter.add(
 
     yield* Effect.try({
       try: () => decodeOtlpTraceRecords(bodyJson),
-      catch: (cause) => new DecodeOtlpTraceRecordsError({ cause, bodyJson }),
+      catch: (cause) => new DecodeOtlpTraceRecordsError({ cause }),
     }).pipe(
       Effect.flatMap((records) => browserTraceCollector.record(records)),
-      Effect.catch((cause) =>
-        Effect.logWarning("Failed to decode browser OTLP traces", {
-          cause,
-          bodyJson,
+      Effect.catch((error) =>
+        Effect.logWarning("[🔐 Security] Failed to decode browser OTLP traces", {
+          errorTag: error._tag,
         }),
       ),
     );
@@ -302,10 +312,7 @@ export const assetRouteLayer = HttpRouter.add(
     }
     return yield* HttpServerResponse.file(asset.path, {
       status: 200,
-      headers: {
-        "Cache-Control": "private, max-age=3600",
-        "X-Content-Type-Options": "nosniff",
-      },
+      headers: assetResponseHeaders(asset.path),
     }).pipe(
       Effect.orElseSucceed(() => HttpServerResponse.text("Internal Server Error", { status: 500 })),
     );

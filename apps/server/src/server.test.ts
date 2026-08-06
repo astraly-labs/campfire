@@ -1656,6 +1656,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(bootstrapBody.sessionMethod, "browser-session-cookie");
       assert.isUndefined((bootstrapBody as { readonly sessionToken?: string }).sessionToken);
       assert.isDefined(setCookie);
+      assert.notInclude(setCookie!, "Secure");
 
       const sessionUrl = yield* getHttpServerUrl("/api/auth/session");
       const sessionResponse = yield* fetchEffect(sessionUrl, {
@@ -1671,6 +1672,20 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(sessionResponse.status, 200);
       assert.equal(sessionBody.authenticated, true);
       assert.equal(sessionBody.sessionMethod, "browser-session-cookie");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("marks browser session cookies secure behind an HTTPS proxy", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+
+      const { response, cookie } = yield* bootstrapBrowserSession(defaultDesktopBootstrapToken, {
+        headers: { "x-forwarded-proto": "https" },
+      });
+
+      assert.equal(response.status, 200);
+      assert.isDefined(cookie);
+      assert.include(cookie!, "Secure");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

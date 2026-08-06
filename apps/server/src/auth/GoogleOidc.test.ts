@@ -131,4 +131,26 @@ describe("GoogleOidcFlow", () => {
       expect(backslashError).toBeInstanceOf(GoogleOidcTransactionError);
     }),
   );
+
+  it.effect("preserves in-flight logins when the pending transaction limit is reached", () =>
+    Effect.gen(function* () {
+      const flow = yield* makeGoogleOidcFlow(config, {
+        exchangeAndVerify: () => Effect.succeed(alice),
+      });
+      const first = yield* flow.begin();
+      yield* Effect.forEach(Array.from({ length: 127 }), () => flow.begin(), {
+        discard: true,
+      });
+
+      const overflow = yield* flow.begin().pipe(Effect.flip);
+      expect(overflow).toMatchObject({ reason: "too_many_pending" });
+
+      const completed = yield* flow.complete({
+        code: "authorization-code",
+        state: first.authorizationUrl.searchParams.get("state")!,
+        binding: first.binding,
+      });
+      expect(completed.identity).toEqual(alice);
+    }),
+  );
 });

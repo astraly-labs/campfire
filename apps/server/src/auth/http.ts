@@ -65,6 +65,13 @@ const appendDpopChallengeOnUnauthorized = (error: EnvironmentAuthInvalidError) =
     return yield* error;
   });
 
+function requestUsesHttps(request: HttpServerRequest.HttpServerRequest): boolean {
+  const forwardedProtocol = request.headers["x-forwarded-proto"]?.split(",")[0]?.trim();
+  if (forwardedProtocol === "https") return true;
+  const url = HttpServerRequest.toURL(request);
+  return url._tag === "Some" && url.value.protocol === "https:";
+}
+
 export const currentEnvironmentTraceId = Effect.currentParentSpan.pipe(
   Effect.map((span) => span.traceId),
   Effect.orElseSucceed(() => "unavailable"),
@@ -234,6 +241,7 @@ export const authHttpApiLayer = HttpApiBuilder.group(
                 httpOnly: true,
                 path: "/",
                 sameSite: "lax",
+                secure: requestUsesHttps(request),
               }),
             ).pipe(Effect.catch(() => failEnvironmentInternal("browser_session_cookie_failed")));
 
