@@ -224,22 +224,22 @@ const resolveCanonicalCodexVisualization = Effect.fn(
     ...(input.worktreePath ? [path.basename(input.worktreePath)] : []),
     input.providerThreadId,
   ];
-  const threadDirectories = yield* Effect.forEach(directoryNames, (directoryName) =>
-    optionOnNotFound(fileSystem.realPath(path.join(datedRoot, directoryName))).pipe(
-      Effect.map(Option.getOrNull),
-    ),
-  );
-  const threadDirectory = threadDirectories.find((directory) => directory !== null);
-  if (!threadDirectory) return null;
-  const [canonicalRoot, canonicalFile] = yield* Effect.all([
-    optionOnNotFound(fileSystem.realPath(threadDirectory)),
-    optionOnNotFound(fileSystem.realPath(path.join(threadDirectory, input.fileName))),
-  ]);
-  if (Option.isNone(canonicalRoot) || Option.isNone(canonicalFile)) return null;
-  const relative = path.relative(canonicalRoot.value, canonicalFile.value);
-  if (relative !== input.fileName) return null;
-  const info = yield* optionOnNotFound(fileSystem.stat(canonicalFile.value));
-  return Option.isSome(info) && info.value.type === "File" ? canonicalFile.value : null;
+  for (const directoryName of directoryNames) {
+    const canonicalRoot = yield* optionOnNotFound(
+      fileSystem.realPath(path.join(datedRoot, directoryName)),
+    );
+    if (Option.isNone(canonicalRoot)) continue;
+
+    const canonicalFile = yield* optionOnNotFound(
+      fileSystem.realPath(path.join(canonicalRoot.value, input.fileName)),
+    );
+    if (Option.isNone(canonicalFile)) continue;
+    const relative = path.relative(canonicalRoot.value, canonicalFile.value);
+    if (relative !== input.fileName) continue;
+    const info = yield* optionOnNotFound(fileSystem.stat(canonicalFile.value));
+    if (Option.isSome(info) && info.value.type === "File") return canonicalFile.value;
+  }
+  return null;
 });
 
 export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (input: {
