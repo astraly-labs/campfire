@@ -73,6 +73,8 @@ corepack pnpm dev`;
         controls
         muted
         playsinline
+        poster="/campfire-feature-reveal-poster.jpg"
+        preload="metadata"
         width="1600"
         height="1000"
       >
@@ -210,6 +212,95 @@ corepack pnpm dev`;
     </div>
   </section>
 </Layout>
+
+<script>
+  import { inView, stagger } from "motion";
+  import { animate } from "motion/mini";
+
+  const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const easeOut = [0.16, 1, 0.3, 1] as const;
+
+  if (!reducedMotion) {
+    inView(
+      ".product-proof",
+      (section) => {
+        const frame = section.querySelector(".screenshot-frame");
+        const caption = section.querySelector("figcaption");
+
+        if (frame) {
+          animate(
+            frame,
+            {
+              clipPath: ["inset(7% 0 7% 0)", "inset(0% 0 0% 0)"],
+              opacity: [0.45, 1],
+              transform: ["scale(0.975)", "scale(1)"],
+            },
+            { duration: 0.8, ease: easeOut },
+          );
+        }
+
+        if (caption) {
+          animate(
+            caption,
+            { opacity: [0.35, 1], transform: ["translateY(10px)", "translateY(0)"] },
+            { delay: 0.16, duration: 0.5, ease: easeOut },
+          );
+        }
+      },
+      { amount: 0.22 },
+    );
+
+    inView(
+      ".capabilities dl",
+      (list) => {
+        const rows = list.querySelectorAll(":scope > div");
+        animate(
+          rows,
+          { opacity: [0.35, 1], transform: ["translateY(18px)", "translateY(0)"] },
+          { delay: stagger(0.055), duration: 0.55, ease: easeOut },
+        );
+      },
+      { amount: 0.12 },
+    );
+
+    inView(
+      ".quickstart",
+      (section) => {
+        const copy = section.querySelector(".section-intro");
+        const code = section.querySelector(".code-block");
+
+        if (copy) {
+          animate(
+            copy,
+            { opacity: [0.4, 1], transform: ["translateX(-20px)", "translateX(0)"] },
+            { duration: 0.58, ease: easeOut },
+          );
+        }
+
+        if (code) {
+          animate(
+            code,
+            { opacity: [0.35, 1], transform: ["translateX(24px)", "translateX(0)"] },
+            { delay: 0.08, duration: 0.68, ease: easeOut },
+          );
+        }
+      },
+      { amount: 0.18 },
+    );
+
+    inView(
+      ".trust .boundary, .upstream > *",
+      (element) => {
+        animate(
+          element,
+          { opacity: [0.38, 1], transform: ["translateY(16px)", "translateY(0)"] },
+          { duration: 0.58, ease: easeOut },
+        );
+      },
+      { amount: 0.25 },
+    );
+  }
+</script>
 
 <style>
   .page-shell {
@@ -527,34 +618,6 @@ corepack pnpm dev`;
 
   .upstream-copy .inline-links {
     margin-top: 28px;
-  }
-
-  @keyframes scroll-reveal {
-    from {
-      opacity: 0;
-      transform: translateY(18px);
-    }
-
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
-  }
-
-  @media (prefers-reduced-motion: no-preference) {
-    @supports (animation-timeline: view()) {
-      .product-proof,
-      .section-intro,
-      .capabilities dl > div,
-      .fork-note,
-      .code-block,
-      .boundary,
-      .upstream-copy {
-        animation: scroll-reveal linear both;
-        animation-timeline: view();
-        animation-range: entry 8% cover 30%;
-      }
-    }
   }
 
   @media (max-width: 860px) {
