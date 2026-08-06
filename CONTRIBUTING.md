@@ -1,65 +1,25 @@
-# Contributing
+# Contributing to Campfire
 
-## Read This First
+Campfire is a thin fork of T3 Code. The easiest contribution to maintain is the one we do not need to carry separately.
 
-We are not actively accepting contributions right now.
+## Before opening a change
 
-You can still open an issue or PR, but please do so knowing there is a high chance we close it, defer it forever, or never look at it.
+1. Search both Campfire and [T3 Code](https://github.com/pingdotgg/t3code) issues and pull requests.
+2. If the change is useful without Campfire's trusted-team collaboration layer, propose it upstream first.
+3. Open an issue before non-trivial features or architectural changes.
 
-If that sounds annoying, that is because it is. This project is still early and we are trying to keep scope, quality, and direction under control.
+Small bug, reliability, performance, documentation, and security fixes may go straight to a pull request.
 
-PRs are automatically labeled with a `vouch:*` trust status and a `size:*` diff size based on changed lines.
+## Pull requests
 
-If you are an external contributor, expect `vouch:unvouched` until we explicitly add you to [.github/VOUCHED.td](.github/VOUCHED.td).
+- Start from `origin/staging`; do not implement directly on `staging`.
+- Keep one concern per pull request.
+- Preserve upstream names, packages, structure, and behavior unless the change requires otherwise.
+- Avoid formatting-only churn, drive-by cleanup, unrelated generated files, and new dependencies without a measured need.
+- Explain why the change belongs in Campfire rather than upstream.
+- Include focused tests. UI changes need before-and-after screenshots; motion or timing changes need a short video.
+- Rebase onto the current Campfire integration branch before review.
 
-## What We Are Most Likely To Accept
+Maintainers periodically rebase `staging` onto `upstream/main`, so open contributor branches may need rebasing afterward. Read [the upstream policy](./docs/UPSTREAM.md) for the fork rules and [AGENTS.md](./AGENTS.md) for development and verification guidance.
 
-Small, focused bug fixes.
-
-Small reliability fixes.
-
-Small performance improvements.
-
-Tightly scoped maintenance work that clearly improves the project without changing its direction.
-
-## What We Are Least Likely To Accept
-
-Large PRs.
-
-Drive-by feature work.
-
-Opinionated rewrites.
-
-Anything that expands product scope without us asking for it first.
-
-If you open a 1,000+ line PR full of new features, we will probably close it quickly and remember that you ignored the clearly written instructions.
-
-## If You Still Want To Open A PR
-
-Keep it small.
-
-Explain exactly what changed.
-
-Explain exactly why the change should exist.
-
-Do not mix unrelated fixes together.
-
-If the PR makes anything resembling a UI change, include clear before/after images.
-
-If the change depends on motion, timing, transitions, or interaction details, include a short video.
-
-If we have to guess what changed, we are much less likely to review it.
-
-## Issues First
-
-If you are thinking about a non-trivial change, open an issue first.
-
-That still does not mean we will want the PR, but it gives you a chance to avoid wasting your time.
-
-## Be Realistic
-
-Opening a PR does not create an obligation on our side.
-
-We may close it. We may ignore it. We may ask you to shrink it. We may reimplement the idea ourselves later.
-
-If you are fine with that, proceed.
+By contributing, you agree to license your contribution under the repository's MIT License and follow the [Code of Conduct](./CODE_OF_CONDUCT.md).

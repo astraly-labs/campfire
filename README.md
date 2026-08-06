@@ -1,104 +1,61 @@
-# T3 Code
+# Campfire
 
-T3 Code is an "agent harness control surface". It enables control of the agents on your machine with a best-in-class mobile app ([iOS](https://apps.apple.com/us/app/t3-code-remote-claude-more/id6787819824), [Android](https://play.google.com/store/apps/details?id=com.t3tools.t3code)), [web app](https://app.t3.codes) and [Electron-based desktop app](https://t3.codes).
+**Run coding agents with your team, not next to them.**
 
-Works with your subscriptions on Claude Code, Codex, Cursor, Grok Build, and OpenCode. If they're set up on your computer, T3 Code can control them.
+Campfire is an open-source workspace for small, trusted teams running coding agents together across shared projects and machines. It is a deliberately thin, independently maintained fork of [T3 Code](https://github.com/pingdotgg/t3code).
 
-## "Wait, what are you selling me?"
+Campfire adds the collaboration primitives our team needed:
 
-Nothing. We built T3 Code because we wanted the best possible development experience with agents. We were inspired by existing solutions like the Codex desktop app, Conductor, Claude Desktop and Cursor Glass, but none met our bar.
+- Live presence, typing state, and server-derived teammate attribution
+- Durable side conversations attached to agent threads
+- Mentions, unread state, notifications, and a team inbox
+- Shared controls for long-running, server-owned agent sessions
+- A self-hosted Mac mini and Tailscale deployment path
 
-We wanted something performant, remote-ready, and truly open. If we ever go the wrong direction, we want you to have everything you need to fork and build the editor that you want.
+> [!IMPORTANT]
+> Campfire is for teams whose members fully trust one another. It has no RBAC,
+> tenant isolation, or per-user workspace permissions. Anyone admitted to an
+> instance can see and act on shared agent work. If you need isolation between
+> users or teams, Campfire is not the right tool.
 
-## Installation
+![Campfire team discussion beside an agent thread](./docs/assets/campfire-app-team-discussion.png)
 
-> [!WARNING]
-> T3 Code currently supports Codex, Claude, Cursor, Grok Build and OpenCode. Install and authenticate at least one provider before use:
->
-> - Codex: install [Codex CLI](https://developers.openai.com/codex/cli) and run `codex login`
-> - Claude: install [Claude Code](https://claude.com/product/claude-code) and run `claude auth login`
-> - Cursor: install [Cursor CLI](https://cursor.com/cli) and run `cursor-agent login`
-> - Grok Build: install [Grok Build CLI](https://x.ai/cli) and run `grok login`
-> - OpenCode: install [OpenCode](https://opencode.ai) and run `opencode auth login`
+## Built on T3 Code
 
-### Try it out (install-free)
+Campfire exists because [T3 Code](https://github.com/pingdotgg/t3code) created an excellent open-source foundation for controlling Codex, Claude Code, Cursor, Grok Build, and OpenCode from web, desktop, and mobile clients.
 
-The easiest way to test T3 Code is to run the server in your terminal:
+The architecture, provider integrations, remote workflow, core clients, and substantial portions of this repository are the work of [Julius Marminge](https://github.com/juliusmarminge), [Theo Browne](https://github.com/t3dotgg), the T3 Code maintainers, and [upstream contributors](https://github.com/pingdotgg/t3code/graphs/contributors).
 
-```bash
-npx t3@latest
-```
+We keep Campfire deliberately thin: rebase regularly and before every release, avoid unnecessary renames and rewrites, contribute broadly useful fixes upstream when practical, and keep Campfire-only behavior at narrow boundaries. Campfire is not affiliated with or endorsed by T3 Tools Inc. See [NOTICE.md](./NOTICE.md) and [our upstream policy](./docs/UPSTREAM.md).
 
-This will launch T3 Code's backend on your machine as well as the local web app to control your agents.
+## Quick start
 
-Tip: Use `npx t3@latest --help` for the full CLI reference.
-
-### Desktop app
-
-Install the latest version of the desktop app from [GitHub Releases](https://github.com/pingdotgg/t3code/releases), or from your favorite package registry:
-
-#### Windows (`winget`)
+Campfire is currently source-first and does not have a stable packaged release. You need Node.js 24.13.1 or newer within major 24 and at least one provider supported by T3 Code already installed and authenticated.
 
 ```bash
-winget install T3Tools.T3Code
+git clone https://github.com/astraly-labs/campfire.git
+cd campfire
+corepack enable
+corepack pnpm install --frozen-lockfile
+corepack pnpm dev
 ```
 
-#### macOS (Homebrew)
+Open the pairing URL printed by the development server. Development state stays in the repository's gitignored `.t3` directory.
 
-```bash
-brew install --cask t3-code
-```
+For provider setup, see the [T3 Code installation guide](https://github.com/pingdotgg/t3code#installation). For a trusted-team deployment with an explicit Google identity allowlist, see the [Campfire Mac mini runbook](./docs/operations/campfire-mac-mini.md).
 
-#### Arch Linux (AUR)
+## Trust model
 
-```bash
-yay -S t3code-bin
-```
+Campfire authenticates teammates and records who did what; it does not authorize teammates differently. Authentication is not isolation.
 
-## Some notes
+Run Campfire on a dedicated host, behind a private network boundary you control, with an explicit identity allowlist. Do not expose it as a shared service between teams or organizations that do not fully trust each other.
 
-We are very very early in this project. Expect bugs.
+Read [SECURITY.md](./SECURITY.md) before deploying it.
 
-We are (mostly) not accepting contributions yet. Small fixes may be considered. Big features will not be.
+## Contributing
 
-There's no public docs site yet, checkout the miscellaneous markdown files in [docs](./docs).
+Small, focused changes are welcome. Read [CONTRIBUTING.md](./CONTRIBUTING.md) before opening a pull request. Changes that can benefit every T3 Code user should normally be proposed upstream first.
 
-## Documentation
+## License
 
-- [Getting started](./docs/getting-started/quick-start.md)
-- [Remote access](./docs/user/remote-access.md)
-- [Keeping T3 Code in sync](./docs/user/server-updates.md)
-- [Architecture overview](./docs/architecture/overview.md)
-- [Provider guides](./docs/providers/codex.md)
-- [Operations](./docs/operations/ci.md)
-- [Reference](./docs/reference/encyclopedia.md)
-
-## If you REALLY want to contribute still.... read this first
-
-### Install `vp`
-
-T3 Code uses Vite+ so you'll need to install the global `vp` command-line tool.
-
-#### macOS / Linux
-
-```bash
-curl -fsSL https://vite.plus | bash
-```
-
-#### Windows
-
-```bash
-irm https://vite.plus/ps1 | iex
-```
-
-Checkout their getting started guide for more information: https://viteplus.dev/guide/
-
-### Install dependencies
-
-```bash
-vp i
-```
-
-Read [CONTRIBUTING.md](./CONTRIBUTING.md) before opening an issue or PR.
-
-Need support? Join the [Discord](https://discord.gg/jn4EGJjrvv).
+Campfire is distributed under the MIT License inherited from T3 Code. See [LICENSE](./LICENSE) and [NOTICE.md](./NOTICE.md).
