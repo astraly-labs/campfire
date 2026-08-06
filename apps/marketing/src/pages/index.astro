@@ -1,24 +1,31 @@
 ---
-import productScreenshot from "../../../../docs/assets/campfire-app-team-discussion.png?url";
 import Layout from "../layouts/Layout.astro";
 import { GITHUB_REPOSITORY_URL } from "../lib/site";
 
 const capabilities = [
   {
-    title: "Presence and typing state",
-    body: "See who is already viewing a task before two people steer the same run in opposite directions.",
+    title: "One shared task sidebar",
+    body: "See the agent threads every teammate starts, who owns them, and what needs attention. Jump into the same run instead of opening another silo.",
   },
   {
-    title: "Durable side discussions",
-    body: "Keep questions, links, and corrections attached to the agent thread that produced them.",
+    title: "Take a Look",
+    body: "Ping a teammate from the agent answer that needs judgment. They land on the exact thread and can continue the conversation with the agent.",
   },
   {
-    title: "Mentions and a team inbox",
-    body: "Bring the right teammate into a specific run. Unread state and notifications follow them; the context does not move.",
+    title: "Talk beside the run",
+    body: "Keep questions, links, and corrections in a durable team discussion attached to the agent thread that produced them.",
   },
   {
-    title: "Shared controls",
-    body: "Send, interrupt, redirect, resume, or archive long-running agent work from any trusted machine on the team.",
+    title: "Private briefing",
+    body: "Ask a temporary, read-only assistant to catch you up. Its answers stay private to you and never pollute the shared conversation.",
+  },
+  {
+    title: "PR review threads",
+    body: "Use Review beside a pull request link to start a dedicated review thread, with a distinct icon and status in the sidebar.",
+  },
+  {
+    title: "Presence and shared control",
+    body: "See who is already there, then send, interrupt, redirect, resume, or archive the same long-running agent work together.",
   },
 ] as const;
 
@@ -32,12 +39,12 @@ corepack pnpm dev`;
 <Layout>
   <section class="hero section-shell">
     <div class="hero-copy">
-      <p class="eyebrow">Open source · A thin fork of T3 Code</p>
-      <h1>Run coding agents with your team, not next to them.</h1>
+      <p class="eyebrow">Open source · T3 Code, now multiplayer</p>
+      <h1>The agent workspace was already here. We brought the team into it.</h1>
       <p class="lede">
-        Campfire is a shared workspace for small, fully trusted teams running coding agents across
-        projects and machines. Presence, side discussions, mentions, and unread state live directly
-        on the agent threads you already run.
+        Campfire is a thin fork of T3 Code for small, fully trusted teams: shared agent threads,
+        presence, Take a Look, side discussions, review chats, and private briefings — without
+        turning agent work into another Slack.
       </p>
       <div class="actions">
         <a class="button primary" href={GITHUB_REPOSITORY_URL}>View on GitHub</a>
@@ -61,12 +68,11 @@ corepack pnpm dev`;
   <figure class="product-proof page-shell">
     <div class="screenshot-frame">
       <video
-        aria-label="T3 Code's agent workspace gaining Campfire presence, team discussion, mentions, and inbox features"
+        aria-label="Campfire demo showing shared agent threads, a Take a Look handoff, direct teammate control, and team discussion"
         autoplay
         controls
         muted
         playsinline
-        poster={productScreenshot}
         width="1600"
         height="1000"
       >
@@ -74,15 +80,27 @@ corepack pnpm dev`;
       </video>
     </div>
     <figcaption>
-      Campfire keeps the T3 Code workspace intact and adds the trusted-team layer progressively:
-      presence, a durable discussion, mentions, and an inbox.
+      Every teammate's runs in one sidebar, Take a Look, direct agent control, and a side discussion:
+      the T3 Code workspace becomes a shared room.
     </figcaption>
   </figure>
+
+  <section class="thesis section-shell">
+    <header class="section-intro">
+      <p class="eyebrow">Agent-first collaboration</p>
+      <h2>Don’t rebuild Slack around agents. Make the agent workspace multiplayer.</h2>
+      <p>
+        Chat-first tools pull agent work back into another channel. Campfire takes the opposite bet:
+        start with T3 Code’s purpose-built agent workspace, then bring your teammates into it. The
+        run, its controls, and the human decisions around it stay together.
+      </p>
+    </header>
+  </section>
 
   <section id="product" class="capabilities section-shell">
     <header class="section-intro">
       <p class="eyebrow">The team layer</p>
-      <h2>Shared context without replacing your agent tools.</h2>
+      <h2>The workflows we wanted from an agent workspace.</h2>
     </header>
 
     <dl>
@@ -93,6 +111,15 @@ corepack pnpm dev`;
         </div>
       ))}
     </dl>
+
+    <div class="fork-note">
+      <p class="eyebrow">A fork, on purpose</p>
+      <p>
+        Staying close to upstream does not mean staying frozen. T3 Code can remain focused while
+        Campfire ships opinionated workflows for teams who live in it all day. The code is open:
+        add the feature your team needs, keep it local, or upstream the parts that generalize.
+      </p>
+    </div>
 
     <p class="upstream-note">
       Codex, Claude Code, Cursor, Grok Build, and OpenCode support, along with remote sessions,
@@ -398,6 +425,20 @@ corepack pnpm dev`;
     margin-top: 30px;
   }
 
+  .fork-note {
+    max-width: 740px;
+    margin-top: 42px;
+    padding: 26px 28px;
+    background: var(--surface);
+  }
+
+  .fork-note > p:last-child {
+    margin-top: 12px;
+    color: var(--muted);
+    font-size: 15px;
+    line-height: 1.7;
+  }
+
   .quickstart,
   .upstream {
     display: grid;
@@ -486,6 +527,34 @@ corepack pnpm dev`;
 
   .upstream-copy .inline-links {
     margin-top: 28px;
+  }
+
+  @keyframes scroll-reveal {
+    from {
+      opacity: 0;
+      transform: translateY(18px);
+    }
+
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    @supports (animation-timeline: view()) {
+      .product-proof,
+      .section-intro,
+      .capabilities dl > div,
+      .fork-note,
+      .code-block,
+      .boundary,
+      .upstream-copy {
+        animation: scroll-reveal linear both;
+        animation-timeline: view();
+        animation-range: entry 8% cover 30%;
+      }
+    }
   }
 
   @media (max-width: 860px) {
