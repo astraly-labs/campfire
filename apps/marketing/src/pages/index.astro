@@ -29,6 +29,34 @@ const capabilities = [
   },
 ] as const;
 
+const roadmap = [
+  {
+    title: "Remote browser",
+    body: "Attach a live browser surface to an agent task so teammates can inspect, hand off, and control the same session remotely.",
+    href: null,
+  },
+  {
+    title: "Scoped permissions",
+    body: "Move beyond the all-trusted-team model with explicit scopes for projects, threads, actions, and agent capabilities.",
+    href: null,
+  },
+  {
+    title: "Stronger isolation",
+    body: "Isolate agent execution and workspaces so one task does not automatically inherit everything available to the host.",
+    href: null,
+  },
+  {
+    title: "Secrets at the boundary",
+    body: "Explore iron-proxy for default-deny egress and per-request credential injection, keeping real secrets outside the agent workload.",
+    href: "https://iron.sh/",
+  },
+  {
+    title: "Open to suggestions",
+    body: "This roadmap follows how small teams actually use Campfire. Propose the workflow, boundary, or integration you need.",
+    href: `${GITHUB_REPOSITORY_URL}/issues/new?template=feature_request.yml`,
+  },
+] as const;
+
 const quickstart = `git clone https://github.com/astraly-labs/campfire.git
 cd campfire
 corepack enable
@@ -182,6 +210,28 @@ corepack pnpm dev`;
         </a>
       </div>
     </div>
+  </section>
+
+  <section id="roadmap" class="capabilities roadmap section-shell">
+    <header class="section-intro">
+      <p class="eyebrow">Roadmap</p>
+      <h2>Make shared agent work safer, richer, and more remote.</h2>
+      <p>
+        These are directions, not promised dates. We want to stay close to upstream and ship each
+        layer only when its security boundary is clear.
+      </p>
+    </header>
+
+    <dl>
+      {roadmap.map((item) => (
+        <div>
+          <dt>
+            {item.href ? <a href={item.href}>{item.title} ↗</a> : item.title}
+          </dt>
+          <dd>{item.body}</dd>
+        </div>
+      ))}
+    </dl>
   </section>
 
   <section id="upstream" class="upstream section-shell">
@@ -508,6 +558,16 @@ corepack pnpm dev`;
   .capabilities dt {
     font-size: 16px;
     font-weight: 650;
+  }
+
+  .roadmap dt a {
+    text-decoration: underline;
+    text-decoration-color: var(--line-strong);
+    text-underline-offset: 3px;
+  }
+
+  .roadmap dt a:hover {
+    color: var(--ember);
   }
 
   .capabilities dd,
