@@ -1441,7 +1441,20 @@ const make = Effect.gen(function* () {
 
     const now = event.payload.createdAt;
     if (thread.session && thread.session.status !== "stopped") {
-      yield* providerService.stopSession({ threadId: thread.id });
+      yield* providerService.stopSession({ threadId: thread.id }).pipe(
+        Effect.catchCause((cause) => {
+          if (Cause.hasInterruptsOnly(cause)) {
+            return Effect.logWarning(
+              "[🚨 Monitoring] provider session cleanup interrupted; continuing reactor",
+              {
+                eventType: event.type,
+                threadId: event.payload.threadId,
+              },
+            );
+          }
+          return Effect.failCause(cause);
+        }),
+      );
     }
 
     yield* setThreadSession({
