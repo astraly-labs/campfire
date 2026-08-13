@@ -6,7 +6,10 @@ import * as Stream from "effect/Stream";
 import { describe, expect } from "vite-plus/test";
 
 import { makeLiveSubscriptionBuffer } from "./liveSubscriptionBuffer.ts";
-import { orchestrationSubscriptionOverflowsTotal } from "../observability/Metrics.ts";
+import {
+  orchestrationSubscriptionBufferHighWaterMark,
+  orchestrationSubscriptionOverflowsTotal,
+} from "../observability/Metrics.ts";
 
 class TestOverflow extends Data.TaggedError("TestOverflow")<{
   readonly message: string;
@@ -89,6 +92,26 @@ describe("makeLiveSubscriptionBuffer", () => {
 
       const after = yield* Metric.value(metric);
       expect(after.count - before.count).toBe(1);
+    }),
+  );
+
+  it.effect("records the catch-up buffer high-water mark", () =>
+    Effect.gen(function* () {
+      const metric = Metric.withAttributes(orchestrationSubscriptionBufferHighWaterMark, [
+        ["stream", "thread"],
+      ]);
+      const buffer = yield* makeLiveSubscriptionBuffer<number, TestOverflow>({
+        capacity: 4,
+        label: "thread:catch-up",
+        metricLabel: "thread",
+        onOverflow: () => new TestOverflow({ message: "subscriber fell behind" }),
+      });
+
+      yield* buffer.offer(1);
+      yield* buffer.offer(2);
+      yield* buffer.markSynchronized;
+
+      expect((yield* Metric.value(metric)).value).toBe(2);
     }),
   );
 });

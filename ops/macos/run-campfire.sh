@@ -31,6 +31,9 @@ export T3CODE_NO_BROWSER=true
 export T3CODE_TAILSCALE_SERVE=true
 export T3CODE_TAILSCALE_SERVE_PORT="${T3CODE_TAILSCALE_SERVE_PORT:-443}"
 export T3CODE_CODEX_HOST_SOCKET="${T3CODE_CODEX_HOST_SOCKET:-$T3CODE_HOME/runtime/codex-provider-host.sock}"
+export T3CODE_TRACE_MAX_BYTES="${T3CODE_TRACE_MAX_BYTES:-10485760}"
+# Keep about 5 GiB so a high-volume incident remains available for one day.
+export T3CODE_TRACE_MAX_FILES="${T3CODE_TRACE_MAX_FILES:-512}"
 export UV_THREADPOOL_SIZE="${UV_THREADPOOL_SIZE:-16}"
 
 campfire_wait_attempts=0

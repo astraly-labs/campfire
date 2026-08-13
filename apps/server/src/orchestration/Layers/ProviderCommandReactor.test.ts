@@ -484,6 +484,34 @@ describe("ProviderCommandReactor", () => {
     });
   });
 
+  it("replays every accepted pending turn in order", async () => {
+    const harness = await createHarness({ startReactor: false });
+
+    for (const index of [1, 2]) {
+      await harness.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make(`cmd-pending-${index}`),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId(`message-pending-${index}`),
+          role: "user",
+          text: `pending ${index}`,
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: `2026-01-01T00:00:0${index}.000Z`,
+      });
+    }
+
+    await harness.startReactor();
+    await harness.drain();
+
+    expect(
+      harness.sendTurn.mock.calls.map(([request]) => (request as { readonly input: string }).input),
+    ).toEqual(["pending 1", "pending 2"]);
+  });
+
   it("reacts to thread.turn.start by ensuring session and sending provider turn", async () => {
     const harness = await createHarness({
       providerResumeCursor: { threadId: "019f9357-c3d2-7d13-b612-ef565c945b42" },
@@ -2319,16 +2347,21 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await Effect.runPromise(
-      harness.engine.dispatch({
-        type: "thread.session.stop",
-        commandId: CommandId.make("cmd-session-stop"),
-        threadId: ThreadId.make("thread-1"),
-        createdAt: now,
-      }),
-    );
+    await harness.dispatch({
+      type: "thread.session.stop",
+      commandId: CommandId.make("cmd-session-stop"),
+      threadId: ThreadId.make("thread-1"),
+      createdAt: now,
+    });
 
-    await waitFor(() => harness.stopSession.mock.calls.length === 1);
+    await waitFor(async () => {
+      const readModel = await harness.readModel();
+      return (
+        harness.stopSession.mock.calls.length === 1 &&
+        readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"))?.session
+          ?.status === "stopped"
+      );
+    });
     const readModel = await harness.readModel();
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread?.session).not.toBeNull();
@@ -2343,33 +2376,29 @@ describe("ProviderCommandReactor", () => {
     const now = "2026-01-01T00:00:00.000Z";
     harness.stopSession.mockImplementationOnce(() => Effect.interrupt);
 
-    await Effect.runPromise(
-      harness.engine.dispatch({
-        type: "thread.session.set",
-        commandId: CommandId.make("cmd-session-set-before-interrupted-stop"),
+    await harness.dispatch({
+      type: "thread.session.set",
+      commandId: CommandId.make("cmd-session-set-before-interrupted-stop"),
+      threadId: ThreadId.make("thread-1"),
+      session: {
         threadId: ThreadId.make("thread-1"),
-        session: {
-          threadId: ThreadId.make("thread-1"),
-          status: "ready",
-          providerName: "codex",
-          providerInstanceId: ProviderInstanceId.make("codex_work"),
-          runtimeMode: "approval-required",
-          activeTurnId: null,
-          lastError: null,
-          updatedAt: now,
-        },
-        createdAt: now,
-      }),
-    );
+        status: "ready",
+        providerName: "codex",
+        providerInstanceId: ProviderInstanceId.make("codex_work"),
+        runtimeMode: "approval-required",
+        activeTurnId: null,
+        lastError: null,
+        updatedAt: now,
+      },
+      createdAt: now,
+    });
 
-    await Effect.runPromise(
-      harness.engine.dispatch({
-        type: "thread.session.stop",
-        commandId: CommandId.make("cmd-interrupted-session-stop"),
-        threadId: ThreadId.make("thread-1"),
-        createdAt: now,
-      }),
-    );
+    await harness.dispatch({
+      type: "thread.session.stop",
+      commandId: CommandId.make("cmd-interrupted-session-stop"),
+      threadId: ThreadId.make("thread-1"),
+      createdAt: now,
+    });
 
     await waitFor(async () => {
       const readModel = await harness.readModel();
@@ -2377,27 +2406,74 @@ describe("ProviderCommandReactor", () => {
       return thread?.session?.status === "stopped";
     });
 
-    await Effect.runPromise(
-      harness.engine.dispatch({
-        type: "thread.turn.start",
-        commandId: CommandId.make("cmd-turn-after-interrupted-stop"),
-        threadId: ThreadId.make("thread-1"),
-        message: {
-          messageId: asMessageId("user-message-after-interrupted-stop"),
-          role: "user",
-          text: "continue after cleanup",
-          attachments: [],
-        },
-        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-        runtimeMode: "approval-required",
-        createdAt: now,
-      }),
-    );
+    await harness.dispatch({
+      type: "thread.turn.start",
+      commandId: CommandId.make("cmd-turn-after-interrupted-stop"),
+      threadId: ThreadId.make("thread-1"),
+      message: {
+        messageId: asMessageId("user-message-after-interrupted-stop"),
+        role: "user",
+        text: "continue after cleanup",
+        attachments: [],
+      },
+      interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+      runtimeMode: "approval-required",
+      createdAt: now,
+    });
 
     await waitFor(() => harness.sendTurn.mock.calls.length === 1);
     await harness.drain();
 
     expect(harness.stopSession).toHaveBeenCalledTimes(1);
+    expect(harness.sendTurn).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps processing commands after an unexpected provider command interrupt", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    harness.interruptTurn.mockImplementationOnce(() => Effect.interrupt);
+
+    await harness.dispatch({
+      type: "thread.session.set",
+      commandId: CommandId.make("cmd-session-before-command-interrupt"),
+      threadId: ThreadId.make("thread-1"),
+      session: {
+        threadId: ThreadId.make("thread-1"),
+        status: "running",
+        providerName: "codex",
+        runtimeMode: "approval-required",
+        activeTurnId: asTurnId("turn-interrupted-command"),
+        lastError: null,
+        updatedAt: now,
+      },
+      createdAt: now,
+    });
+    await harness.dispatch({
+      type: "thread.turn.interrupt",
+      commandId: CommandId.make("cmd-unexpected-command-interrupt"),
+      threadId: ThreadId.make("thread-1"),
+      turnId: asTurnId("turn-interrupted-command"),
+      createdAt: now,
+    });
+    await waitFor(() => harness.interruptTurn.mock.calls.length === 1);
+
+    await harness.dispatch({
+      type: "thread.turn.start",
+      commandId: CommandId.make("cmd-after-command-interrupt"),
+      threadId: ThreadId.make("thread-1"),
+      message: {
+        messageId: asMessageId("message-after-command-interrupt"),
+        role: "user",
+        text: "continue after interrupt",
+        attachments: [],
+      },
+      interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+      runtimeMode: "approval-required",
+      createdAt: now,
+    });
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    await harness.drain();
+
     expect(harness.sendTurn).toHaveBeenCalledTimes(1);
   });
 });

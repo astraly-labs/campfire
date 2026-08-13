@@ -247,6 +247,41 @@ function dropStaleContextWindowActivities(
   );
 }
 
+/** Keeps only the last usable context-window update in each live batch. */
+export function coalesceContextWindowEvents(
+  events: ReadonlyArray<OrchestrationEvent>,
+): ReadonlyArray<OrchestrationEvent> {
+  const latestIndexByTurn = new Map<string, number>();
+  for (let index = 0; index < events.length; index += 1) {
+    const event = events[index]!;
+    if (
+      event.type === "thread.activity-appended" &&
+      isResolvableContextWindowActivity(event.payload.activity)
+    ) {
+      latestIndexByTurn.set(
+        `${event.payload.threadId}:${event.payload.activity.turnId ?? "thread"}`,
+        index,
+      );
+    }
+  }
+  if (latestIndexByTurn.size === 0) {
+    return events;
+  }
+  return events.filter((event, index) => {
+    if (
+      event.type !== "thread.activity-appended" ||
+      !isResolvableContextWindowActivity(event.payload.activity)
+    ) {
+      return true;
+    }
+    return (
+      latestIndexByTurn.get(
+        `${event.payload.threadId}:${event.payload.activity.turnId ?? "thread"}`,
+      ) === index
+    );
+  });
+}
+
 export function projectThreadDetailSnapshot(
   snapshot: OrchestrationThreadDetailSnapshot,
 ): OrchestrationThreadDetailSnapshot {

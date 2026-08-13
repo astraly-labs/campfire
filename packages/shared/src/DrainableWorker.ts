@@ -9,7 +9,10 @@
  * @module DrainableWorker
  */
 import * as Scope from "effect/Scope";
+import type * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as TxQueue from "effect/TxQueue";
 import * as TxRef from "effect/TxRef";
 
@@ -26,10 +29,15 @@ export interface DrainableWorker<A> {
    * Resolves when the queue is empty and the worker is idle (not processing).
    */
   readonly drain: Effect.Effect<void>;
+
+  /** Number of items waiting for the worker. */
+  readonly queueDepth: Effect.Effect<number>;
 }
 
-export interface DrainableWorkerOptions {
+export interface DrainableWorkerOptions<A, E> {
   readonly capacity?: number;
+  /** Handles one failed item and keeps the worker alive. */
+  readonly onFailure?: (item: A, cause: Cause.Cause<E>) => Effect.Effect<void>;
 }
 
 const DEFAULT_DRAINABLE_WORKER_CAPACITY = 1_024;
@@ -45,17 +53,30 @@ const DEFAULT_DRAINABLE_WORKER_CAPACITY = 1_024;
  */
 export const makeDrainableWorker = <A, E, R>(
   process: (item: A) => Effect.Effect<void, E, R>,
-  options: DrainableWorkerOptions = {},
+  options: DrainableWorkerOptions<A, E> = {},
 ): Effect.Effect<DrainableWorker<A>, never, Scope.Scope | R> =>
   Effect.gen(function* () {
     const capacity = Math.max(1, Math.floor(options.capacity ?? DEFAULT_DRAINABLE_WORKER_CAPACITY));
     const queue = yield* Effect.acquireRelease(TxQueue.bounded<A>(capacity), TxQueue.shutdown);
     const outstanding = yield* TxRef.make(0);
 
+    const processSafely = (item: A) =>
+      Effect.gen(function* () {
+        const fiber = yield* Effect.forkChild(process(item));
+        const exit = yield* Fiber.await(fiber);
+        if (Exit.isFailure(exit)) {
+          if (options.onFailure) {
+            yield* options.onFailure(item, exit.cause);
+            return;
+          }
+          return yield* Effect.failCause(exit.cause);
+        }
+      });
+
     yield* TxQueue.take(queue).pipe(
       Effect.tap((a) =>
         Effect.ensuring(
-          process(a),
+          processSafely(a),
           TxRef.update(outstanding, (n) => n - 1),
         ),
       ),
@@ -75,5 +96,5 @@ export const makeDrainableWorker = <A, E, R>(
         Effect.asVoid,
       );
 
-    return { enqueue, drain } satisfies DrainableWorker<A>;
+    return { enqueue, drain, queueDepth: TxQueue.size(queue) } satisfies DrainableWorker<A>;
   });

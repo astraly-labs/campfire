@@ -15,18 +15,31 @@ import {
 import { isTemporaryWorktreeBranch, WORKTREE_BRANCH_PREFIX } from "@t3tools/shared/git";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
-import { increment, orchestrationEventsProcessedTotal } from "../../observability/Metrics.ts";
+import {
+  increment,
+  orchestrationEventsProcessedTotal,
+  providerCommandReactorActive,
+  providerCommandReactorDuration,
+  providerCommandReactorLastCompletedAtMillis,
+  providerCommandReactorLastCompletedSequence,
+  providerCommandReactorQueueDepth,
+  providerCommandReactorTimeoutsTotal,
+} from "../../observability/Metrics.ts";
 import { ProviderAdapterRequestError } from "../../provider/Errors.ts";
 import type { ProviderServiceError } from "../../provider/Errors.ts";
 import { TextGeneration } from "../../textGeneration/TextGeneration.ts";
@@ -62,6 +75,11 @@ type ProviderIntentEvent = Extract<
   }
 >;
 
+interface ActiveProviderCommand {
+  readonly event: ProviderIntentEvent;
+  readonly startedAtMillis: number;
+}
+
 function toNonEmptyProviderInput(value: string | undefined): string | undefined {
   const normalized = value?.trim();
   return normalized && normalized.length > 0 ? normalized : undefined;
@@ -92,6 +110,9 @@ const HANDLED_TURN_START_KEY_MAX = 10_000;
 const HANDLED_TURN_START_KEY_TTL = Duration.minutes(30);
 const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 const DEFAULT_THREAD_TITLE = "New thread";
+const PROVIDER_COMMAND_TIMEOUT = Duration.minutes(2);
+const PROVIDER_COMMAND_HEARTBEAT_INTERVAL = Duration.seconds(30);
+const PROVIDER_COMMAND_STALL_WARNING_MILLIS = 30_000;
 
 export function providerErrorLabel(value: string | undefined): string {
   const normalized = value?.trim();
@@ -210,6 +231,12 @@ const make = Effect.gen(function* () {
     timeToLive: HANDLED_TURN_START_KEY_TTL,
     lookup: () => Effect.succeed(true),
   });
+  const activeCommand = yield* Ref.make<ActiveProviderCommand | null>(null);
+  const lastCompleted = yield* Ref.make<{
+    readonly sequence: number;
+    readonly atMillis: number;
+  } | null>(null);
+  let readQueueDepth: Effect.Effect<number> = Effect.succeed(0);
 
   const hasHandledTurnStartRecently = (key: string) =>
     Cache.getOption(handledTurnStartKeys, key).pipe(
@@ -1105,20 +1132,82 @@ const make = Effect.gen(function* () {
     }
   });
 
-  const processDomainEventSafely = (event: ProviderIntentEvent) =>
-    processDomainEvent(event).pipe(
-      Effect.catchCause((cause) => {
-        if (Cause.hasInterruptsOnly(cause)) {
-          return Effect.failCause(cause);
-        }
-        return Effect.logWarning("provider command reactor failed to process event", {
-          eventType: event.type,
-          cause: Cause.pretty(cause),
-        });
-      }),
-    );
+  const updateQueueDepthMetric = Effect.suspend(() => readQueueDepth).pipe(
+    Effect.flatMap((depth) => Metric.update(providerCommandReactorQueueDepth, depth)),
+  );
 
-  const worker = yield* makeDrainableWorker(processDomainEventSafely);
+  const processDomainEventWithTelemetry = Effect.fn("processDomainEventWithTelemetry")(function* (
+    event: ProviderIntentEvent,
+  ) {
+    const startedAtMillis = yield* Clock.currentTimeMillis;
+    yield* Ref.set(activeCommand, { event, startedAtMillis });
+    yield* Metric.update(providerCommandReactorActive, 1);
+    yield* updateQueueDepthMetric;
+    yield* Effect.logInfo("provider command reactor started event", {
+      commandId: event.commandId,
+      eventType: event.type,
+      sequence: event.sequence,
+      threadId: event.payload.threadId,
+    });
+
+    const exit = yield* processDomainEvent(event).pipe(
+      Effect.timeoutOption(PROVIDER_COMMAND_TIMEOUT),
+      Effect.exit,
+    );
+    const completedAtMillis = yield* Clock.currentTimeMillis;
+    const durationMillis = Math.max(0, completedAtMillis - startedAtMillis);
+    yield* Ref.set(activeCommand, null);
+    yield* Ref.set(lastCompleted, { sequence: event.sequence, atMillis: completedAtMillis });
+    yield* Metric.update(providerCommandReactorActive, 0);
+    yield* Metric.update(providerCommandReactorLastCompletedSequence, event.sequence);
+    yield* Metric.update(providerCommandReactorLastCompletedAtMillis, completedAtMillis);
+    yield* Metric.update(
+      Metric.withAttributes(providerCommandReactorDuration, [["eventType", event.type]]),
+      Duration.millis(durationMillis),
+    );
+    yield* updateQueueDepthMetric;
+
+    if (Exit.isFailure(exit)) {
+      return yield* Effect.failCause(exit.cause);
+    }
+    if (Option.isNone(exit.value)) {
+      yield* Metric.update(
+        Metric.withAttributes(providerCommandReactorTimeoutsTotal, [["eventType", event.type]]),
+        1,
+      );
+      yield* Effect.logWarning("provider command reactor event timed out", {
+        commandId: event.commandId,
+        durationMillis,
+        eventType: event.type,
+        sequence: event.sequence,
+        threadId: event.payload.threadId,
+      });
+      return;
+    }
+
+    yield* Effect.logInfo("provider command reactor completed event", {
+      commandId: event.commandId,
+      durationMillis,
+      eventType: event.type,
+      sequence: event.sequence,
+      threadId: event.payload.threadId,
+    });
+  });
+
+  const worker = yield* makeDrainableWorker(processDomainEventWithTelemetry, {
+    onFailure: (event, cause) =>
+      Effect.logWarning("provider command reactor failed to process event", {
+        commandId: event.commandId,
+        eventType: event.type,
+        sequence: event.sequence,
+        threadId: event.payload.threadId,
+        cause: Cause.pretty(cause),
+      }),
+  });
+  readQueueDepth = worker.queueDepth;
+
+  const enqueueProviderEvent = (event: ProviderIntentEvent) =>
+    worker.enqueue(event).pipe(Effect.andThen(updateQueueDepthMetric));
 
   const start: ProviderCommandReactorShape["start"] = Effect.fn("start")(function* () {
     const processEvent = Effect.fn("processEvent")(function* (event: OrchestrationEvent) {
@@ -1130,12 +1219,54 @@ const make = Effect.gen(function* () {
         event.type === "thread.user-input-response-requested" ||
         event.type === "thread.session-stop-requested"
       ) {
-        return yield* worker.enqueue(event);
+        return yield* enqueueProviderEvent(event);
       }
     });
 
     yield* Effect.forkScoped(
-      Stream.runForEach(orchestrationEngine.streamDomainEvents, processEvent),
+      Stream.runForEach(orchestrationEngine.streamDomainEvents, processEvent).pipe(
+        Effect.catchCause((cause) =>
+          Cause.hasInterruptsOnly(cause)
+            ? Effect.failCause(cause)
+            : Effect.logError("provider command reactor event subscription failed", {
+                cause: Cause.pretty(cause),
+              }),
+        ),
+      ),
+    );
+
+    yield* Effect.forkScoped(
+      Effect.forever(
+        Effect.sleep(PROVIDER_COMMAND_HEARTBEAT_INTERVAL).pipe(
+          Effect.andThen(
+            Effect.gen(function* () {
+              const nowMillis = yield* Clock.currentTimeMillis;
+              const active = yield* Ref.get(activeCommand);
+              const completed = yield* Ref.get(lastCompleted);
+              const queueDepth = yield* readQueueDepth;
+              const activeForMillis = active ? Math.max(0, nowMillis - active.startedAtMillis) : 0;
+              yield* Metric.update(providerCommandReactorQueueDepth, queueDepth);
+              const fields = {
+                activeCommandId: active?.event.commandId ?? null,
+                activeEventType: active?.event.type ?? null,
+                activeForMillis,
+                activeSequence: active?.event.sequence ?? null,
+                lastCompletedAtMillis: completed?.atMillis ?? null,
+                lastCompletedSequence: completed?.sequence ?? null,
+                queueDepth,
+              };
+              if (activeForMillis >= PROVIDER_COMMAND_STALL_WARNING_MILLIS) {
+                yield* Effect.logWarning(
+                  "provider command reactor heartbeat detected slow work",
+                  fields,
+                );
+                return;
+              }
+              yield* Effect.logInfo("provider command reactor heartbeat", fields);
+            }),
+          ),
+        ),
+      ),
     );
 
     yield* Effect.gen(function* () {
@@ -1164,7 +1295,7 @@ const make = Effect.gen(function* () {
             }
           }),
       );
-      yield* Effect.forEach(pendingEvents.values(), worker.enqueue, {
+      yield* Effect.forEach(pendingEvents.values(), enqueueProviderEvent, {
         discard: true,
       });
       yield* Effect.logInfo("provider command reactor replayed pending turn starts", {

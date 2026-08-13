@@ -115,16 +115,16 @@ export interface ProjectionTurnRepositoryShape {
   ) => Effect.Effect<void, ProjectionRepositoryError>;
 
   /**
-   * Replaces any existing pending-start placeholder rows for a thread with exactly one latest pending-start row.
+   * Adds an accepted turn start to the durable per-thread queue.
    */
-  readonly replacePendingTurnStart: (
+  readonly enqueuePendingTurnStart: (
     row: ProjectionPendingTurnStart,
   ) => Effect.Effect<void, ProjectionRepositoryError>;
 
   /**
-   * Returns the newest pending-start placeholder for a thread; this is expected to be at most one row after replacement writes.
+   * Returns the oldest accepted turn start that has not reached a provider turn.
    */
-  readonly getPendingTurnStartByThreadId: (
+  readonly getNextPendingTurnStartByThreadId: (
     input: GetProjectionPendingTurnStartInput,
   ) => Effect.Effect<Option.Option<ProjectionPendingTurnStart>, ProjectionRepositoryError>;
 
@@ -137,9 +137,14 @@ export interface ProjectionTurnRepositoryShape {
   >;
 
   /**
-   * Deletes only pending-start placeholder rows (`turnId = null`) for a thread and leaves concrete turn rows untouched.
+   * Deletes the oldest pending-start placeholder for a thread.
    */
-  readonly deletePendingTurnStartByThreadId: (
+  readonly deleteNextPendingTurnStartByThreadId: (
+    input: GetProjectionPendingTurnStartInput,
+  ) => Effect.Effect<void, ProjectionRepositoryError>;
+
+  /** Deletes every pending-start placeholder for a thread. */
+  readonly deletePendingTurnStartsByThreadId: (
     input: GetProjectionPendingTurnStartInput,
   ) => Effect.Effect<void, ProjectionRepositoryError>;
 

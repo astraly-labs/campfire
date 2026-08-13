@@ -95,4 +95,27 @@ describe("makeDrainableWorker", () => {
       }),
     ),
   );
+
+  it.live("continues after one work item interrupts", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const processed: string[] = [];
+        const worker = yield* makeDrainableWorker(
+          (item: string) =>
+            item === "interrupt"
+              ? Effect.interrupt
+              : Effect.sync(() => {
+                  processed.push(item);
+                }),
+          { onFailure: () => Effect.void },
+        );
+
+        yield* worker.enqueue("interrupt");
+        yield* worker.enqueue("next");
+        yield* worker.drain;
+
+        expect(processed).toEqual(["next"]);
+      }),
+    ),
+  );
 });
