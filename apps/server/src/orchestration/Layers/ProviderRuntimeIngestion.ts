@@ -1228,7 +1228,7 @@ const make = Effect.gen(function* () {
   const getSourceProposedPlanReferenceForPendingTurnStart = Effect.fn(
     "getSourceProposedPlanReferenceForPendingTurnStart",
   )(function* (threadId: ThreadId) {
-    const pendingTurnStart = yield* projectionTurnRepository.getPendingTurnStartByThreadId({
+    const pendingTurnStart = yield* projectionTurnRepository.getNextPendingTurnStartByThreadId({
       threadId,
     });
     if (Option.isNone(pendingTurnStart)) {
@@ -1319,7 +1319,7 @@ const make = Effect.gen(function* () {
       const now = event.createdAt;
       const eventTurnId = toTurnId(event.turnId);
       const activeTurnId = thread.session?.activeTurnId ?? null;
-      const pendingTurnStart = yield* projectionTurnRepository.getPendingTurnStartByThreadId({
+      const pendingTurnStart = yield* projectionTurnRepository.getNextPendingTurnStartByThreadId({
         threadId: thread.id,
       });
       const hasPendingTurnStart =

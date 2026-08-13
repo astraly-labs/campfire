@@ -60,6 +60,42 @@ export const orchestrationEventsProcessedTotal = Metric.counter(
   },
 );
 
+export const providerCommandReactorQueueDepth = Metric.gauge(
+  "t3_provider_command_reactor_queue_depth",
+  {
+    description: "Provider intent events waiting for the serialized command reactor.",
+  },
+);
+
+export const providerCommandReactorActive = Metric.gauge("t3_provider_command_reactor_active", {
+  description: "Whether the provider command reactor is processing an intent event.",
+});
+
+export const providerCommandReactorLastCompletedSequence = Metric.gauge(
+  "t3_provider_command_reactor_last_completed_sequence",
+  {
+    description: "Sequence of the last provider intent event completed by the command reactor.",
+  },
+);
+
+export const providerCommandReactorLastCompletedAtMillis = Metric.gauge(
+  "t3_provider_command_reactor_last_completed_at_millis",
+  {
+    description: "Unix time in milliseconds when the provider command reactor last completed work.",
+  },
+);
+
+export const providerCommandReactorDuration = Metric.timer("t3_provider_command_reactor_duration", {
+  description: "Provider intent event processing duration.",
+});
+
+export const providerCommandReactorTimeoutsTotal = Metric.counter(
+  "t3_provider_command_reactor_timeouts_total",
+  {
+    description: "Provider intent events stopped after exceeding the reactor deadline.",
+  },
+);
+
 export const providerSessionsTotal = Metric.counter("t3_provider_sessions_total", {
   description: "Total provider session lifecycle operations.",
 });
@@ -119,6 +155,20 @@ export const orchestrationSubscriptionOverflowsTotal = Metric.counter(
   "t3_orchestration_subscription_overflows_total",
   {
     description: "Bounded live subscription buffers that overflowed and forced client resync.",
+  },
+);
+
+export const orchestrationSubscriptionCatchUpDuration = Metric.timer(
+  "t3_orchestration_subscription_catch_up_duration",
+  {
+    description: "Time spent loading a snapshot or replay before live delivery starts.",
+  },
+);
+
+export const orchestrationSubscriptionBufferHighWaterMark = Metric.gauge(
+  "t3_orchestration_subscription_buffer_high_water_mark",
+  {
+    description: "Largest live-event backlog observed while a subscription catches up.",
   },
 );
 

@@ -1387,7 +1387,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
     )(function* (event, _attachmentSideEffects) {
       switch (event.type) {
         case "thread.turn-start-requested": {
-          yield* projectionTurnRepository.replacePendingTurnStart({
+          yield* projectionTurnRepository.enqueuePendingTurnStart({
             threadId: event.payload.threadId,
             messageId: event.payload.messageId,
             sourceProposedPlanThreadId: event.payload.sourceProposedPlan?.threadId ?? null,
@@ -1405,7 +1405,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
               event.payload.session.status === "stopped" ||
               event.payload.session.status === "interrupted"
             ) {
-              yield* projectionTurnRepository.deletePendingTurnStartByThreadId({
+              yield* projectionTurnRepository.deletePendingTurnStartsByThreadId({
                 threadId: event.payload.threadId,
               });
             }
@@ -1464,9 +1464,10 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             threadId: event.payload.threadId,
             turnId,
           });
-          const pendingTurnStart = yield* projectionTurnRepository.getPendingTurnStartByThreadId({
-            threadId: event.payload.threadId,
-          });
+          const pendingTurnStart =
+            yield* projectionTurnRepository.getNextPendingTurnStartByThreadId({
+              threadId: event.payload.threadId,
+            });
           if (Option.isSome(existingTurn)) {
             const nextState =
               existingTurn.value.state === "completed" || existingTurn.value.state === "error"
@@ -1528,7 +1529,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             });
           }
 
-          yield* projectionTurnRepository.deletePendingTurnStartByThreadId({
+          yield* projectionTurnRepository.deleteNextPendingTurnStartByThreadId({
             threadId: event.payload.threadId,
           });
           return;

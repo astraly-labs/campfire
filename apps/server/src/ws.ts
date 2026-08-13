@@ -67,6 +67,7 @@ import * as ServerConfig from "./config.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import {
+  coalesceContextWindowEvents,
   projectActivityEvent,
   projectThreadDetailSnapshot,
 } from "./orchestration/ActivityPayloadProjection.ts";
@@ -339,6 +340,18 @@ const THREAD_RESUME_MAX_GAP = 1_000;
 // fast enough, fail only that subscription and let it resume from its last
 // applied sequence. Never let an unbounded per-client queue retain the server.
 const THREAD_LIVE_BUFFER_CAPACITY = 512;
+const THREAD_DETAIL_COALESCE_WINDOW = Duration.millis(100);
+const THREAD_DETAIL_COALESCE_MAX_CHUNK = 512;
+
+function coalesceThreadDetailStream<E, R>(
+  stream: Stream.Stream<OrchestrationEvent, E, R>,
+): Stream.Stream<OrchestrationEvent, E, R> {
+  return stream.pipe(
+    Stream.groupedWithin(THREAD_DETAIL_COALESCE_MAX_CHUNK, THREAD_DETAIL_COALESCE_WINDOW),
+    Stream.map(coalesceContextWindowEvents),
+    Stream.flatMap((events) => Stream.fromIterable(events)),
+  );
+}
 function toAuthAccessStreamEvent(
   change: PairingGrantStore.BootstrapCredentialChange | SessionStore.SessionCredentialChange,
   revision: number,
@@ -1248,7 +1261,8 @@ const makeWsRpcLayer = (
               // Offer the completion marker into the same queue as live events.
               // Anything buffered while snapshot/replay work was in flight is
               // therefore delivered before the client is told it is synchronized.
-              const synchronizedThenLive =
+              const synchronizedThenLive = Stream.concat(
+                Stream.fromEffect(liveBuffer.markSynchronized).pipe(Stream.drain),
                 input.requestCompletionMarker === true
                   ? Stream.concat(
                       Stream.fromEffect(
@@ -1261,7 +1275,8 @@ const makeWsRpcLayer = (
                       ).pipe(Stream.flatMap((items) => Stream.fromIterable(items))),
                       bufferedLiveStream,
                     )
-                  : bufferedLiveStream;
+                  : bufferedLiveStream,
+              );
 
               // When the client already holds a shell snapshot (cached, or loaded
               // over HTTP) it passes that snapshot's sequence, and we resume by
@@ -1358,8 +1373,9 @@ const makeWsRpcLayer = (
                 event.aggregateId === input.threadId &&
                 isThreadDetailEvent(event);
 
-              const liveStream = orchestrationEngine.streamDomainEvents.pipe(
-                Stream.filter(isThisThreadDetailEvent),
+              const liveStream = coalesceThreadDetailStream(
+                orchestrationEngine.streamDomainEvents.pipe(Stream.filter(isThisThreadDetailEvent)),
+              ).pipe(
                 Stream.map((event) => ({
                   kind: "event" as const,
                   event: projectActivityEvent(event),
@@ -1386,7 +1402,8 @@ const makeWsRpcLayer = (
               });
               yield* Effect.forkScoped(liveStream.pipe(Stream.runForEach(liveBuffer.offer)));
               const bufferedLiveStream = liveBuffer.stream;
-              const synchronizedThenLive =
+              const synchronizedThenLive = Stream.concat(
+                Stream.fromEffect(liveBuffer.markSynchronized).pipe(Stream.drain),
                 input.requestCompletionMarker === true
                   ? Stream.concat(
                       Stream.fromEffect(liveBuffer.offer({ kind: "synchronized" as const })).pipe(
@@ -1394,7 +1411,8 @@ const makeWsRpcLayer = (
                       ),
                       bufferedLiveStream,
                     )
-                  : bufferedLiveStream;
+                  : bufferedLiveStream,
+              );
               const loadThreadSnapshot = projectionSnapshotQuery
                 .getThreadDetailSnapshot(input.threadId)
                 .pipe(
@@ -1466,6 +1484,7 @@ const makeWsRpcLayer = (
                   .readEvents(afterSequence, replayGap)
                   .pipe(
                     Stream.filter(isThisThreadDetailEvent),
+                    coalesceThreadDetailStream,
                     Stream.map((event) => ({
                       kind: "event" as const,
                       event: projectActivityEvent(event),

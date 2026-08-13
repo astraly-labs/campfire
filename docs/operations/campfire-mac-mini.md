@@ -107,6 +107,9 @@ T3CODE_GOOGLE_OIDC_CLIENT_SECRET='...'
 T3CODE_GOOGLE_OIDC_REDIRECT_URI='https://<magicdns>/auth/google/callback'
 T3CODE_GOOGLE_OIDC_ALLOWED_EMAILS='alice@example.com,bob@example.com,...'
 T3CODE_OTLP_SERVICE_NAME='campfire-mac-mini'
+# Campfire defaults to 512 local 10 MiB trace files. Override for the host disk budget.
+# T3CODE_TRACE_MAX_BYTES='10485760'
+# T3CODE_TRACE_MAX_FILES='512'
 # Recommended when an OTLP collector is reachable on the tailnet:
 # T3CODE_OTLP_TRACES_URL='http://127.0.0.1:4318/v1/traces'
 # T3CODE_OTLP_METRICS_URL='http://127.0.0.1:4318/v1/metrics'
@@ -219,7 +222,10 @@ launchctl kickstart -k gui/$(id -u)/com.campfire.server
 - Process/resource history is available through the authenticated diagnostics RPC.
 - OTLP metrics include `t3_websocket_connections_active`,
   `t3_orchestration_command_queue_depth`, `t3_orchestration_resume_attempts_total`,
-  `t3_orchestration_subscription_overflows_total`, `t3_server_event_loop_lag_millis`,
+  `t3_orchestration_subscription_overflows_total`,
+  `t3_orchestration_subscription_buffer_high_water_mark`,
+  `t3_provider_command_reactor_queue_depth`, `t3_provider_command_reactor_active`,
+  `t3_provider_command_reactor_last_completed_sequence`, `t3_server_event_loop_lag_millis`,
   `t3_server_rss_bytes`, `t3_server_heap_used_bytes`, and the `t3_process_tree_*` gauges.
 
 Alert initially on readiness failure, event-loop lag over 250 ms for three samples, command queue
