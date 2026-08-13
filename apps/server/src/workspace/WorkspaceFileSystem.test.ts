@@ -1,7 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off - This filesystem integration test creates a real FIFO with mkfifo.
-import { execFileSync } from "node:child_process";
+import * as NodeChildProcess from "node:child_process";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { it, describe, expect } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -146,13 +147,13 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
 
     it.effect("rejects FIFOs without blocking the filesystem worker pool", () =>
       Effect.gen(function* () {
-        if (process.platform === "win32") return;
+        if ((yield* HostProcessPlatform) === "win32") return;
 
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
         const path = yield* Path.Path;
         const cwd = yield* makeTempDir;
         const fifoPath = path.join(cwd, "agent-output.fifo");
-        execFileSync("mkfifo", [fifoPath]);
+        NodeChildProcess.execFileSync("mkfifo", [fifoPath]);
 
         const error = yield* workspaceFileSystem
           .readFile({ cwd, relativePath: "agent-output.fifo" })

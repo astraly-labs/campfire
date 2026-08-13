@@ -7,7 +7,7 @@
  *
  * @module WorkspaceFileSystem
  */
-import { constants as NodeFSConstants } from "node:fs";
+import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 
 import type {
@@ -184,7 +184,7 @@ export const make = Effect.gen(function* () {
         // O_NONBLOCK prevents FIFOs and device-like workspace entries from occupying a
         // libuv worker forever before fstat can reject them as non-files.
         try: () =>
-          NodeFSP.open(realTargetPath, NodeFSConstants.O_RDONLY | NodeFSConstants.O_NONBLOCK),
+          NodeFSP.open(realTargetPath, NodeFS.constants.O_RDONLY | NodeFS.constants.O_NONBLOCK),
         catch: (cause) =>
           new WorkspaceFileSystemOperationError({
             workspaceRoot: input.cwd,
