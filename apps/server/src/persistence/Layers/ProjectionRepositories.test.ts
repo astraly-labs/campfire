@@ -234,6 +234,8 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         },
         runtimeMode: "full-access",
         interactionMode: "default",
+        kind: "default",
+        reviewPullRequestNumber: null,
         branch: null,
         worktreePath: null,
         linkedPullRequest,
@@ -252,6 +254,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         pendingUserInputCount: 0,
         hasActionableProposedPlan: 0,
         deletedAt: null,
+        createdBy: null,
       });
 
       const persisted = yield* threads.getById({ threadId: ThreadId.make("thread-linked-pr") });

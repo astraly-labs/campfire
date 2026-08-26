@@ -21,7 +21,6 @@ import {
   type OrchestrationThreadStreamItem,
   type OrchestrationThreadActivity,
   type OrchestrationThreadShell,
-  type OrchestrationThreadStreamItem,
   TerminalNotRunningError,
   type OrchestrationCommand,
   type OrchestrationEvent,
@@ -1083,7 +1082,7 @@ const parseSessionCookieFromWsUrl = (
   };
 };
 
-const wsRpcProtocolLayer = (wsUrl: string) => {
+const wsRpcProtocolLayer = (wsUrl: string, headers?: Readonly<Record<string, string>>) => {
   const { cookie, url } = parseSessionCookieFromWsUrl(wsUrl);
   const webSocketConstructorLayer = Layer.succeed(
     Socket.WebSocketConstructor,
@@ -1091,7 +1090,14 @@ const wsRpcProtocolLayer = (wsUrl: string) => {
       new NodeSocket.NodeWS.WebSocket(
         socketUrl,
         protocols,
-        cookie ? { headers: { cookie } } : undefined,
+        cookie || headers
+          ? {
+              headers: {
+                ...(cookie ? { cookie } : {}),
+                ...headers,
+              },
+            }
+          : undefined,
       ) as unknown as globalThis.WebSocket,
   );
 
@@ -1108,7 +1114,8 @@ type WsRpcClient =
 const withWsRpcClient = <A, E, R>(
   wsUrl: string,
   f: (client: WsRpcClient) => Effect.Effect<A, E, R>,
-) => makeWsRpcClient.pipe(Effect.flatMap(f), Effect.provide(wsRpcProtocolLayer(wsUrl)));
+  headers?: Readonly<Record<string, string>>,
+) => makeWsRpcClient.pipe(Effect.flatMap(f), Effect.provide(wsRpcProtocolLayer(wsUrl, headers)));
 
 const appendSessionCookieToWsUrl = (url: string, sessionCookieHeader: string) => {
   const isAbsoluteUrl = /^[a-zA-Z][a-zA-Z\d+.-]*:/.test(url);
@@ -1749,9 +1756,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         config: { mode: "web", googleOidc: googleConfig },
         layers: {
           orchestrationEngine: {
-            dispatch: (_command, actor) =>
+            dispatch: (_command, options) =>
               Effect.sync(() => {
-                observedActor = actor;
+                observedActor = options?.actor;
                 observedCommand = _command;
                 return { sequence: 1 };
               }),

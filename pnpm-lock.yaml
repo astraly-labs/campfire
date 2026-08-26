@@ -12677,7 +12677,7 @@ snapshots:
       glob: 13.0.6
       hermes-parser: 0.36.1
       jsc-safe-url: 0.2.4
-      lightningcss: 1.32.0
+      lightningcss: 1.33.0
       picomatch: 4.0.4
       postcss: 8.5.26
       resolve-from: 5.0.0

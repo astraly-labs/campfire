@@ -411,6 +411,7 @@ it.effect("ProviderServiceLive detaches external adapters during shutdown", () =
         Layer.provide(providerAdapterLayer),
         Layer.provide(directoryLayer),
         Layer.provide(defaultServerSettingsLayer),
+        Layer.provide(serverConfigTestLayer),
         Layer.provideMerge(AnalyticsService.layerTest),
         Layer.provide(
           Layer.succeed(
