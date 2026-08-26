@@ -63,6 +63,14 @@ import Migration0047 from "./Migrations/047_ProjectionProjectsDefaultReviewModel
 import Migration0048 from "./Migrations/048_ProjectionThreadsReviewKind.ts";
 
 const Migration0049 = Migration0039.pipe(Effect.andThen(Migration0043));
+const Migration0050 = Migration0034.pipe(
+  Effect.andThen(Migration0035),
+  Effect.andThen(Migration0036),
+  Effect.andThen(Migration0037),
+  Effect.andThen(Migration0038),
+  Effect.andThen(Migration0039),
+  Effect.andThen(Migration0043),
+);
 
 /**
  * Migration loader with all migrations defined inline.
@@ -124,6 +132,7 @@ export const migrationEntries = [
   [47, "ProjectionProjectsDefaultReviewModelSelection", Migration0047],
   [48, "ProjectionThreadsReviewKind", Migration0048],
   [49, "ReconcileCollidedMigrationHistory", Migration0049],
+  [50, "ReconcileAllCollidedMigrationHistory", Migration0050],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
