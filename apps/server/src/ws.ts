@@ -368,6 +368,11 @@ const SHELL_LIVE_BUFFER_CAPACITY = 2_048;
 // databases. Past this gap the client is reset with a fresh thread snapshot.
 const THREAD_RESUME_MAX_GAP = 1_000;
 
+// A detailed-thread stream is durable. If one browser cannot consume events
+// quickly enough, fail only that subscription so it can resume from its last
+// applied sequence without retaining an unbounded per-client queue.
+const THREAD_LIVE_BUFFER_CAPACITY = 512;
+
 function toAuthAccessStreamEvent(
   change: PairingGrantStore.BootstrapCredentialChange | SessionStore.SessionCredentialChange,
   revision: number,
@@ -1591,7 +1596,23 @@ const makeWsRpcLayer = (
 
               // Attach live delivery before reading either replay or snapshot state.
               // Otherwise an event published while the snapshot is loading is lost.
-              const liveBuffer = yield* makeThreadLiveEventCoalescer();
+              const liveBuffer = yield* makeThreadLiveEventCoalescer<OrchestrationGetSnapshotError>(
+                {
+                  outputBuffer: {
+                    capacity: THREAD_LIVE_BUFFER_CAPACITY,
+                    label: `orchestration.thread:${input.threadId}`,
+                    metricLabel: "thread",
+                    onOverflow: () =>
+                      new OrchestrationGetSnapshotError({
+                        message: `Thread ${input.threadId} subscription fell behind; resynchronization required`,
+                        cause: {
+                          capacity: THREAD_LIVE_BUFFER_CAPACITY,
+                          threadId: input.threadId,
+                        },
+                      }),
+                  },
+                },
+              );
               yield* Effect.forkScoped(liveStream.pipe(Stream.runForEach(liveBuffer.offer)));
               const bufferedLiveStream = liveBuffer.stream;
 

@@ -1304,6 +1304,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
               ...(attachments !== undefined ? { attachments: [...attachments] } : {}),
               createdAt: event.payload.createdAt,
               updatedAt: event.payload.updatedAt,
+              author: googleUserFromEvent(event),
             });
             return;
           }

@@ -451,10 +451,16 @@ describe("attachServerAttachmentPreviewUrls", () => {
     ];
     const sharedUrl = "https://campfire.example/api/assets/signed/image.png";
 
-    expect(
-      attachServerAttachmentPreviewUrls(messages, new Map([[attachmentId, sharedUrl]]))[0]
-        ?.attachments?.[0]?.previewUrl,
-    ).toBe(sharedUrl);
+    const attachment = attachServerAttachmentPreviewUrls(
+      messages,
+      new Map([[attachmentId, sharedUrl]]),
+    )[0]?.attachments?.[0];
+
+    expect(attachment?.type).toBe("image");
+    if (!attachment || !("previewUrl" in attachment)) {
+      throw new Error("Expected a shared image attachment");
+    }
+    expect(attachment.previewUrl).toBe(sharedUrl);
   });
 });
 

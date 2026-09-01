@@ -37,6 +37,7 @@ layer("ProjectionThreadMessageRepository", (it) => {
         attachments,
         createdAt,
         updatedAt: createdAt,
+        author: null,
       });
       yield* repository.appendStreaming({
         messageId,
@@ -46,6 +47,7 @@ layer("ProjectionThreadMessageRepository", (it) => {
         text: " world",
         createdAt: "2026-02-28T19:05:01.000Z",
         updatedAt: "2026-02-28T19:05:01.000Z",
+        author: null,
       });
 
       const rowWithPreservedAttachments = yield* repository.getByMessageId({ messageId });
@@ -63,6 +65,7 @@ layer("ProjectionThreadMessageRepository", (it) => {
         attachments: [],
         createdAt: "2026-02-28T19:05:02.000Z",
         updatedAt: "2026-02-28T19:05:02.000Z",
+        author: null,
       });
 
       const row = yield* repository.getByMessageId({ messageId });

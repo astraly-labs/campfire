@@ -10,7 +10,6 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import type { ChangeRequestSettleSource } from "@t3tools/client-runtime/state/thread-settled";
 import { ChevronDownIcon, LockKeyholeIcon, MessageCircleIcon } from "lucide-react";
 import {
   memo,
@@ -432,63 +431,63 @@ export const ChatHeader = memo(function ChatHeader({
           <>
             <PresenceAvatarStack viewers={viewers} />
             <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                type="button"
-                size="sm"
-                variant={sideThreadOpen ? "secondary" : "ghost"}
-                aria-label={sideThreadOpen ? "Close side thread" : "Open side thread"}
-                aria-pressed={sideThreadOpen}
-                onClick={onToggleSideThread}
-                className="relative"
-              />
-            }
-          >
-            <MessageCircleIcon className="size-4" />
-            {sideThreadMessageCount > 0 ? (
-              <span className="min-w-4 rounded-full bg-primary px-1 text-[10px] leading-4 text-primary-foreground">
-                {sideThreadMessageCount > 99 ? "99+" : sideThreadMessageCount}
-              </span>
-            ) : null}
-            {sideThreadUnread ? (
-              <span
-                aria-label="Unread team discussion"
-                className="absolute -right-0.5 -top-0.5 size-2 rounded-full bg-red-500 ring-2 ring-background"
-              />
-            ) : null}
-          </TooltipTrigger>
-          <TooltipPopup side="bottom">
-            {sideThreadOpen ? "Close side thread" : "Open side thread"}
-          </TooltipPopup>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={sideThreadOpen ? "secondary" : "ghost"}
+                    aria-label={sideThreadOpen ? "Close side thread" : "Open side thread"}
+                    aria-pressed={sideThreadOpen}
+                    onClick={onToggleSideThread}
+                    className="relative"
+                  />
+                }
+              >
+                <MessageCircleIcon className="size-4" />
+                {sideThreadMessageCount > 0 ? (
+                  <span className="min-w-4 rounded-full bg-primary px-1 text-[10px] leading-4 text-primary-foreground">
+                    {sideThreadMessageCount > 99 ? "99+" : sideThreadMessageCount}
+                  </span>
+                ) : null}
+                {sideThreadUnread ? (
+                  <span
+                    aria-label="Unread team discussion"
+                    className="absolute -right-0.5 -top-0.5 size-2 rounded-full bg-red-500 ring-2 ring-background"
+                  />
+                ) : null}
+              </TooltipTrigger>
+              <TooltipPopup side="bottom">
+                {sideThreadOpen ? "Close side thread" : "Open side thread"}
+              </TooltipPopup>
             </Tooltip>
             {activeProjectScripts && (
-          <ProjectScriptsControl
-            scripts={activeProjectScripts}
-            fileScripts={fileScripts}
-            keybindings={keybindings}
-            preferredScriptId={preferredScriptId}
-            onRunScript={onRunProjectScript}
-            onAddScript={onAddProjectScript}
-            onUpdateScript={onUpdateProjectScript}
-            onDeleteScript={onDeleteProjectScript}
-          />
+              <ProjectScriptsControl
+                scripts={activeProjectScripts}
+                fileScripts={fileScripts}
+                keybindings={keybindings}
+                preferredScriptId={preferredScriptId}
+                onRunScript={onRunProjectScript}
+                onAddScript={onAddProjectScript}
+                onUpdateScript={onUpdateProjectScript}
+                onDeleteScript={onDeleteProjectScript}
+              />
             )}
             {showOpenInPicker && (
-          <OpenInPicker
-            environmentId={activeThreadEnvironmentId}
-            keybindings={keybindings}
-            availableEditors={availableEditors}
-            openInCwd={openInCwd}
-          />
+              <OpenInPicker
+                environmentId={activeThreadEnvironmentId}
+                keybindings={keybindings}
+                availableEditors={availableEditors}
+                openInCwd={openInCwd}
+              />
             )}
             {activeProjectName && (
-          <GitActionsControl
-            gitCwd={gitCwd}
-            activeThreadRef={scopeThreadRef(activeThreadEnvironmentId, activeThreadId)}
-            onOpenPullRequest={onOpenPullRequest}
-            {...(draftId ? { draftId } : {})}
-          />
+              <GitActionsControl
+                gitCwd={gitCwd}
+                activeThreadRef={scopeThreadRef(activeThreadEnvironmentId, activeThreadId)}
+                onOpenPullRequest={onOpenPullRequest}
+                {...(draftId ? { draftId } : {})}
+              />
             )}
           </>
         )}

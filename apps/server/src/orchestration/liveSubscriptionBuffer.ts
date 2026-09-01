@@ -11,7 +11,7 @@ export interface LiveSubscriptionBuffer<A, E> {
   readonly stream: Stream.Stream<A, E>;
 }
 
-interface LiveSubscriptionBufferOptions<E> {
+export interface LiveSubscriptionBufferOptions<E> {
   readonly capacity: number;
   readonly label: string;
   readonly metricLabel?: "shell" | "thread";

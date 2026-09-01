@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
 import { FetchHttpClient, HttpRouter, HttpServer } from "effect/unstable/http";
+import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
@@ -467,9 +468,16 @@ const RuntimeDependenciesLive = RuntimeCoreDependenciesLive.pipe(
 
 const commandReadinessLayer = HttpRouter.middleware(
   (httpEffect) =>
-    Effect.flatMap(ServerRuntimeStartup.ServerRuntimeStartup, (startup) =>
-      startup.awaitCommandReady.pipe(Effect.orDie, Effect.andThen(httpEffect)),
-    ),
+    Effect.gen(function* () {
+      const request = yield* HttpServerRequest.HttpServerRequest;
+      const pathname = new URL(request.url, "http://localhost").pathname;
+      if (pathname === "/healthz" || pathname === "/readyz") {
+        return yield* httpEffect;
+      }
+
+      const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
+      return yield* startup.awaitCommandReady.pipe(Effect.orDie, Effect.andThen(httpEffect));
+    }),
   { global: true },
 );
 

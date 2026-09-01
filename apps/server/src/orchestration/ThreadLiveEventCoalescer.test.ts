@@ -9,6 +9,7 @@ import {
 import { it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { describe, expect } from "vite-plus/test";
 
@@ -167,5 +168,37 @@ describe("ThreadLiveEventCoalescer", () => {
         ).toEqual([3, "synchronized"]);
       }),
     ).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("fails only the slow subscription when its coalesced output reaches the bound", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const overflow = new Error("subscriber fell behind");
+        const received: number[] = [];
+        const coalescer = yield* makeThreadLiveEventCoalescer<Error>({
+          outputBuffer: {
+            capacity: 2,
+            label: "thread-test",
+            onOverflow: () => overflow,
+          },
+        });
+
+        yield* coalescer.offerAndWait({ kind: "event", event: makeMessage(2) });
+        yield* coalescer.offerAndWait({ kind: "event", event: makeMessage(3) });
+        yield* coalescer.offerAndWait({ kind: "event", event: makeMessage(4) });
+
+        const failure = yield* coalescer.stream.pipe(
+          Stream.runForEach((item) =>
+            Effect.sync(() => {
+              if (item.kind === "event") received.push(item.event.sequence);
+            }),
+          ),
+          Effect.flip,
+        );
+
+        expect(received).toEqual([2, 3]);
+        expect(failure).toBe(overflow);
+      }),
+    ),
   );
 });

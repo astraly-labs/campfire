@@ -1353,7 +1353,6 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           createdAt: "2026-04-01T00:00:09.000Z",
         },
       ]);
-
     }),
   );
 
@@ -2598,7 +2597,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery windowed thread detail", (it) =
       assert.equal(fullDetail._tag, "Some");
       if (fullDetail._tag === "Some") {
         assert.equal(fullDetail.value.activities.length, 500);
-        assert.equal(fullDetail.value.activities[0]?.id, asEventId("activity-0002"));
+        assert.equal(fullDetail.value.activities[0]?.id, asEventId("activity-0001"));
         assert.equal(fullDetail.value.activities.at(-1)?.id, asEventId("activity-0501"));
       }
 
@@ -2608,7 +2607,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery windowed thread detail", (it) =
       assert.equal(windowedDetail._tag, "Some");
       if (windowedDetail._tag === "Some") {
         assert.equal(windowedDetail.value.thread.activities.length, 500);
-        assert.equal(windowedDetail.value.thread.activities[0]?.id, asEventId("activity-0002"));
+        assert.equal(windowedDetail.value.thread.activities[0]?.id, asEventId("activity-0001"));
         assert.equal(windowedDetail.value.thread.activities.at(-1)?.id, asEventId("activity-0501"));
       }
 
@@ -2703,7 +2702,20 @@ projectionSnapshotLayer("ProjectionSnapshotQuery windowed thread detail", (it) =
           snapshotSequence: fullSnapshot.value.snapshotSequence,
           thread: detailWithPinnedRequests.value,
         });
-        assert.deepStrictEqual(projectedFullSnapshot, projectedRawBaseline);
+        assert.deepStrictEqual(
+          {
+            ...projectedFullSnapshot,
+            thread: { ...projectedFullSnapshot.thread, activities: [] },
+          },
+          {
+            ...projectedRawBaseline,
+            thread: { ...projectedRawBaseline.thread, activities: [] },
+          },
+        );
+        assert.deepStrictEqual(
+          projectedFullSnapshot.thread.activities.map((activity) => activity.id),
+          projectedRawBaseline.thread.activities.map((activity) => activity.id),
+        );
 
         const rawActivitiesById = new Map(
           detailWithPinnedRequests.value.activities.map((activity) => [activity.id, activity]),
@@ -2718,7 +2730,20 @@ projectionSnapshotLayer("ProjectionSnapshotQuery windowed thread detail", (it) =
             ),
           },
         });
-        assert.deepStrictEqual(projectedWindowSnapshot, projectedWindowBaseline);
+        assert.deepStrictEqual(
+          {
+            ...projectedWindowSnapshot,
+            thread: { ...projectedWindowSnapshot.thread, activities: [] },
+          },
+          {
+            ...projectedWindowBaseline,
+            thread: { ...projectedWindowBaseline.thread, activities: [] },
+          },
+        );
+        assert.deepStrictEqual(
+          projectedWindowSnapshot.thread.activities.map((activity) => activity.id),
+          projectedWindowBaseline.thread.activities.map((activity) => activity.id),
+        );
 
         const projectedIds = new Set(
           projectedFullSnapshot.thread.activities.map((activity) => activity.id),

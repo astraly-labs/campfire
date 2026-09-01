@@ -1249,13 +1249,31 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     Result: ProjectionThreadActivityIdRowSchema,
     execute: ({ threadId }) =>
       sql`
+        WITH bounded_activities AS (
+          SELECT *
+          FROM projection_thread_activities
+          WHERE thread_id = ${threadId}
+          ORDER BY sequence DESC, created_at DESC, activity_id DESC
+          LIMIT ${THREAD_ACTIVITY_SNAPSHOT_LIMIT}
+        ), ranked_activities AS (
+          SELECT
+            *,
+            CASE
+              WHEN kind = 'context-window.updated'
+                AND json_type(payload_json, '$.usedTokens') IN ('integer', 'real')
+                AND json_extract(payload_json, '$.usedTokens') >= 0
+              THEN ROW_NUMBER() OVER (
+                PARTITION BY turn_id, kind
+                ORDER BY sequence DESC, created_at DESC, activity_id DESC
+              )
+              ELSE 1
+            END AS retention_rank
+          FROM bounded_activities
+        )
         SELECT activity_id AS "activityId"
-        FROM projection_thread_activities
-        WHERE thread_id = ${threadId}
-        ORDER BY
-          sequence DESC,
-          created_at DESC,
-          activity_id DESC
+        FROM ranked_activities
+        WHERE retention_rank = 1
+        ORDER BY sequence DESC, created_at DESC, activity_id DESC
         LIMIT ${THREAD_DETAIL_ACTIVITY_LIMIT}
       `,
   });
@@ -1500,7 +1518,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           attachments_json AS "attachments",
           is_streaming AS "isStreaming",
           created_at AS "createdAt",
-          updated_at AS "updatedAt"
+          updated_at AS "updatedAt",
+          author_json AS "author"
         FROM projection_thread_messages
         WHERE thread_id = ${threadId}
           AND (
@@ -1709,39 +1728,52 @@ pending_approval_requests AS (
     Result: ProjectionThreadActivityIdRowSchema,
     execute: ({ threadId, minAnchorAt, minTurnKey, beforeAnchorAt, beforeTurnKey }) =>
       sql`
+        WITH ranked_activities AS (
+          SELECT
+            *,
+            CASE
+              WHEN kind = 'context-window.updated'
+                AND json_type(payload_json, '$.usedTokens') IN ('integer', 'real')
+                AND json_extract(payload_json, '$.usedTokens') >= 0
+              THEN ROW_NUMBER() OVER (
+                PARTITION BY turn_id, kind
+                ORDER BY sequence DESC, created_at DESC, activity_id DESC
+              )
+              ELSE 1
+            END AS retention_rank
+          FROM projection_thread_activities
+          WHERE thread_id = ${threadId}
+            AND (
+              turn_id IN (
+                SELECT turn_id FROM projection_turns
+                WHERE thread_id = ${threadId}
+                  AND turn_id IS NOT NULL
+                  AND (
+                    requested_at > ${minAnchorAt}
+                    OR (
+                      requested_at = ${minAnchorAt}
+                      AND turn_id >= ${minTurnKey}
+                    )
+                  )
+                  AND (
+                    requested_at < ${beforeAnchorAt}
+                    OR (
+                      requested_at = ${beforeAnchorAt}
+                      AND turn_id < ${beforeTurnKey}
+                    )
+                  )
+              )
+              OR (
+                turn_id IS NULL
+                AND created_at >= ${minAnchorAt}
+                AND created_at < ${beforeAnchorAt}
+              )
+            )
+        )
         SELECT activity_id AS "activityId"
-        FROM projection_thread_activities
-        WHERE thread_id = ${threadId}
-          AND (
-            turn_id IN (
-              SELECT turn_id FROM projection_turns
-              WHERE thread_id = ${threadId}
-                AND turn_id IS NOT NULL
-                AND (
-                  requested_at > ${minAnchorAt}
-                  OR (
-                    requested_at = ${minAnchorAt}
-                    AND turn_id >= ${minTurnKey}
-                  )
-                )
-                AND (
-                  requested_at < ${beforeAnchorAt}
-                  OR (
-                    requested_at = ${beforeAnchorAt}
-                    AND turn_id < ${beforeTurnKey}
-                  )
-                )
-            )
-            OR (
-              turn_id IS NULL
-              AND created_at >= ${minAnchorAt}
-              AND created_at < ${beforeAnchorAt}
-            )
-          )
-        ORDER BY
-          sequence DESC,
-          created_at DESC,
-          activity_id DESC
+        FROM ranked_activities
+        WHERE retention_rank = 1
+        ORDER BY sequence DESC, created_at DESC, activity_id DESC
         LIMIT ${THREAD_DETAIL_ACTIVITY_LIMIT}
       `,
   });

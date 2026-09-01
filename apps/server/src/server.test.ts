@@ -24,6 +24,7 @@ import {
   TerminalNotRunningError,
   type OrchestrationCommand,
   type OrchestrationEvent,
+  type OrchestrationEventActor,
   ORCHESTRATION_WS_METHODS,
   PRESENCE_WS_METHODS,
   type PreviewEvent,
@@ -1736,9 +1737,13 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         },
       });
 
-      const response = yield* fetchEffect(yield* getHttpServerUrl("/readyz"));
-      assert.equal(response.status, 503);
-      assert.deepEqual(yield* responseJsonEffect(response), { status: "unavailable" });
+      const healthResponse = yield* fetchEffect(yield* getHttpServerUrl("/healthz"));
+      const readyResponse = yield* fetchEffect(yield* getHttpServerUrl("/readyz"));
+
+      assert.equal(healthResponse.status, 200);
+      assert.deepEqual(yield* responseJsonEffect(healthResponse), { status: "ok" });
+      assert.equal(readyResponse.status, 503);
+      assert.deepEqual(yield* responseJsonEffect(readyResponse), { status: "unavailable" });
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
