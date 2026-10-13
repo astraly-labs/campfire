@@ -17,6 +17,7 @@ import type {
   ProviderAdapterV2TurnInput,
 } from "@t3tools/provider-core/server/ProviderAdapter";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
@@ -34,6 +35,7 @@ const unsupported = () => Effect.die("Unexpected provider operation in multiplay
 
 it.effect("runs five independent teammate turns without browsers and resumes 1000 durable events", () =>
   Effect.gen(function* () {
+    const releaseStarts = yield* Deferred.make<void>();
     const starts = yield* Queue.unbounded<{ readonly turn: ProviderAdapterV2TurnInput; readonly providerSessionId: ProviderSessionId }>();
     const adapter: ProviderAdapterV2["Service"] = {
       instanceId,
@@ -53,7 +55,7 @@ it.effect("runs five independent teammate turns without browsers and resumes 100
           providerSession: { id: input.providerSessionId, driver: adapter.driver, providerInstanceId: instanceId, status: "ready", cwd: input.runtimePolicy.cwd ?? "/workspace", model: input.modelSelection.model, capabilities: CodexProviderCapabilitiesV2, createdAt: now, updatedAt: now, lastError: null },
           events: Stream.never,
           ensureThread: () => Effect.succeed(providerThread), resumeThread: unsupported,
-          startTurn: (turn) => Queue.offer(starts, { turn, providerSessionId: input.providerSessionId }).pipe(Effect.asVoid),
+          startTurn: (turn) => Queue.offer(starts, { turn, providerSessionId: input.providerSessionId }).pipe(Effect.andThen(Deferred.await(releaseStarts))),
           steerTurn: unsupported, interruptTurn: () => Effect.void, respondToRuntimeRequest: unsupported,
           readThreadSnapshot: unsupported, rollbackThread: unsupported, forkThread: unsupported,
         } satisfies ProviderAdapterV2SessionRuntime;
@@ -92,6 +94,7 @@ it.effect("runs five independent teammate turns without browsers and resumes 100
       // Each receipt comes from the worker invoking a real session runtime. No
       // browser subscription exists while the five provider turns are starting.
       const started = yield* Effect.forEach(clients, () => Queue.take(starts));
+      yield* Deferred.succeed(releaseStarts, undefined);
       assert.equal(new Set(started.map((item) => item.providerSessionId)).size, 5);
       assert.equal(new Set(started.map((item) => item.turn.providerThread.id)).size, 5);
       for (const client of clients) {
