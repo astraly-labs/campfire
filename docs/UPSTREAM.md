@@ -51,6 +51,10 @@ V1 host protocol is incompatible. For the first deployment, let existing turns f
 then replace the backend and provider host together. Private briefing runtimes are ephemeral
 and are excluded from durable recovery. A Git sync does not perform this deployment.
 
+Host acknowledgements confirm local event ingestion, followed by at least 30 seconds of
+replay retention. They are not SQLite commit receipts; this does not guarantee lossless
+recovery if ingestion stalls beyond that grace period and the backend then crashes.
+
 The deterministic multiplayer smoke now runs the V2 worker/replay test. It uses a fake
 provider runtime with real SQLite and orchestration workers; it does not prove Google login,
 browser rendering, a live provider CLI or the required human promotion gate. Command admission
