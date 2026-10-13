@@ -148,7 +148,11 @@ it.effect("sets the selected browser session cookies through the HTTP route", ()
           expect(pairingResponse.status).toBe(200);
           const pairing = (await pairingResponse.json()) as { credential: string };
           const restrictedResponse = await environmentA.handler(
-            postJson("/api/auth/browser-session", { credential: pairing.credential }, { "x-forwarded-proto": "https" }),
+            postJson(
+              "/api/auth/browser-session",
+              { credential: pairing.credential },
+              { "x-forwarded-proto": "https" },
+            ),
             requestContext,
           );
           expect(restrictedResponse.status).toBe(200);

@@ -1,5 +1,8 @@
 import { useThreadCollaboration } from "../collaboration/threadCollaborationContext";
-import { CodexInlineVisualization, splitCodexInlineVisualizations } from "./chat/CodexInlineVisualization";
+import {
+  CodexInlineVisualization,
+  splitCodexInlineVisualizations,
+} from "./chat/CodexInlineVisualization";
 import { MarkdownFindContext, useFindRevealRef } from "./chat/markdownFindContext";
 import {
   buildFileLinkParentSuffixByPath,
@@ -3141,9 +3144,22 @@ const CHAT_MARKDOWN_COMPONENTS = {
       );
       const reviewLink = href ? parseChangeRequestUrl(href) : null;
       const reviewNumber = reviewLink?.host === "github.com" ? reviewLink.number : null;
-      const withReview = (content: ReactNode) => collaboration && reviewNumber !== null
-        ? <span className="inline-flex max-w-full items-center gap-1 align-baseline">{content}<Button size="xs" variant="outline" aria-label={`Review pull request #${reviewNumber}`} onClick={() => collaboration.review(reviewNumber)}>Review</Button></span>
-        : content;
+      const withReview = (content: ReactNode) =>
+        collaboration && reviewNumber !== null ? (
+          <span className="inline-flex max-w-full items-center gap-1 align-baseline">
+            {content}
+            <Button
+              size="xs"
+              variant="outline"
+              aria-label={`Review pull request #${reviewNumber}`}
+              onClick={() => collaboration.review(reviewNumber)}
+            >
+              Review
+            </Button>
+          </span>
+        ) : (
+          content
+        );
       if (!faviconHost || !href) {
         return withReview(link);
       }
@@ -3168,14 +3184,14 @@ const CHAT_MARKDOWN_COMPONENTS = {
               )
             }
             onOpenFallback={openDeferredMarkdownLink}
-          />
+          />,
         );
       }
       return withReview(
         <Tooltip>
           <TooltipTrigger render={link} />
           <TooltipPopup side="top">{href}</TooltipPopup>
-        </Tooltip>
+        </Tooltip>,
       );
     }
 
@@ -3466,11 +3482,17 @@ function ChatMarkdownContent({
       <ChatMarkdownRendererContext value={componentState}>
         <ReactMarkdown
           remarkPlugins={remarkPlugins}
-          rehypePlugins={parseRawHtml ? CHAT_MARKDOWN_RENDER_REHYPE_PLUGINS : CHAT_MARKDOWN_LITERAL_HTML_REHYPE_PLUGINS}
+          rehypePlugins={
+            parseRawHtml
+              ? CHAT_MARKDOWN_RENDER_REHYPE_PLUGINS
+              : CHAT_MARKDOWN_LITERAL_HTML_REHYPE_PLUGINS
+          }
           skipHtml={false}
           components={CHAT_MARKDOWN_COMPONENTS}
           urlTransform={markdownUrlTransform}
-        >{text}</ReactMarkdown>
+        >
+          {text}
+        </ReactMarkdown>
       </ChatMarkdownRendererContext>
       {localMediaPreview ? (
         <ExpandedImageDialog
@@ -3484,10 +3506,23 @@ function ChatMarkdownContent({
 
 function ChatMarkdown(props: ChatMarkdownProps) {
   const threadRef = props.threadRef;
-  if (!threadRef || !props.text.includes("::codex-inline-vis{")) return <ChatMarkdownContent {...props} />;
-  return <>{splitCodexInlineVisualizations(props.text).map((segment) => segment.kind === "visualization"
-    ? <CodexInlineVisualization key={`vis:${segment.offset}`} threadRef={threadRef} fileName={segment.fileName} />
-    : <ChatMarkdownContent key={`md:${segment.offset}`} {...props} text={segment.text} />)}</>;
+  if (!threadRef || !props.text.includes("::codex-inline-vis{"))
+    return <ChatMarkdownContent {...props} />;
+  return (
+    <>
+      {splitCodexInlineVisualizations(props.text).map((segment) =>
+        segment.kind === "visualization" ? (
+          <CodexInlineVisualization
+            key={`vis:${segment.offset}`}
+            threadRef={threadRef}
+            fileName={segment.fileName}
+          />
+        ) : (
+          <ChatMarkdownContent key={`md:${segment.offset}`} {...props} text={segment.text} />
+        ),
+      )}
+    </>
+  );
 }
 
 export default memo(ChatMarkdown);

@@ -241,9 +241,11 @@ export function makeContextAssistantManager(dependencies: ContextAssistantDepend
         }),
       };
     }).pipe(
-      Effect.raceFirst(Deferred.await(opening.closed).pipe(
-        Effect.andThen(Effect.fail(briefingError("The private briefing was closed."))),
-      )),
+      Effect.raceFirst(
+        Deferred.await(opening.closed).pipe(
+          Effect.andThen(Effect.fail(briefingError("The private briefing was closed."))),
+        ),
+      ),
       Effect.mapError((cause) =>
         Schema.is(ContextAssistantError)(cause)
           ? cause
@@ -276,7 +278,9 @@ export function makeContextAssistantManager(dependencies: ContextAssistantDepend
       session.busy = true;
     } else {
       const opening: OpeningSession = {
-        kind: "opening", scope: Scope.makeUnsafe(), closed: Deferred.makeUnsafe<void>(),
+        kind: "opening",
+        scope: Scope.makeUnsafe(),
+        closed: Deferred.makeUnsafe<void>(),
       };
       sessions.set(key, opening);
       const opened = yield* createSession(key, opening, input).pipe(
@@ -297,13 +301,17 @@ export function makeContextAssistantManager(dependencies: ContextAssistantDepend
       if (finished) return Effect.void;
       finished = true;
       return Scope.close(turnScope, Exit.void).pipe(
-        Effect.andThen(Effect.sync(() => {
-          currentSession.busy = false;
-          currentSession.activeTurnId = null;
-        })),
-        Effect.andThen(completed || sessions.get(key) !== currentSession
-          ? Effect.void
-          : closeKey(key).pipe(Effect.asVoid)),
+        Effect.andThen(
+          Effect.sync(() => {
+            currentSession.busy = false;
+            currentSession.activeTurnId = null;
+          }),
+        ),
+        Effect.andThen(
+          completed || sessions.get(key) !== currentSession
+            ? Effect.void
+            : closeKey(key).pipe(Effect.asVoid),
+        ),
       );
     });
     yield* Effect.addFinalizer(() => finish);
@@ -345,9 +353,11 @@ export function makeContextAssistantManager(dependencies: ContextAssistantDepend
       Stream.filter(belongsToTurn),
       Stream.runForEach((event) => Queue.offer(queue, event)),
       Effect.andThen(Queue.fail(queue, briefingError("The briefing provider disconnected."))),
-      Effect.raceFirst(Deferred.await(currentSession.closed).pipe(
-        Effect.andThen(Effect.fail(briefingError("The private briefing was closed."))),
-      )),
+      Effect.raceFirst(
+        Deferred.await(currentSession.closed).pipe(
+          Effect.andThen(Effect.fail(briefingError("The private briefing was closed."))),
+        ),
+      ),
       Effect.catch((cause) => Queue.fail(queue, cause)),
       Effect.forkIn(turnScope),
     );

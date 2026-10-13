@@ -353,7 +353,11 @@ describe("rightPanelStore", () => {
     expect(state.isOpen).toBe(true);
     expect(state.activeSurfaceId).toBe(`file:${absolutePath}`);
     expect(state.surfaces).toEqual([
-      expect.objectContaining({ id: `file:${absolutePath}`, kind: "file", relativePath: absolutePath }),
+      expect.objectContaining({
+        id: `file:${absolutePath}`,
+        kind: "file",
+        relativePath: absolutePath,
+      }),
     ]);
   });
 

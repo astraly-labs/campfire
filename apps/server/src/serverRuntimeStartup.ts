@@ -137,32 +137,36 @@ export const makeCommandGate = Effect.gen(function* () {
         yield* Deferred.fail(commandReady, error).pipe(Effect.orDie);
       }),
     enqueueCommand: <A, E>(effect: Effect.Effect<A, E>) =>
-      Effect.uninterruptibleMask((restore) => Effect.gen(function* () {
-        const readinessState = yield* Ref.get(commandReadinessState);
-        if (readinessState !== "pending" && readinessState !== "ready") {
-          return yield* readinessState;
-        }
-        if (!(yield* admission.takeIfAvailable(1))) {
-          return yield* new ServerCommandOverloadedError();
-        }
-        let queued = false;
-        return yield* Effect.gen(function* () {
-          if (readinessState === "ready") return yield* restore(effect);
-          const result = yield* Deferred.make<A, E | ServerRuntimeStartupError>();
-          yield* Queue.offer(commandQueue, {
-            run: Deferred.await(commandReady).pipe(
-              Effect.flatMap(() => effect),
-              Effect.exit,
-              Effect.flatMap((exit) => settleQueuedCommand(result, exit)),
-              Effect.ensuring(admission.release(1)),
-            ),
-          });
-          // Accepted startup work outlives its caller. Its worker owns the slot
-          // until execution ends, even if the requesting connection disappears.
-          queued = true;
-          return yield* restore(Deferred.await(result));
-        }).pipe(Effect.ensuring(Effect.suspend(() => queued ? Effect.void : admission.release(1))));
-      })),
+      Effect.uninterruptibleMask((restore) =>
+        Effect.gen(function* () {
+          const readinessState = yield* Ref.get(commandReadinessState);
+          if (readinessState !== "pending" && readinessState !== "ready") {
+            return yield* readinessState;
+          }
+          if (!(yield* admission.takeIfAvailable(1))) {
+            return yield* new ServerCommandOverloadedError();
+          }
+          let queued = false;
+          return yield* Effect.gen(function* () {
+            if (readinessState === "ready") return yield* restore(effect);
+            const result = yield* Deferred.make<A, E | ServerRuntimeStartupError>();
+            yield* Queue.offer(commandQueue, {
+              run: Deferred.await(commandReady).pipe(
+                Effect.flatMap(() => effect),
+                Effect.exit,
+                Effect.flatMap((exit) => settleQueuedCommand(result, exit)),
+                Effect.ensuring(admission.release(1)),
+              ),
+            });
+            // Accepted startup work outlives its caller. Its worker owns the slot
+            // until execution ends, even if the requesting connection disappears.
+            queued = true;
+            return yield* restore(Deferred.await(result));
+          }).pipe(
+            Effect.ensuring(Effect.suspend(() => (queued ? Effect.void : admission.release(1)))),
+          );
+        }),
+      ),
   } satisfies CommandGate;
 });
 
@@ -614,7 +618,9 @@ const make = (options?: StartupOptions) =>
           if (serverConfig.googleOidc && serverConfig.startupPresentation === "headless") {
             yield* runStartupPhase(
               "headless.output",
-              Console.log(`Campfire is ready. Sign in with Google: ${googleLoginUrl(serverConfig.googleOidc.redirectUri)}`),
+              Console.log(
+                `Campfire is ready. Sign in with Google: ${googleLoginUrl(serverConfig.googleOidc.redirectUri)}`,
+              ),
             );
           } else if (serverConfig.startupPresentation === "headless") {
             yield* Effect.logDebug("startup phase: headless access info");

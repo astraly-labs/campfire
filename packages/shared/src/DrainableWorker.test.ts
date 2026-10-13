@@ -20,27 +20,35 @@ const captureErrorLogs = () => {
 
 describe("makeDrainableWorker", () => {
   it.effect("backpressures producers at capacity without losing FIFO work", () =>
-    Effect.scoped(Effect.gen(function* () {
-      const processed: string[] = [];
-      const started = yield* Deferred.make<void>();
-      const release = yield* Deferred.make<void>();
-      const worker = yield* makeDrainableWorker((item: string) => Effect.gen(function* () {
-        if (item === "first") {
-          yield* Deferred.succeed(started, undefined);
-          yield* Deferred.await(release);
-        }
-        processed.push(item);
-      }), { capacity: 1 });
-      yield* worker.enqueue("first");
-      yield* Deferred.await(started);
-      yield* worker.enqueue("second");
-      const third = yield* worker.enqueue("third").pipe(Effect.forkChild({ startImmediately: true }));
-      expect(third.pollUnsafe()).toBeUndefined();
-      yield* Deferred.succeed(release, undefined);
-      yield* Fiber.join(third);
-      yield* worker.drain;
-      expect(processed).toEqual(["first", "second", "third"]);
-    })),
+    Effect.scoped(
+      Effect.gen(function* () {
+        const processed: string[] = [];
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const worker = yield* makeDrainableWorker(
+          (item: string) =>
+            Effect.gen(function* () {
+              if (item === "first") {
+                yield* Deferred.succeed(started, undefined);
+                yield* Deferred.await(release);
+              }
+              processed.push(item);
+            }),
+          { capacity: 1 },
+        );
+        yield* worker.enqueue("first");
+        yield* Deferred.await(started);
+        yield* worker.enqueue("second");
+        const third = yield* worker
+          .enqueue("third")
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        expect(third.pollUnsafe()).toBeUndefined();
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(third);
+        yield* worker.drain;
+        expect(processed).toEqual(["first", "second", "third"]);
+      }),
+    ),
   );
 
   it.effect("logs a failed or defective item and keeps processing later items", () => {

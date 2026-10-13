@@ -156,8 +156,12 @@ export default Effect.gen(function* () {
             project.default_model_selection_json === null
               ? null
               : yield* decodeJson(project.default_model_selection_json),
-          defaultReviewModelSelection: project.default_review_model_selection_json === null ? null : yield* decodeJson(project.default_review_model_selection_json),
-          createdBy: project.created_by_json === null ? null : yield* decodeJson(project.created_by_json),
+          defaultReviewModelSelection:
+            project.default_review_model_selection_json === null
+              ? null
+              : yield* decodeJson(project.default_review_model_selection_json),
+          createdBy:
+            project.created_by_json === null ? null : yield* decodeJson(project.created_by_json),
           scripts: yield* decodeJson(project.scripts_json),
           createdAt: project.created_at,
           updatedAt: project.updated_at,

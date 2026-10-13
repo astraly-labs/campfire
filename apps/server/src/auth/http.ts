@@ -297,7 +297,12 @@ export const layer = HttpApiBuilder.group(
               result.sessionMethod === "browser-session-cookie" &&
               result.expiresAt
             ) {
-              yield* appendSessionCookie(sessions.cookieName, credential.token, result.expiresAt, requestUsesHttps(request));
+              yield* appendSessionCookie(
+                sessions.cookieName,
+                credential.token,
+                result.expiresAt,
+                requestUsesHttps(request),
+              );
               yield* appendCredentialResponseHeaders;
             }
             return result;

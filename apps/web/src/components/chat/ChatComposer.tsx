@@ -3738,7 +3738,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       cursorAdjacentToMention: boolean,
       contextIds: string[],
     ) => {
-      if (collaboration) notifyPresenceTyping(collaboration.threadRef.environmentId, collaboration.threadRef.threadId);
+      if (collaboration)
+        notifyPresenceTyping(
+          collaboration.threadRef.environmentId,
+          collaboration.threadRef.threadId,
+        );
       expandComposerForEditorChange();
       if (activePendingProgress?.activeQuestion && pendingUserInputs.length > 0) {
         if (activePendingProgress.activeQuestion.allowCustomAnswer === false) return;

@@ -190,7 +190,10 @@ describe("V2 environment commands", () => {
       } as const;
       const messageId = SideThreadMessageId.make("team-message");
       const supervisor = yield* makeSupervisor({
-        commands, projects: [], attachmentRequests, persistedAttachments: [stored],
+        commands,
+        projects: [],
+        attachmentRequests,
+        persistedAttachments: [stored],
       });
 
       yield* postSideThreadMessage({
@@ -202,17 +205,21 @@ describe("V2 environment commands", () => {
         attachments: [image, gif],
       }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
 
-      expect(attachmentRequests).toEqual([{
-        threadId: v2ThreadId,
-        messageId,
-        attachments: [image],
-      }]);
-      expect(commands).toEqual([expect.objectContaining({
-        type: "sidethread.message.post",
-        messageId,
-        text: "Look at this",
-        attachments: [stored, gif],
-      })]);
+      expect(attachmentRequests).toEqual([
+        {
+          threadId: v2ThreadId,
+          messageId,
+          attachments: [image],
+        },
+      ]);
+      expect(commands).toEqual([
+        expect.objectContaining({
+          type: "sidethread.message.post",
+          messageId,
+          text: "Look at this",
+          attachments: [stored, gif],
+        }),
+      ]);
     }).pipe(Effect.provide(layerTestCrypto)),
   );
 

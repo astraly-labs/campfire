@@ -127,7 +127,8 @@ export function makeGoogleOidcFlow<R>(
 ): Effect.Effect<GoogleOidcFlow<R>, never, Crypto.Crypto> {
   return Effect.gen(function* () {
     const crypto = yield* Crypto.Crypto;
-    const randomBase64Url = (bytes = 32) => crypto.randomBytes(bytes).pipe(Effect.map(Base64Url.encode), Effect.orDie);
+    const randomBase64Url = (bytes = 32) =>
+      crypto.randomBytes(bytes).pipe(Effect.map(Base64Url.encode), Effect.orDie);
     const pending = yield* Ref.make(new Map<string, PendingTransaction>());
 
     const begin: GoogleOidcFlow<R>["begin"] = Effect.fn("GoogleOidcFlow.begin")(
@@ -165,7 +166,9 @@ export function makeGoogleOidcFlow<R>(
           scope: "openid email profile",
           state: transaction.state,
           nonce: transaction.nonce,
-          code_challenge: yield* crypto.digest("SHA-256", new TextEncoder().encode(transaction.codeVerifier)).pipe(Effect.map(Base64Url.encode), Effect.orDie),
+          code_challenge: yield* crypto
+            .digest("SHA-256", new TextEncoder().encode(transaction.codeVerifier))
+            .pipe(Effect.map(Base64Url.encode), Effect.orDie),
           code_challenge_method: "S256",
           prompt: "select_account",
         }).toString();
@@ -299,17 +302,17 @@ export function googleOidcFlowForConfig(
   config: GoogleOidcConfig,
 ): Effect.Effect<GoogleOidcFlow<HttpClient.HttpClient>, never, Crypto.Crypto> {
   return Effect.gen(function* () {
-  const cached = productionFlows.get(config);
-  if (cached !== undefined) return cached;
-  const tokenClient: GoogleOidcTokenClient<HttpClient.HttpClient> = {
-    exchangeAndVerify: (input) =>
-      makeGoogleOidcTokenClient(config).pipe(
-        Effect.flatMap((client) => client.exchangeAndVerify(input)),
-      ),
-  };
-  const flow = yield* makeGoogleOidcFlow(config, tokenClient);
-  productionFlows.set(config, flow);
-  return flow;
+    const cached = productionFlows.get(config);
+    if (cached !== undefined) return cached;
+    const tokenClient: GoogleOidcTokenClient<HttpClient.HttpClient> = {
+      exchangeAndVerify: (input) =>
+        makeGoogleOidcTokenClient(config).pipe(
+          Effect.flatMap((client) => client.exchangeAndVerify(input)),
+        ),
+    };
+    const flow = yield* makeGoogleOidcFlow(config, tokenClient);
+    productionFlows.set(config, flow);
+    return flow;
   });
 }
 

@@ -37,11 +37,14 @@ export function CodexInlineVisualization(props: {
   readonly threadRef: ScopedThreadRef;
   readonly fileName: string;
 }) {
-  const resource = useMemo(() => ({
-    _tag: "codex-visualization" as const,
-    threadId: props.threadRef.threadId,
-    fileName: props.fileName,
-  }), [props.threadRef.threadId, props.fileName]);
+  const resource = useMemo(
+    () => ({
+      _tag: "codex-visualization" as const,
+      threadId: props.threadRef.threadId,
+      fileName: props.fileName,
+    }),
+    [props.threadRef.threadId, props.fileName],
+  );
   const assetUrl = useAssetUrlState(props.threadRef.environmentId, resource);
   const refresh = useAssetUrlRefresh(props.threadRef.environmentId, resource);
   const [retryAttempt, setRetryAttempt] = useState(0);

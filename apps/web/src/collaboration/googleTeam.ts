@@ -15,6 +15,7 @@ export function googleTeamMembersFromSessions(
   const bySubject = new Map<string, GoogleTeamMember>();
   for (const session of sessions) {
     if (!session.subject.startsWith("google:")) continue;
+    // oxlint-disable-next-line t3code/no-rpc-permission-bypass -- AuthClientSession.client is display metadata, not an RPC client.
     const displayName = session.client.label?.trim() || session.subject;
     const previous = bySubject.get(session.subject);
     bySubject.set(session.subject, {
@@ -35,11 +36,7 @@ export function googleTeamMembersFromSessions(
 
 export function useGoogleTeam(environmentId: EnvironmentId | null) {
   const access = useEnvironmentQuery(
-    environmentId === null
-      ? null
-      : // This read-only auth stream exposes server-owned session labels, not an environment action.
-        // oxlint-disable-next-line t3code/no-rpc-permission-bypass -- Auth metadata has no permission-aware command equivalent.
-        authEnvironment.accessChanges({ environmentId, input: null }),
+    environmentId === null ? null : authEnvironment.accessChanges({ environmentId, input: null }),
   );
   const members = useMemo(() => {
     const event = access.data;
@@ -48,10 +45,13 @@ export function useGoogleTeam(environmentId: EnvironmentId | null) {
       : [];
   }, [access.data]);
   const current = members.find((member) => member.current) ?? null;
-  return useMemo(() => ({
-    members,
-    current,
-    error: access.error,
-    isPending: access.isPending,
-  }), [members, current, access.error, access.isPending]);
+  return useMemo(
+    () => ({
+      members,
+      current,
+      error: access.error,
+      isPending: access.isPending,
+    }),
+    [members, current, access.error, access.isPending],
+  );
 }

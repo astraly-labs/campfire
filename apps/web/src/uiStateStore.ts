@@ -165,7 +165,9 @@ export function parsePersistedState(parsed: PersistedUiState): UiState {
   return {
     projectExpandedById,
     projectOrder,
-    threadAffiliationOverrideByThreadKey: sanitizeThreadAffiliationOverrides(parsed.threadAffiliationOverrideByThreadKey),
+    threadAffiliationOverrideByThreadKey: sanitizeThreadAffiliationOverrides(
+      parsed.threadAffiliationOverrideByThreadKey,
+    ),
     threadLastVisitedAtById: sanitizeTimestampRecord(parsed.threadLastVisitedAtById),
     threadChangedFilesExpandedById:
       parsed.threadChangedFilesExpansionVersion === THREAD_CHANGED_FILES_EXPANSION_VERSION
@@ -479,7 +481,8 @@ interface UiStateStore extends UiState {
 }
 
 export const useUiStateStore = create<UiStateStore>((set) => ({
-  setThreadAffiliation: (threadKey, override) => set((state) => setThreadAffiliation(state, threadKey, override)),
+  setThreadAffiliation: (threadKey, override) =>
+    set((state) => setThreadAffiliation(state, threadKey, override)),
   ...readPersistedState(),
   markThreadVisited: (threadId, visitedAt) =>
     set((state) => markThreadVisited(state, threadId, visitedAt)),

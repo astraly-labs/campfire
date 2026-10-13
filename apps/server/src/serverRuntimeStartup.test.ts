@@ -116,53 +116,65 @@ it.effect("enqueueCommand fails queued work when readiness fails", () =>
 );
 
 it.effect("rejects excess startup work without running it after readiness", () =>
-  Effect.scoped(Effect.gen(function* () {
-    const gate = yield* ServerRuntimeStartup.makeCommandGate;
-    const accepted = yield* Ref.make(0);
-    const rejected = yield* Ref.make(0);
-    const callers = [];
-    for (let index = 0; index < ServerRuntimeStartup.COMMAND_ADMISSION_CAPACITY; index += 1) {
-      callers.push(yield* gate.enqueueCommand(Ref.update(accepted, (count) => count + 1)).pipe(
-        Effect.forkScoped({ startImmediately: true }),
-      ));
-    }
-    // A disconnected caller cannot free a slot for work the startup worker
-    // still owns, or repeated disconnects could grow its retained queue.
-    yield* Fiber.interrupt(callers[0]!);
-    const refusal = yield* gate.enqueueCommand(Ref.update(rejected, (count) => count + 1)).pipe(Effect.flip);
-    assert.equal(refusal._tag, "ServerCommandOverloadedError");
-    assert.match(refusal.message, /retry/i);
-    assert.equal(yield* Ref.get(accepted), 0);
-    yield* gate.signalCommandReady;
-    yield* Effect.forEach(callers.slice(1), Fiber.join);
-    assert.equal(yield* Ref.get(accepted), ServerRuntimeStartup.COMMAND_ADMISSION_CAPACITY);
-    yield* gate.enqueueCommand(Ref.update(accepted, (count) => count + 1));
-    assert.equal(yield* Ref.get(accepted), ServerRuntimeStartup.COMMAND_ADMISSION_CAPACITY + 1);
-    assert.equal(yield* Ref.get(rejected), 0);
-  })),
+  Effect.scoped(
+    Effect.gen(function* () {
+      const gate = yield* ServerRuntimeStartup.makeCommandGate;
+      const accepted = yield* Ref.make(0);
+      const rejected = yield* Ref.make(0);
+      const callers = [];
+      for (let index = 0; index < ServerRuntimeStartup.COMMAND_ADMISSION_CAPACITY; index += 1) {
+        callers.push(
+          yield* gate
+            .enqueueCommand(Ref.update(accepted, (count) => count + 1))
+            .pipe(Effect.forkScoped({ startImmediately: true })),
+        );
+      }
+      // A disconnected caller cannot free a slot for work the startup worker
+      // still owns, or repeated disconnects could grow its retained queue.
+      yield* Fiber.interrupt(callers[0]!);
+      const refusal = yield* gate
+        .enqueueCommand(Ref.update(rejected, (count) => count + 1))
+        .pipe(Effect.flip);
+      assert.equal(refusal._tag, "ServerCommandOverloadedError");
+      assert.match(refusal.message, /retry/i);
+      assert.equal(yield* Ref.get(accepted), 0);
+      yield* gate.signalCommandReady;
+      yield* Effect.forEach(callers.slice(1), Fiber.join);
+      assert.equal(yield* Ref.get(accepted), ServerRuntimeStartup.COMMAND_ADMISSION_CAPACITY);
+      yield* gate.enqueueCommand(Ref.update(accepted, (count) => count + 1));
+      assert.equal(yield* Ref.get(accepted), ServerRuntimeStartup.COMMAND_ADMISSION_CAPACITY + 1);
+      assert.equal(yield* Ref.get(rejected), 0);
+    }),
+  ),
 );
 
 it.effect("bounds ready commands and releases admission on completion or interruption", () =>
-  Effect.scoped(Effect.gen(function* () {
-    const gate = yield* ServerRuntimeStartup.makeCommandGate;
-    yield* gate.signalCommandReady;
-    const release = yield* Deferred.make<void>();
-    const rejected = yield* Ref.make(0);
-    const callers = [];
-    for (let index = 0; index < ServerRuntimeStartup.COMMAND_ADMISSION_CAPACITY; index += 1) {
-      callers.push(yield* gate.enqueueCommand(Deferred.await(release)).pipe(
-        Effect.forkScoped({ startImmediately: true }),
-      ));
-    }
-    const refusal = yield* gate.enqueueCommand(Ref.update(rejected, (count) => count + 1)).pipe(Effect.flip);
-    assert.equal(refusal._tag, "ServerCommandOverloadedError");
-    yield* Fiber.interrupt(callers[0]!);
-    assert.equal(yield* gate.enqueueCommand(Effect.succeed("admitted")), "admitted");
-    yield* Deferred.succeed(release, undefined);
-    yield* Effect.forEach(callers.slice(1), Fiber.join);
-    assert.equal(yield* gate.enqueueCommand(Effect.succeed("recovered")), "recovered");
-    assert.equal(yield* Ref.get(rejected), 0);
-  })),
+  Effect.scoped(
+    Effect.gen(function* () {
+      const gate = yield* ServerRuntimeStartup.makeCommandGate;
+      yield* gate.signalCommandReady;
+      const release = yield* Deferred.make<void>();
+      const rejected = yield* Ref.make(0);
+      const callers = [];
+      for (let index = 0; index < ServerRuntimeStartup.COMMAND_ADMISSION_CAPACITY; index += 1) {
+        callers.push(
+          yield* gate
+            .enqueueCommand(Deferred.await(release))
+            .pipe(Effect.forkScoped({ startImmediately: true })),
+        );
+      }
+      const refusal = yield* gate
+        .enqueueCommand(Ref.update(rejected, (count) => count + 1))
+        .pipe(Effect.flip);
+      assert.equal(refusal._tag, "ServerCommandOverloadedError");
+      yield* Fiber.interrupt(callers[0]!);
+      assert.equal(yield* gate.enqueueCommand(Effect.succeed("admitted")), "admitted");
+      yield* Deferred.succeed(release, undefined);
+      yield* Effect.forEach(callers.slice(1), Fiber.join);
+      assert.equal(yield* gate.enqueueCommand(Effect.succeed("recovered")), "recovered");
+      assert.equal(yield* Ref.get(rejected), 0);
+    }),
+  ),
 );
 
 it.effect("resolveWelcomeBase derives cwd and project name from server config", () =>

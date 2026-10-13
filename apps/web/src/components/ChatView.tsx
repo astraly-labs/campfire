@@ -12225,7 +12225,15 @@ export default function ChatView(props: ChatViewProps) {
       cwd={activeWorkspaceRoot}
       checkpoints={serverProjection?.checkpoints}
     >
-      <ThreadCollaborationProvider key={routeThreadKey} thread={activeThread} projection={isServerThread ? serverProjection : null} project={activeProject} providers={serverConfig?.providers ?? []} settings={settings} cwd={activeWorkspaceRoot ?? undefined}>
+      <ThreadCollaborationProvider
+        key={routeThreadKey}
+        thread={activeThread}
+        projection={isServerThread ? serverProjection : null}
+        project={activeProject}
+        providers={serverConfig?.providers ?? []}
+        settings={settings}
+        cwd={activeWorkspaceRoot ?? undefined}
+      >
         {content}
       </ThreadCollaborationProvider>
     </FileMetadataThreadProvider>

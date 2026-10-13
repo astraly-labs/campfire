@@ -736,7 +736,10 @@ const layerBase: Layer.Layer<
             const subscription = yield* PubSub.subscribe(committedHead);
             const highWater = yield* eventStore.latestSequence();
             let cursor = afterSequence;
-            return Stream.concat(Stream.make(highWater), Stream.fromSubscription(subscription)).pipe(
+            return Stream.concat(
+              Stream.make(highWater),
+              Stream.fromSubscription(subscription),
+            ).pipe(
               Stream.flatMap((throughSequence) => {
                 if (throughSequence <= cursor) return Stream.empty;
                 return catchUp({
@@ -745,10 +748,18 @@ const layerBase: Layer.Layer<
                   ...(input?.threadId === undefined ? {} : { threadId: input.threadId }),
                   ...(input?.eventType === undefined ? {} : { eventType: input.eventType }),
                 }).pipe(
-                  Stream.tap((stored) => Effect.sync(() => { cursor = stored.sequence; })),
-                  Stream.concat(Stream.fromEffect(Effect.sync(() => {
-                    cursor = Math.max(cursor, throughSequence);
-                  })).pipe(Stream.drain)),
+                  Stream.tap((stored) =>
+                    Effect.sync(() => {
+                      cursor = stored.sequence;
+                    }),
+                  ),
+                  Stream.concat(
+                    Stream.fromEffect(
+                      Effect.sync(() => {
+                        cursor = Math.max(cursor, throughSequence);
+                      }),
+                    ).pipe(Stream.drain),
+                  ),
                 );
               }),
             );

@@ -333,7 +333,7 @@ const mutateProject = Effect.fn("EnvironmentCommands.mutateProject")(function* (
         readonly workspaceRoot: string;
         readonly createWorkspaceRootIfMissing?: boolean;
         readonly defaultModelSelection?: ModelSelection | null;
-  readonly defaultReviewModelSelection?: ModelSelection | null;
+        readonly defaultReviewModelSelection?: ModelSelection | null;
         readonly scripts?: ReadonlyArray<ProjectScript>;
       }
     | {
@@ -343,7 +343,7 @@ const mutateProject = Effect.fn("EnvironmentCommands.mutateProject")(function* (
         readonly title?: string;
         readonly workspaceRoot?: string;
         readonly defaultModelSelection?: ModelSelection | null;
-  readonly defaultReviewModelSelection?: ModelSelection | null;
+        readonly defaultReviewModelSelection?: ModelSelection | null;
         readonly scripts?: ReadonlyArray<ProjectScript>;
       }
     | {
@@ -371,7 +371,9 @@ export const createProject = Effect.fn("EnvironmentCommands.createProject")(func
     ...(input.defaultModelSelection === undefined
       ? {}
       : { defaultModelSelection: input.defaultModelSelection }),
-    ...(input.defaultReviewModelSelection === undefined ? {} : { defaultReviewModelSelection: input.defaultReviewModelSelection }),
+    ...(input.defaultReviewModelSelection === undefined
+      ? {}
+      : { defaultReviewModelSelection: input.defaultReviewModelSelection }),
     ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
   });
 });
@@ -394,7 +396,9 @@ export const updateProject = Effect.fn("EnvironmentCommands.updateProject")(func
     ...(input.defaultThreadEnvMode === undefined
       ? {}
       : { defaultThreadEnvMode: input.defaultThreadEnvMode }),
-    ...(input.defaultReviewModelSelection === undefined ? {} : { defaultReviewModelSelection: input.defaultReviewModelSelection }),
+    ...(input.defaultReviewModelSelection === undefined
+      ? {}
+      : { defaultReviewModelSelection: input.defaultReviewModelSelection }),
     ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
   });
 });
@@ -416,7 +420,9 @@ export const createThread = Effect.fn("EnvironmentCommands.createThread")(functi
   return yield* dispatch({
     type: "thread.create",
     ...(input.kind === undefined ? {} : { kind: input.kind }),
-    ...(input.reviewPullRequestNumber === undefined ? {} : { reviewPullRequestNumber: input.reviewPullRequestNumber }),
+    ...(input.reviewPullRequestNumber === undefined
+      ? {}
+      : { reviewPullRequestNumber: input.reviewPullRequestNumber }),
     commandId: yield* allocateCommandId(input),
     createdBy: "user",
     creationSource: input.creationSource ?? "web",
@@ -1128,7 +1134,9 @@ export interface CreateSideThreadInput extends ThreadCommandInput {
   readonly anchorMessageId?: MessageId;
 }
 
-export const createSideThread = Effect.fn("EnvironmentCommands.createSideThread")(function* (input: CreateSideThreadInput) {
+export const createSideThread = Effect.fn("EnvironmentCommands.createSideThread")(function* (
+  input: CreateSideThreadInput,
+) {
   return yield* dispatch({
     ...input,
     type: "sidethread.create",
@@ -1148,21 +1156,27 @@ export interface PostSideThreadMessageInput extends ThreadCommandInput {
   readonly replyToSideThreadMessageId?: SideThreadMessageId;
 }
 
-export const postSideThreadMessage = Effect.fn("EnvironmentCommands.postSideThreadMessage")(function* (input: PostSideThreadMessageInput) {
-  const uploads = (input.attachments ?? []).filter((attachment) => attachment.type === "image");
-  const images = yield* persistAttachments(input.threadId, MessageId.make(input.messageId), uploads);
-  const attachments = yield* Schema.decodeUnknownEffect(Schema.Array(SideThreadAttachment))([
-    ...images,
-    ...(input.attachments ?? []).filter((attachment) => attachment.type === "gif"),
-  ]);
-  return yield* dispatch({
-    ...input,
-    attachments,
-    type: "sidethread.message.post",
-    commandId: yield* allocateCommandId(input),
-    createdAt: input.createdAt ?? DateTime.formatIso(yield* DateTime.now),
-  });
-});
+export const postSideThreadMessage = Effect.fn("EnvironmentCommands.postSideThreadMessage")(
+  function* (input: PostSideThreadMessageInput) {
+    const uploads = (input.attachments ?? []).filter((attachment) => attachment.type === "image");
+    const images = yield* persistAttachments(
+      input.threadId,
+      MessageId.make(input.messageId),
+      uploads,
+    );
+    const attachments = yield* Schema.decodeUnknownEffect(Schema.Array(SideThreadAttachment))([
+      ...images,
+      ...(input.attachments ?? []).filter((attachment) => attachment.type === "gif"),
+    ]);
+    return yield* dispatch({
+      ...input,
+      attachments,
+      type: "sidethread.message.post",
+      commandId: yield* allocateCommandId(input),
+      createdAt: input.createdAt ?? DateTime.formatIso(yield* DateTime.now),
+    });
+  },
+);
 
 export interface ReactToSideThreadMessageInput extends ThreadCommandInput {
   readonly sideThreadId: SideThreadId;
@@ -1170,14 +1184,16 @@ export interface ReactToSideThreadMessageInput extends ThreadCommandInput {
   readonly emoji: string;
 }
 
-export const reactToSideThreadMessage = Effect.fn("EnvironmentCommands.reactToSideThreadMessage")(function* (input: ReactToSideThreadMessageInput) {
-  return yield* dispatch({
-    ...input,
-    type: "sidethread.message.react",
-    commandId: yield* allocateCommandId(input),
-    createdAt: input.createdAt ?? DateTime.formatIso(yield* DateTime.now),
-  });
-});
+export const reactToSideThreadMessage = Effect.fn("EnvironmentCommands.reactToSideThreadMessage")(
+  function* (input: ReactToSideThreadMessageInput) {
+    return yield* dispatch({
+      ...input,
+      type: "sidethread.message.react",
+      commandId: yield* allocateCommandId(input),
+      createdAt: input.createdAt ?? DateTime.formatIso(yield* DateTime.now),
+    });
+  },
+);
 
 export interface EditSideThreadMessageInput extends ThreadCommandInput {
   readonly sideThreadId: SideThreadId;
@@ -1185,21 +1201,25 @@ export interface EditSideThreadMessageInput extends ThreadCommandInput {
   readonly text: string;
 }
 
-export const editSideThreadMessage = Effect.fn("EnvironmentCommands.editSideThreadMessage")(function* (input: EditSideThreadMessageInput) {
-  return yield* dispatch({
-    ...input,
-    type: "sidethread.message.edit",
-    commandId: yield* allocateCommandId(input),
-    createdAt: input.createdAt ?? DateTime.formatIso(yield* DateTime.now),
-  });
-});
+export const editSideThreadMessage = Effect.fn("EnvironmentCommands.editSideThreadMessage")(
+  function* (input: EditSideThreadMessageInput) {
+    return yield* dispatch({
+      ...input,
+      type: "sidethread.message.edit",
+      commandId: yield* allocateCommandId(input),
+      createdAt: input.createdAt ?? DateTime.formatIso(yield* DateTime.now),
+    });
+  },
+);
 
 export interface MarkSideThreadReadInput extends ThreadCommandInput {
   readonly sideThreadId: SideThreadId;
   readonly lastReadAt: string;
 }
 
-export const markSideThreadRead = Effect.fn("EnvironmentCommands.markSideThreadRead")(function* (input: MarkSideThreadReadInput) {
+export const markSideThreadRead = Effect.fn("EnvironmentCommands.markSideThreadRead")(function* (
+  input: MarkSideThreadReadInput,
+) {
   return yield* dispatch({
     ...input,
     type: "sidethread.mark-read",
@@ -1210,10 +1230,11 @@ export const markSideThreadRead = Effect.fn("EnvironmentCommands.markSideThreadR
 
 export interface ArchiveSideThreadInput extends ThreadCommandInput {
   readonly sideThreadId: SideThreadId;
-
 }
 
-export const archiveSideThread = Effect.fn("EnvironmentCommands.archiveSideThread")(function* (input: ArchiveSideThreadInput) {
+export const archiveSideThread = Effect.fn("EnvironmentCommands.archiveSideThread")(function* (
+  input: ArchiveSideThreadInput,
+) {
   return yield* dispatch({
     ...input,
     type: "sidethread.archive",

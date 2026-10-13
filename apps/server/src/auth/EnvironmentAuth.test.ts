@@ -712,23 +712,32 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
         headers: Headers.fromInput({ host: "localhost:3773", origin: "https://team.ts.net:10000" }),
       });
       const ticket = yield* serverAuth.issueWebSocketTicket(authenticated);
-      const upgrade = (origin: string) => serverAuth.authenticateWebSocketUpgrade(HttpServerRequest.fromWeb(new Request(`http://localhost:3773/ws?wsTicket=${ticket.ticket}`, {
-        headers: { host: "localhost:3773", origin },
-      })));
+      const upgrade = (origin: string) =>
+        serverAuth.authenticateWebSocketUpgrade(
+          HttpServerRequest.fromWeb(
+            new Request(`http://localhost:3773/ws?wsTicket=${ticket.ticket}`, {
+              headers: { host: "localhost:3773", origin },
+            }),
+          ),
+        );
       expect((yield* Effect.flip(upgrade("https://attacker.example")))._tag).toBe(
         "ServerAuthInvalidCredentialError",
       );
       const verified = yield* upgrade("https://team.ts.net:10000");
       expect(verified.subject).toBe("google:alice");
       expect(verified.displayName).toBe("Alice");
-    }).pipe(Effect.provide(layerEnvironmentAuth({
-      googleOidc: {
-        clientId: "client",
-        clientSecret: "secret",
-        redirectUri: new URL("https://team.ts.net:10000/auth/google/callback"),
-        allowedEmails: ["alice@example.com"],
-      },
-    }))),
+    }).pipe(
+      Effect.provide(
+        layerEnvironmentAuth({
+          googleOidc: {
+            clientId: "client",
+            clientSecret: "secret",
+            redirectUri: new URL("https://team.ts.net:10000/auth/google/callback"),
+            allowedEmails: ["alice@example.com"],
+          },
+        }),
+      ),
+    ),
   );
 
   it.effect("accepts cookie sessions on HTTP requests only from the app's own origins", () =>

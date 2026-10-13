@@ -294,10 +294,14 @@ export function presentThreadShell(
           },
     deletedAt: nullableIso(thread.deletedAt),
     source: thread,
-    ...(thread.collaborationCreatedBy === undefined ? {} : { collaborationCreatedBy: thread.collaborationCreatedBy }),
+    ...(thread.collaborationCreatedBy === undefined
+      ? {}
+      : { collaborationCreatedBy: thread.collaborationCreatedBy }),
     ...(thread.teamDiscussion === undefined ? {} : { teamDiscussion: thread.teamDiscussion }),
     ...(thread.kind === undefined ? {} : { kind: thread.kind }),
-    ...(thread.reviewPullRequestNumber === undefined ? {} : { reviewPullRequestNumber: thread.reviewPullRequestNumber }),
+    ...(thread.reviewPullRequestNumber === undefined
+      ? {}
+      : { reviewPullRequestNumber: thread.reviewPullRequestNumber }),
   };
 }
 

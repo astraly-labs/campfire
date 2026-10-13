@@ -161,7 +161,9 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
     ]);
     expect(updated?.messages).toBe(emptyProjection.messages);
     expect(updated?.visibleTurnItems).toBe(emptyProjection.visibleTurnItems);
-    expect(applyOrchestrationV2ProjectionEvent(updated, reply)?.sideThreads?.[0]?.messages).toHaveLength(2);
+    expect(
+      applyOrchestrationV2ProjectionEvent(updated, reply)?.sideThreads?.[0]?.messages,
+    ).toHaveLength(2);
   });
 
   it("keeps live token usage when the terminal provider turn omits it", () => {

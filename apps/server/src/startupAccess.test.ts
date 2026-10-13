@@ -79,7 +79,6 @@ it("formats headless serve output with the connection string, token, pairing url
   assert.isTrue(output.includes("█") || output.includes("▀") || output.includes("▄"));
 });
 
-
 it("uses the configured public origin for Google sign-in", () => {
   expect(googleLoginUrl(new URL("https://team.ts.net:10000/auth/google/callback"))).toBe(
     "https://team.ts.net:10000/auth/google/login?returnTo=%2F",

@@ -13,4 +13,3 @@ export interface CollaborationContext {
 }
 export const ThreadCollaborationContext = createContext<CollaborationContext | null>(null);
 export const useThreadCollaboration = () => use(ThreadCollaborationContext);
-

@@ -522,9 +522,15 @@ const make = Effect.gen(function* () {
       const legacyPullRequests = legacy.pullRequests ?? [];
       const repaired: OrchestrationV2AppThread = {
         ...current,
-        collaborationCreatedBy: current.collaborationCreatedBy === undefined ? legacy.collaborationCreatedBy ?? null : current.collaborationCreatedBy,
+        collaborationCreatedBy:
+          current.collaborationCreatedBy === undefined
+            ? (legacy.collaborationCreatedBy ?? null)
+            : current.collaborationCreatedBy,
         kind: current.kind ?? legacy.kind ?? "default",
-        reviewPullRequestNumber: current.reviewPullRequestNumber === undefined ? legacy.reviewPullRequestNumber ?? null : current.reviewPullRequestNumber,
+        reviewPullRequestNumber:
+          current.reviewPullRequestNumber === undefined
+            ? (legacy.reviewPullRequestNumber ?? null)
+            : current.reviewPullRequestNumber,
         pinnedAt: current.pinnedAt === undefined ? legacy.pinnedAt : current.pinnedAt,
         autoSettleDisabledAt:
           current.autoSettleDisabledAt === undefined
@@ -559,14 +565,22 @@ const make = Effect.gen(function* () {
         activeOrderKey:
           current.activeOrderKey === undefined ? legacy.activeOrderKey : current.activeOrderKey,
       };
-      const legacySideThreads = canonicalizeSideThreads(repaired.id, yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Array(SideThread)))(row.side_threads_json));
+      const legacySideThreads = canonicalizeSideThreads(
+        repaired.id,
+        yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Array(SideThread)))(
+          row.side_threads_json,
+        ),
+      );
       // Later schema additions can require another repair for the same thread.
       const repairId = yield* randomUuidV4;
       yield* eventSink.write({
         events: [
           ...legacySideThreads.map((sideThread): OrchestrationV2DomainEvent => ({
-            id: EventId.make(`${IMPORT_EVENT_PREFIX}:side-thread:${sideThread.id}`), type: "sidethread.imported",
-            threadId: repaired.id, occurredAt: repaired.updatedAt, payload: { threadId: repaired.id, sideThread },
+            id: EventId.make(`${IMPORT_EVENT_PREFIX}:side-thread:${sideThread.id}`),
+            type: "sidethread.imported",
+            threadId: repaired.id,
+            occurredAt: repaired.updatedAt,
+            payload: { threadId: repaired.id, sideThread },
           })),
           {
             id: EventId.make(

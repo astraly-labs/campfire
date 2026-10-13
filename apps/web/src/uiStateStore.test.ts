@@ -342,10 +342,14 @@ describe("uiStateStore persistence", () => {
   });
 
   it("restores manual thread ownership for each environment", () => {
-    persistState(makeUiState({ threadAffiliationOverrideByThreadKey: {
-      "env-one:thread-1": "mine",
-      "env-two:thread-1": "other",
-    } }));
+    persistState(
+      makeUiState({
+        threadAffiliationOverrideByThreadKey: {
+          "env-one:thread-1": "mine",
+          "env-two:thread-1": "other",
+        },
+      }),
+    );
 
     const persisted = JSON.parse(localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}");
     expect(parsePersistedState(persisted).threadAffiliationOverrideByThreadKey).toEqual({

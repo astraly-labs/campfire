@@ -1,4 +1,8 @@
-import { useCollaborationSidebarThreads, CollaborationThreadOwner, ReviewThreadBadge } from "../collaboration/SidebarCollaboration";
+import {
+  useCollaborationSidebarThreads,
+  CollaborationThreadOwner,
+  ReviewThreadBadge,
+} from "../collaboration/SidebarCollaboration";
 import { TeamInboxNav } from "./sidebar/TeamInboxNav";
 import { type EnvironmentId, type ScopedProjectRef } from "@t3tools/contracts";
 import { ThreadHoverCard, ThreadHoverCardPopup } from "./ThreadHoverCard";
@@ -1672,38 +1676,41 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
         className="min-w-0 flex-1 rounded-sm border border-input bg-card px-1 text-sm font-medium text-card-foreground outline-none focus:border-foreground"
       />
     ) : (
-      <><CollaborationThreadOwner thread={thread} />{thread.kind === "review" ? <ReviewThreadBadge thread={thread} /> : null}
-      <span
-        aria-hidden
-        className={cn(
-          "min-w-0 flex-1 text-sm transition-opacity motion-reduce:transition-none",
-          shouldRecede ? "font-normal" : "font-medium",
-          variant === "card"
-            ? cn(
-                "truncate",
-                shouldRecede
-                  ? "text-secondary-label"
-                  : isUnread || isWoke || status === "input"
-                    ? "text-foreground"
-                    : status === "failed"
-                      ? "text-foreground/95"
-                      : "text-foreground/90",
-              )
-            : cn(
-                "truncate group-focus-within/sidebar-row:text-foreground group-hover/sidebar-row:text-foreground",
-                shouldRecede
-                  ? "text-secondary-label/70"
-                  : props.isActive || isWoke || status === "input"
-                    ? "text-foreground"
-                    : isUnread
-                      ? "text-muted-foreground"
-                      : "text-secondary-label/70",
-              ),
-          isRegeneratingTitle && "opacity-55",
-        )}
-      >
-        {thread.title}
-      </span></>
+      <>
+        <CollaborationThreadOwner thread={thread} />
+        {thread.kind === "review" ? <ReviewThreadBadge thread={thread} /> : null}
+        <span
+          aria-hidden
+          className={cn(
+            "min-w-0 flex-1 text-sm transition-opacity motion-reduce:transition-none",
+            shouldRecede ? "font-normal" : "font-medium",
+            variant === "card"
+              ? cn(
+                  "truncate",
+                  shouldRecede
+                    ? "text-secondary-label"
+                    : isUnread || isWoke || status === "input"
+                      ? "text-foreground"
+                      : status === "failed"
+                        ? "text-foreground/95"
+                        : "text-foreground/90",
+                )
+              : cn(
+                  "truncate group-focus-within/sidebar-row:text-foreground group-hover/sidebar-row:text-foreground",
+                  shouldRecede
+                    ? "text-secondary-label/70"
+                    : props.isActive || isWoke || status === "input"
+                      ? "text-foreground"
+                      : isUnread
+                        ? "text-muted-foreground"
+                        : "text-secondary-label/70",
+                ),
+            isRegeneratingTitle && "opacity-55",
+          )}
+        >
+          {thread.title}
+        </span>
+      </>
     );
   const accessibleTitle = isRenaming ? null : <span className="sr-only">{thread.title}</span>;
 
@@ -2375,7 +2382,9 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
                   thread.titleRegeneration != null && "opacity-55",
                 )}
               >
-                <CollaborationThreadOwner thread={thread} /> {thread.kind === "review" ? <ReviewThreadBadge thread={thread} /> : null} {thread.title}
+                <CollaborationThreadOwner thread={thread} />{" "}
+                {thread.kind === "review" ? <ReviewThreadBadge thread={thread} /> : null}{" "}
+                {thread.title}
               </span>
               <span id={`${props.resultId}-pr`} className="contents">
                 <ThreadSearchPullRequestNumber
@@ -2424,7 +2433,10 @@ export default function Sidebar() {
   const projects = useProjects();
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const allCollaborationThreads = useThreadShells();
-  const { threads, controls: collaborationControls } = useCollaborationSidebarThreads(allCollaborationThreads, projects);
+  const { threads, controls: collaborationControls } = useCollaborationSidebarThreads(
+    allCollaborationThreads,
+    projects,
+  );
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);

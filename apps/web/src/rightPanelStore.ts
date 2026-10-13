@@ -472,7 +472,8 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                     const kind = (surface as { kind?: string }).kind;
                     if (kind === "plan" || kind === "agents") return [];
                     if (kind === "artifact") {
-                      if (!("absolutePath" in surface) || typeof surface.absolutePath !== "string") return [];
+                      if (!("absolutePath" in surface) || typeof surface.absolutePath !== "string")
+                        return [];
                       return [fileSurface(surface.absolutePath, null, 0)];
                     }
                     if (surface.kind === "file") {

@@ -65,7 +65,10 @@ export const layer = HttpApiBuilder.group(
             yield* requireEnvironmentScope(scope);
           }
           const principal = yield* EnvironmentAuthenticatedPrincipal;
-          const operation = projectMutationOperation(projects, withAuthenticatedCollaboration(args.payload, principal));
+          const operation = projectMutationOperation(
+            projects,
+            withAuthenticatedCollaboration(args.payload, principal),
+          );
           return yield* startup
             .enqueueCommand(operation)
             .pipe(traceLocalHandlerWork, Effect.catch(failProjectMutation));

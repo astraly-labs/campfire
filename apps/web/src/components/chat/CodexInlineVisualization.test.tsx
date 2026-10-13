@@ -18,5 +18,4 @@ describe("splitCodexInlineVisualizations", () => {
     const text = 'See ::codex-inline-vis{file="../secret.html"}';
     expect(splitCodexInlineVisualizations(text)).toEqual([{ kind: "markdown", text, offset: 0 }]);
   });
-
 });

@@ -40,10 +40,7 @@ export function TeamInboxNav() {
     <SidebarGroup>
       <SidebarMenu>
         <SidebarMenuItem>
-          <SidebarMenuButton
-            isActive={pathname === "/inbox"}
-            onClick={openInbox}
-          >
+          <SidebarMenuButton isActive={pathname === "/inbox"} onClick={openInbox}>
             <InboxIcon className="size-4 shrink-0" />
             <span className="min-w-0 flex-1 truncate text-left">Inbox</span>
             {unreadCount > 0 ? (
