@@ -1,4 +1,5 @@
 import {
+  ChatAttachmentId,
   CheckpointId,
   CheckpointRef,
   CheckpointScopeId,
@@ -13,9 +14,13 @@ import {
   ProviderDriverKind,
   RunId,
   RuntimeRequestId,
+  SideThreadId,
+  SideThreadMessageId,
   ThreadId,
   TurnItemId,
   WS_METHODS,
+  type ChatAttachment,
+  type PersistChatAttachmentsInput,
   type OrchestrationV2Command,
   type OrchestrationV2ThreadLaunchInput,
   type OrchestrationV2ThreadProjection,
@@ -47,6 +52,7 @@ import {
   interruptThreadTurn,
   mergeThreadBack,
   promoteQueuedRun,
+  postSideThreadMessage,
   reorderActiveThread,
   reorderQueuedRun,
   revertThreadCheckpoint,
@@ -79,6 +85,8 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
   readonly projection?: OrchestrationV2ThreadProjection;
   readonly projectionRequests?: ThreadId[];
   readonly advertiseServerResolvedCommandContext?: boolean;
+  readonly attachmentRequests?: PersistChatAttachmentsInput[];
+  readonly persistedAttachments?: ReadonlyArray<ChatAttachment>;
 }) {
   const client = {
     [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: OrchestrationV2Command) =>
@@ -101,6 +109,12 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
           projection: input.projection ?? v2Projection,
           resumed: false,
         };
+      }),
+    [WS_METHODS.assetsPersistChatAttachments]: (request: PersistChatAttachmentsInput) =>
+      Effect.sync(() => {
+        expect(input.commands).toHaveLength(0);
+        input.attachmentRequests?.push(request);
+        return { attachments: input.persistedAttachments ?? [] };
       }),
     [WS_METHODS.projectsMutate]: (mutation: ProjectMutation) =>
       Effect.sync(() => {
@@ -149,6 +163,59 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
 });
 
 describe("V2 environment commands", () => {
+  it.effect("uploads team discussion images before dispatching durable attachment references", () =>
+    Effect.gen(function* () {
+      const commands: OrchestrationV2Command[] = [];
+      const attachmentRequests: PersistChatAttachmentsInput[] = [];
+      const image = {
+        type: "image",
+        name: "screenshot.png",
+        mimeType: "image/png",
+        sizeBytes: 3,
+        dataUrl: "data:image/png;base64,YWJj",
+      } as const;
+      const stored = {
+        type: "image",
+        id: ChatAttachmentId.make("stored-image"),
+        name: image.name,
+        mimeType: image.mimeType,
+        sizeBytes: image.sizeBytes,
+      } as const;
+      const gif = {
+        type: "gif",
+        url: "https://media.giphy.com/media/test/giphy.gif",
+        previewUrl: "https://media.giphy.com/media/test/200w.gif",
+        width: 200,
+        height: 100,
+      } as const;
+      const messageId = SideThreadMessageId.make("team-message");
+      const supervisor = yield* makeSupervisor({
+        commands, projects: [], attachmentRequests, persistedAttachments: [stored],
+      });
+
+      yield* postSideThreadMessage({
+        commandId: CommandId.make("post-team-message"),
+        threadId: v2ThreadId,
+        sideThreadId: SideThreadId.make(`thread:${v2ThreadId}`),
+        messageId,
+        text: "Look at this",
+        attachments: [image, gif],
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+      expect(attachmentRequests).toEqual([{
+        threadId: v2ThreadId,
+        messageId,
+        attachments: [image],
+      }]);
+      expect(commands).toEqual([expect.objectContaining({
+        type: "sidethread.message.post",
+        messageId,
+        text: "Look at this",
+        attachments: [stored, gif],
+      })]);
+    }).pipe(Effect.provide(layerTestCrypto)),
+  );
+
   it.effect("routes projects through the event-sourced project transport", () =>
     Effect.gen(function* () {
       const projects: ProjectMutation[] = [];
