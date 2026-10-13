@@ -140,6 +140,7 @@ const makeHarness = Effect.fn(function* (openGate?: Deferred.Deferred<void>) {
     getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
     planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
     openSession: (input) => Effect.gen(function* () {
+      expect(input.lifetime).toBe("ephemeral");
       const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
       const started = yield* Queue.unbounded<ProviderAdapterV2TurnInput>();
       const control = { events, started, closeCount: 0, subscriptionCount: 0 };

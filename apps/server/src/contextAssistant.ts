@@ -186,6 +186,7 @@ export function makeContextAssistantManager(dependencies: ContextAssistantDepend
       const adapter = yield* dependencies.adapters.get(thread.modelSelection.instanceId);
       const runtime = yield* adapter
         .openSession({
+          lifetime: "ephemeral",
           threadId,
           providerSessionId,
           modelSelection: thread.modelSelection,
