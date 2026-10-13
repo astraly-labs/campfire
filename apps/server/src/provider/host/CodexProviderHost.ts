@@ -8,6 +8,7 @@ import {
   type ProviderSessionId,
 } from "@t3tools/contracts";
 import * as Adapter from "@t3tools/provider-core/server/ProviderAdapter";
+import type { ProviderAdapterDriverCreateError } from "@t3tools/provider-core/server/adapterDriver";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -37,7 +38,10 @@ export interface HostedCodexAdapter {
     input: typeof Protocol.OpenSession.Type,
     runtime: typeof Protocol.EffectiveRuntime.Type | undefined,
     scope: Scope.Closeable,
-  ) => Effect.Effect<Adapter.ProviderAdapterV2SessionRuntime, Adapter.ProviderAdapterV2Error>;
+  ) => Effect.Effect<
+    Adapter.ProviderAdapterV2SessionRuntime,
+    Adapter.ProviderAdapterV2Error | ProviderAdapterDriverCreateError
+  >;
   readonly close: () => Promise<void>;
 }
 export interface CodexProviderHostServerOptions {
