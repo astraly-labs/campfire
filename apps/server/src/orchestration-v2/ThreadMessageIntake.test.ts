@@ -11,6 +11,8 @@ import {
   ProjectId,
   ProviderInstanceId,
   RuntimeRequestId,
+  SideThreadId,
+  SideThreadMessageId,
   ThreadId,
   TurnItemId,
   type OrchestrationV2Command,
@@ -815,6 +817,46 @@ it.effect("releases claimed copies when a project disables the message's provide
         entry.startsWith("thread-disabled-send-"),
       ),
     ).toEqual([]);
+    expect(NodeFS.existsSync(NodePath.join(config.attachmentsDir, `${pendingId}.png`))).toBe(true);
+  }).pipe(Effect.provide(layerIntakeTest)),
+);
+
+
+it.effect("claims discussion images, retains GIFs and releases an unreferenced replay copy", () =>
+  Effect.gen(function* () {
+    const config = yield* ServerConfig.ServerConfig;
+    const threadId = ThreadId.make("discussion-replay");
+    const pendingId = ChatAttachmentId.make(createPendingAttachmentId()!);
+    NodeFS.writeFileSync(NodePath.join(config.attachmentsDir, `${pendingId}.png`), new Uint8Array([1, 2, 3]));
+    const earlierAttachment = { type: "image" as const, id: ChatAttachmentId.make("discussion-replay-00000000-0000-4000-8000-0000000000aa"), name: "screen.png", mimeType: "image/png", sizeBytes: 3 };
+    NodeFS.writeFileSync(NodePath.join(config.attachmentsDir, `${earlierAttachment.id}.png`), new Uint8Array([4, 4, 4]));
+    const author = { subject: "google:alice", displayName: "Alice" };
+    const sideThreadId = SideThreadId.make(`thread:${threadId}`);
+    const messageId = SideThreadMessageId.make("discussion-message");
+    const gif = { type: "gif" as const, url: "https://example.com/celebrate.gif", previewUrl: "https://example.com/celebrate.png", width: 80, height: 80 };
+    const source = { kind: "snap-shot" as const, capturedAt: DateTime.formatIso(NOW), appName: "Browser", windowTitle: "Review" };
+    const captured: OrchestrationV2ServerCommand[] = [];
+    const storedEvents: OrchestrationV2StoredEvent[] = [{ sequence: 1, commandId: null, event: {
+      id: EventId.make("discussion-posted"), type: "sidethread.message-posted", threadId, occurredAt: NOW,
+      payload: { threadId, sideThreadId, messageId, author, text: "Review", attachments: [earlierAttachment, gif], createdAt: DateTime.formatIso(NOW) },
+    } }];
+    yield* dispatchCommand({
+      type: "sidethread.message.post", commandId: CommandId.make("discussion-replay"), threadId, sideThreadId, messageId,
+      collaborationUser: author, text: "Review", createdAt: DateTime.formatIso(NOW),
+      attachments: [{ type: "image", id: pendingId, name: "screen.png", mimeType: "image/png", sizeBytes: 3, source }, gif],
+    }).pipe(Effect.provide(Layer.mock(ThreadManagementService.ThreadManagementService)({ dispatch: (command) => {
+      captured.push(command);
+      return Effect.succeed({ sequence: 1, storedEvents });
+    } })));
+    const posted = captured[0];
+    expect(posted?.type).toBe("sidethread.message.post");
+    if (posted?.type !== "sidethread.message.post") return;
+    const image = posted.attachments?.find((attachment) => attachment.type === "image");
+    expect(image?.source).toEqual(source);
+    expect(posted.attachments).toContainEqual(gif);
+    expect(image?.id).not.toBe(pendingId);
+    expect(NodeFS.existsSync(NodePath.join(config.attachmentsDir, `${image?.id}.png`))).toBe(false);
+    expect(NodeFS.readFileSync(NodePath.join(config.attachmentsDir, `${earlierAttachment.id}.png`))).toEqual(Buffer.from([4, 4, 4]));
     expect(NodeFS.existsSync(NodePath.join(config.attachmentsDir, `${pendingId}.png`))).toBe(true);
   }).pipe(Effect.provide(layerIntakeTest)),
 );
