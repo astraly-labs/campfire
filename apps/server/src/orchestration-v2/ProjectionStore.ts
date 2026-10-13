@@ -307,7 +307,7 @@ export interface ProjectionRecordFilter {
 }
 export type ProjectionRecordField = Exclude<
   keyof OrchestrationV2ThreadProjection,
-  "thread" | "updatedAt" | "visibleTurnItems"
+  "thread" | "updatedAt" | "visibleTurnItems" | "sideThreads"
 >;
 export type ProjectionRecords<K extends ProjectionRecordField> = Pick<
   OrchestrationV2ThreadProjection,
@@ -3328,7 +3328,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         }
         const orderedMessages = sortMessagesByTurnItemOrder(messages, turnItems, messageOrdinals);
         const sideThreadRows =
-          yield* sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_side_threads WHERE thread_id = ${threadId}`;
+          fields === undefined
+            ? yield* sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_side_threads WHERE thread_id = ${threadId}`
+            : [];
         const sideThreads =
           sideThreadRows[0] === undefined
             ? []
@@ -4785,6 +4787,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       FROM orchestration_v2_projection_messages AS message,
         json_each(message.payload_json, '$.attachments') AS attachment
       WHERE message.thread_id = ${threadId}
+      UNION
+      SELECT DISTINCT json_extract(attachment.value, '$.id') AS id
+      FROM orchestration_v2_projection_side_threads AS side,
+        json_each(side.payload_json) AS discussion,
+        json_each(discussion.value, '$.messages') AS message,
+        json_each(message.value, '$.attachments') AS attachment
+      WHERE side.thread_id = ${threadId} AND json_extract(attachment.value, '$.type') = 'image'
     `,
         // Pages published by html_render, and captured MCP App documents,
         // live in the attachment store too.
