@@ -22,6 +22,7 @@ import {
   ChatGptHandoffState,
 } from "./providerSetup.ts";
 import { PRESENCE_WS_METHODS, PresenceHeartbeatInput, PresenceHeartbeatResult, PresenceSnapshot } from "./presence.ts";
+import { ContextAssistantAskInput, ContextAssistantCloseInput, ContextAssistantCloseResult, ContextAssistantError, ContextAssistantStreamEvent } from "./contextAssistant.ts";
 import * as Schema from "effect/Schema";
 import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
@@ -371,6 +372,8 @@ import { VcsError } from "./vcs.ts";
 import { Project, ProjectMutation, ProjectMutationError } from "./project.ts";
 
 export const WS_METHODS = {
+  contextAssistantAsk: "contextAssistant.ask",
+  contextAssistantClose: "contextAssistant.close",
   // Project registry methods
   projectsList: "projects.list",
   projectsAdd: "projects.add",
@@ -1876,6 +1879,19 @@ export class RpcScopeAuthorization extends RpcMiddleware.Service<RpcScopeAuthori
   { error: EnvironmentAuthorizationError },
 ) {}
 
+const WsContextAssistantAskRpc = Rpc.make(WS_METHODS.contextAssistantAsk, {
+  payload: ContextAssistantAskInput,
+  success: ContextAssistantStreamEvent,
+  error: ContextAssistantError,
+  stream: true,
+});
+
+const WsContextAssistantCloseRpc = Rpc.make(WS_METHODS.contextAssistantClose, {
+  payload: ContextAssistantCloseInput,
+  success: ContextAssistantCloseResult,
+  error: ContextAssistantError,
+});
+
 const WsPresenceHeartbeatRpc = Rpc.make(PRESENCE_WS_METHODS.heartbeat, {
   payload: PresenceHeartbeatInput,
   success: PresenceHeartbeatResult,
@@ -1888,6 +1904,8 @@ const WsPresenceSubscribeRpc = Rpc.make(PRESENCE_WS_METHODS.subscribe, {
 });
 
 export const WsRpcGroup = RpcGroup.make(
+  WsContextAssistantAskRpc,
+  WsContextAssistantCloseRpc,
   WsPresenceHeartbeatRpc,
   WsPresenceSubscribeRpc,
   WsServerProbeRpc,

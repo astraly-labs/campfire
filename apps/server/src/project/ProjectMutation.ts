@@ -16,12 +16,14 @@ export const projectMutationOperation = Effect.fn("projectMutationOperation")(fu
         projectId: mutation.projectId,
         title: mutation.title,
         workspaceRoot: mutation.workspaceRoot,
+        ...(mutation.collaborationUser === undefined ? {} : { collaborationUser: mutation.collaborationUser }),
         ...(mutation.createWorkspaceRootIfMissing === undefined
           ? {}
           : { createWorkspaceRootIfMissing: mutation.createWorkspaceRootIfMissing }),
         ...(mutation.defaultModelSelection === undefined
           ? {}
           : { defaultModelSelection: mutation.defaultModelSelection }),
+        ...(mutation.defaultReviewModelSelection === undefined ? {} : { defaultReviewModelSelection: mutation.defaultReviewModelSelection }),
         ...(mutation.scripts === undefined ? {} : { scripts: mutation.scripts }),
       });
 
@@ -40,6 +42,7 @@ export const projectMutationOperation = Effect.fn("projectMutationOperation")(fu
         ...(mutation.defaultThreadEnvMode === undefined
           ? {}
           : { defaultThreadEnvMode: mutation.defaultThreadEnvMode }),
+        ...(mutation.defaultReviewModelSelection === undefined ? {} : { defaultReviewModelSelection: mutation.defaultReviewModelSelection }),
         ...(mutation.scripts === undefined ? {} : { scripts: mutation.scripts }),
       });
 

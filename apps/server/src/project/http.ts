@@ -1,6 +1,7 @@
 import {
   AuthOrchestrationReadScope,
   EnvironmentHttpApi,
+  EnvironmentAuthenticatedPrincipal,
   requiredScopesForProjectMutation,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -16,6 +17,7 @@ import { traceLocalHandlerWork } from "../cloud/traceRelayRequest.ts";
 import * as ServerRuntimeStartup from "../serverRuntimeStartup.ts";
 import * as ProjectService from "./ProjectService.ts";
 import { projectMutationOperation } from "./ProjectMutation.ts";
+import { withAuthenticatedCollaboration } from "../auth/collaboration.ts";
 
 export const failProjectMutation = Effect.fn("environment.projects.failMutation")(function* (
   cause: ProjectService.ProjectServiceError | ServerRuntimeStartup.ServerRuntimeStartupError,
@@ -56,7 +58,8 @@ export const layer = HttpApiBuilder.group(
           for (const scope of requiredScopesForProjectMutation(args.payload)) {
             yield* requireEnvironmentScope(scope);
           }
-          const operation = projectMutationOperation(projects, args.payload);
+          const principal = yield* EnvironmentAuthenticatedPrincipal;
+          const operation = projectMutationOperation(projects, withAuthenticatedCollaboration(args.payload, principal));
           return yield* startup
             .enqueueCommand(operation)
             .pipe(traceLocalHandlerWork, Effect.catch(failProjectMutation));

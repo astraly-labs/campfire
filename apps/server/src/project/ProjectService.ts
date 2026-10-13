@@ -170,6 +170,8 @@ export const make = Effect.gen(function* () {
     repositoryIdentity: enrichment?.repositoryIdentity ?? null,
     faviconPath: row.faviconPath ?? enrichment?.faviconPath ?? null,
     defaultModelSelection: row.defaultModelSelection,
+    defaultReviewModelSelection: row.defaultReviewModelSelection ?? null,
+    createdBy: row.createdBy ?? null,
     defaultThreadEnvMode: row.defaultThreadEnvMode,
     autoPull: row.autoPull,
     projectIcon: row.projectIcon,
@@ -349,6 +351,8 @@ export const make = Effect.gen(function* () {
         projectId: input.projectId,
         title: input.title,
         workspaceRoot,
+        ...(input.collaborationUser === undefined ? {} : { collaborationUser: input.collaborationUser }),
+        ...(input.defaultReviewModelSelection === undefined ? {} : { defaultReviewModelSelection: input.defaultReviewModelSelection }),
         ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
       });
       yield* projectEnrichment.invalidate([workspaceRoot]);
@@ -379,6 +383,7 @@ export const make = Effect.gen(function* () {
         ...(input.defaultModelSelection === undefined
           ? {}
           : { defaultModelSelection: input.defaultModelSelection }),
+        ...(input.defaultReviewModelSelection === undefined ? {} : { defaultReviewModelSelection: input.defaultReviewModelSelection }),
         ...(input.autoPull === undefined ? {} : { autoPull: input.autoPull }),
         ...(input.projectIcon === undefined ? {} : { projectIcon: input.projectIcon }),
         ...(input.faviconPath === undefined ? {} : { faviconPath: input.faviconPath }),

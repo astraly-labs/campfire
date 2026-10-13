@@ -100,6 +100,39 @@ const waitForProject = Effect.fn("ProjectServiceTest.waitForProject")(function* 
 });
 
 it.layer(layerTest)("ProjectService", (it) => {
+  it.effect("preserves a Google creator and review model defaults across project updates", () =>
+    Effect.gen(function* () {
+      const service = yield* ProjectService.ProjectService;
+      const projectId = ProjectId.make("project:collaboration");
+      const author = { subject: "google:alice", displayName: "Alice" };
+      const reviewModel = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" };
+      const created = yield* service.create({
+        commandId: CommandId.make("project:collaboration:create"),
+        projectId,
+        title: "Team",
+        workspaceRoot: "/projects/team",
+        collaborationUser: author,
+        defaultReviewModelSelection: reviewModel,
+      });
+      assert.deepEqual(created.createdBy, author);
+      assert.deepEqual(created.defaultReviewModelSelection, reviewModel);
+      yield* service.update({
+        commandId: CommandId.make("project:collaboration:rename"),
+        projectId,
+        title: "Team renamed",
+      });
+      const renamed = Option.getOrThrow(yield* service.getById(projectId));
+      assert.deepEqual(renamed.createdBy, author);
+      assert.deepEqual(renamed.defaultReviewModelSelection, reviewModel);
+      const cleared = yield* service.update({
+        commandId: CommandId.make("project:collaboration:clear-review"),
+        projectId,
+        defaultReviewModelSelection: null,
+      });
+      assert.equal(cleared.defaultReviewModelSelection, null);
+      assert.deepEqual(cleared.createdBy, author);
+    }),
+  );
   it.effect("creates, updates, resolves, snapshots, and soft-deletes projects", () =>
     Effect.gen(function* () {
       const service = yield* ProjectService.ProjectService;

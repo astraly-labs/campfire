@@ -12,6 +12,7 @@
 import {
   CommandId,
   type GitManagerServiceError,
+  type CollaborationUser,
   ProjectId,
   type ThreadId,
   VcsProcessSpawnError,
@@ -123,7 +124,7 @@ export class ManagedProjectFolders extends Context.Service<
      * why in `commitError`. The folder is removed when the create fails or is
      * cancelled before the project exists, never once another project owns it.
      */
-    readonly createNamedProject: (input: { readonly name: string }) => Effect.Effect<
+    readonly createNamedProject: (input: { readonly name: string; readonly collaborationUser?: CollaborationUser | null }) => Effect.Effect<
       {
         readonly projectId: ProjectId;
         readonly workspaceRoot: string;
@@ -491,6 +492,7 @@ const make = Effect.gen(function* () {
         projectId: ProjectId.make(id),
         title: input.name,
         workspaceRoot,
+        ...(input.collaborationUser === undefined ? {} : { collaborationUser: input.collaborationUser }),
       })
       .pipe(
         // A rejected create leaves the folder unused, so remove it. An

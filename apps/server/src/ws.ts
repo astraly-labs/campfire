@@ -245,6 +245,10 @@ import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
 import * as Presence from "./presence/Presence.ts";
+import { makeContextAssistantManager } from "./contextAssistant.ts";
+import * as ProjectionStore from "./orchestration-v2/ProjectionStore.ts";
+import * as ProviderAdapterRegistry from "./orchestration-v2/ProviderAdapterRegistry.ts";
+import { authenticatedCollaborationUser, withAuthenticatedCollaboration } from "./auth/collaboration.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import {
@@ -1206,11 +1210,13 @@ const layerWsRpc = (
   previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
   serverBrowser: ServerBrowser.ServerBrowser["Service"],
   presenceConnectionId: string,
+  contextAssistant: ReturnType<typeof makeContextAssistantManager>,
 ) =>
   ServerWsRpcGroup.toLayer(
     Effect.gen(function* () {
       const currentSessionId = currentSession.sessionId;
       const presence = yield* Presence.Presence;
+      const collaborationUser = authenticatedCollaborationUser(currentSession);
       const sql = yield* SqlClient.SqlClient;
       const threadManagement = yield* ThreadManagementService.ThreadManagementService;
       const intakeContext = yield* Effect.context<
@@ -1830,7 +1836,7 @@ const layerWsRpc = (
       });
 
       const mutateProject = Effect.fn("ws.projects.mutate")(function* (mutation: ProjectMutation) {
-        const result = yield* projectMutationOperation(projectService, mutation);
+        const result = yield* projectMutationOperation(projectService, withAuthenticatedCollaboration(mutation, currentSession));
         if (mutation.type === "project.delete")
           yield* projectCloneTracker.discard(mutation.projectId);
         return result;
@@ -1847,6 +1853,8 @@ const layerWsRpc = (
           focus,
         }),
         [PRESENCE_WS_METHODS.subscribe]: () => presence.snapshots,
+        [WS_METHODS.contextAssistantAsk]: (input) => contextAssistant.ask(input, currentSessionId),
+        [WS_METHODS.contextAssistantClose]: (input) => contextAssistant.close(input.sessionId, currentSessionId),
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           Effect.annotateCurrentSpan({
             "orchestration_v2.command_id": command.commandId,
@@ -1872,7 +1880,7 @@ const layerWsRpc = (
                   (command.type === "prepared-run.retry"
                     ? threadLaunch.retryPreparation(command)
                     : ThreadMessageIntake.dispatchCommand(
-                        ThreadManagementService.withCreationProvenance(command, {
+                        ThreadManagementService.withCreationProvenance(withAuthenticatedCollaboration(command, currentSession), {
                           createdBy: "user",
                           creationSource:
                             "creationSource" in command ? command.creationSource : "web",
@@ -1988,6 +1996,9 @@ const layerWsRpc = (
               startup
                 .enqueueCommand(
                   ThreadMessageIntake.launchThread({
+                    collaborationUser,
+                    ...(input.kind === undefined ? {} : { kind: input.kind }),
+                    ...(input.reviewPullRequestNumber === undefined ? {} : { reviewPullRequestNumber: input.reviewPullRequestNumber }),
                     commandId: input.commandId,
                     ...(input.threadId === undefined ? {} : { threadId: input.threadId }),
                     ...(input.reuseExistingThread === undefined
@@ -2599,6 +2610,7 @@ const layerWsRpc = (
               projectService
                 .create({
                   commandId: CommandId.make(`project-clone-create:${project.projectId}`),
+                  collaborationUser,
                   projectId: project.projectId,
                   title: project.title,
                   workspaceRoot: project.workspaceRoot,
@@ -2634,7 +2646,7 @@ const layerWsRpc = (
           ),
         [WS_METHODS.projectsCreateNew]: (input) =>
           managedFolders
-            .createNamedProject(input)
+            .createNamedProject({ ...input, collaborationUser })
             .pipe(
               Effect.mapError(
                 (cause) => new OrchestrationDispatchCommandError({ message: cause.message, cause }),
@@ -3177,6 +3189,13 @@ export const WS_RPC_SERVER_OPTIONS = {
 
 export const layer = Layer.unwrap(
   Effect.gen(function* () {
+    const contextAssistant = makeContextAssistantManager({
+      crypto: yield* Crypto.Crypto,
+      projections: yield* ProjectionStore.ProjectionStoreV2,
+      projects: yield* ProjectStore.ProjectStoreV2,
+      adapters: yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2,
+    });
+    yield* Effect.addFinalizer(() => contextAssistant.closeAll);
     const previewAutomationBroker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
     const serverBrowser = yield* ServerBrowser.ServerBrowser;
     const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
@@ -3240,6 +3259,7 @@ export const layer = Layer.unwrap(
               previewAutomationBroker,
               serverBrowser,
               presenceConnectionId,
+              contextAssistant,
             ).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               // Request fibers run in the handlers' context, so this reporter sees
