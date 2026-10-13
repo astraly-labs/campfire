@@ -1,9 +1,9 @@
 import { remapComposerContextAttachments } from "@t3tools/shared/composerContextReferences";
 import { appendUserInputAttachmentPaths } from "../provider/userInputAttachments.ts";
-import type {
-  ChatAttachment,
+import {
   ChatImageAttachment,
-  OrchestrationV2Command,
+  type ChatAttachment,
+  type OrchestrationV2Command,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -69,10 +69,18 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
       threadId: command.threadId,
       attachments: images,
     });
-    const claimedImages = claimed.attachments.map((attachment): ChatImageAttachment => ({
-      ...attachment,
-      type: "image",
-    }));
+    const claimedImages = yield* Schema.decodeUnknownEffect(Schema.Array(ChatImageAttachment))(
+      claimed.attachments,
+    ).pipe(
+      Effect.mapError(
+        (cause) =>
+          new AttachmentClaims.AttachmentClaimError({
+            message: "Claimed discussion attachment is not an image.",
+            cause,
+          }),
+      ),
+      Effect.onError(() => AttachmentClaims.releaseClaimedAttachments(claimed.claimedPaths)),
+    );
     return yield* threads.dispatch({ ...command, attachments: [...claimedImages, ...gifs] }).pipe(
       Effect.tap((result) =>
         releaseUnusedClaims(
