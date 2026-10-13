@@ -134,7 +134,7 @@ const makeHarness = Effect.fn(function* (openGate?: Deferred.Deferred<void>) {
   }>();
   const source = { ...emptyProjection({ id: EventId.make("source"), type: "thread.created", threadId: sourceThread.id, occurredAt: sourceThread.createdAt, payload: sourceThread }), messages: [message(1, "Shared source discussion")] };
   let sourceReads = 0;
-  const adapter = {
+  const adapter: ProviderAdapterV2["Service"] = {
     instanceId: sourceThread.providerInstanceId,
     driver: ProviderDriverKind.make("codex"),
     getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
@@ -168,7 +168,7 @@ const makeHarness = Effect.fn(function* (openGate?: Deferred.Deferred<void>) {
         readThreadSnapshot: unsupported, rollbackThread: unsupported, forkThread: unsupported,
       } satisfies ProviderAdapterV2SessionRuntime;
     }),
-  } satisfies ProviderAdapterV2["Service"];
+  };
   const manager = makeContextAssistantManager({
     crypto,
     projections: { getThreadProjection: () => Effect.sync(() => { sourceReads += 1; return source; }) },
