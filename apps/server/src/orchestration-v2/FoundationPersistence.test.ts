@@ -627,7 +627,7 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
     })),
   );
 
-  it.effect("filters worker replay and live queues without losing matching events", () =>
+  it.effect("filters worker replay and live notifications without losing matching events", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const sink = yield* EventSink.EventSinkV2;
@@ -698,7 +698,7 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
           [history[2]!.sequence],
         );
         // The worker is occupied with the previous batch while the thread
-        // publishes output. Its live queue must receive just run updates.
+        // publishes output. Replay must return only matching run updates.
         yield* sink.write({
           events: Array.from({ length: LIVE_STREAM_MAX_ITEMS + 1 }, (_, index) => ({
             id: EventId.make(`event:filtered-worker:output:${index}`),
@@ -714,10 +714,11 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
             runEvent("event:filtered-worker:live:2", { ...run, status: "failed" }),
           ],
         });
-        assert.deepEqual(
-          (yield* pull).map((stored) => stored.sequence),
-          live.map((stored) => stored.sequence),
-        );
+        const received: number[] = [];
+        while (received.length < live.length) {
+          received.push(...(yield* pull).map((stored) => stored.sequence));
+        }
+        assert.deepEqual(received, live.map((stored) => stored.sequence));
       }),
     ),
   );
