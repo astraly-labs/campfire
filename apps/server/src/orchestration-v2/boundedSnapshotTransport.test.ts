@@ -16,6 +16,8 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   RunId,
+  SideThreadId,
+  SideThreadMessageId,
   ThreadId,
   TurnItemId,
   type OrchestrationV2DomainEvent,
@@ -278,6 +280,47 @@ function itemIds(projection: OrchestrationV2ThreadProjection): string[] {
 }
 
 it.layer(TestLayer)("compact bounded snapshot transport", (it) => {
+  it.effect("retains collaboration data and message authors over bounded HTTP and WS snapshots", () =>
+    Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const threadId = ThreadId.make("thread:collaboration-transport");
+      const alice = { subject: "google:alice", displayName: "Alice" };
+      const bob = { subject: "google:bob", displayName: "Bob" };
+      const at = yield* DateTime.now;
+      const created = threadCreated(threadId, at);
+      assert.ok(created.type === "thread.created");
+      yield* projections.apply({ ...created, payload: { ...created.payload, collaborationCreatedBy: alice, kind: "review", reviewPullRequestNumber: 42 } });
+      const sideThread = {
+        id: SideThreadId.make(`thread:${threadId}`), createdBy: alice, createdAt: DateTime.formatIso(at), updatedAt: DateTime.formatIso(at), archivedAt: null,
+        messages: [{ id: SideThreadMessageId.make("transport-reply"), author: bob, text: "Ready to review", createdAt: DateTime.formatIso(at) }],
+      };
+      yield* projections.apply({ id: EventId.make("collaboration-transport:side"), type: "sidethread.imported", threadId, occurredAt: at, payload: { threadId, sideThread } });
+      yield* projections.apply({
+        id: EventId.make("collaboration-transport:user"), type: "turn-item.updated", threadId, occurredAt: at,
+        payload: {
+          id: TurnItemId.make("collaboration-transport:user"), threadId, runId: null, nodeId: null,
+          providerThreadId: null, providerTurnId: null, nativeItemRef: null, parentItemId: null,
+          ordinal: 1, status: "completed", title: null, startedAt: at, completedAt: at, updatedAt: at,
+          type: "user_message", messageId: MessageId.make("collaboration-transport:user"), inputIntent: "turn_start", text: "Review this change", attachments: [], author: alice,
+        },
+      });
+      const httpProjection = yield* withHttp(async (get) => {
+        const response = await get(`/api/orchestration/threads/${encodeURIComponent(threadId)}/bounded?compactTurnItems=1`);
+        assert.strictEqual(response.status, 200);
+        return boundedSnapshotProjection(decodeBounded(await response.text()));
+      });
+      const wsSnapshot = yield* firstSnapshot({ threadId, acceptBoundedSnapshot: true, acceptCompactTurnItems: true });
+      for (const projection of [httpProjection, boundedSnapshotProjection(wsSnapshot.decoded)]) {
+        assert.deepStrictEqual(projection.thread.collaborationCreatedBy, alice);
+        assert.strictEqual(projection.thread.kind, "review");
+        assert.strictEqual(projection.thread.reviewPullRequestNumber, 42);
+        assert.deepStrictEqual(projection.sideThreads, [sideThread]);
+        const userItem = projection.turnItems.find((item) => item.type === "user_message");
+        assert.ok(userItem?.type === "user_message");
+        assert.deepStrictEqual(userItem.author, alice);
+      }
+    }),
+  );
   describe.each([
     ["fork", FORK],
     ["long run with a retained interrupt request", LONG],
