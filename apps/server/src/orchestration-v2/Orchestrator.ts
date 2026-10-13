@@ -1817,7 +1817,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                       contextHandoffId: handoff.id,
                     },
                     createdBy: queuedMessage.createdBy,
-          author: queuedMessage.author ?? null,
+                    author: queuedMessage.author ?? null,
                     error: null,
                     createdAt: now,
                     updatedAt: now,
@@ -4013,6 +4013,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             completedAt: now,
             updatedAt: now,
             type: "user_message",
+            author: input.author ?? null,
             messageId: input.messageId,
             inputIntent:
               input.command.type === "queued-message.promote-to-steer"
@@ -4278,7 +4279,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             contextHandoffId: restartHandoff.id,
           },
           createdBy: input.createdBy,
-            author: input.author ?? null,
+          author: input.author ?? null,
           error: null,
           createdAt: now,
           updatedAt: now,
@@ -5500,6 +5501,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           completedAt: now,
           updatedAt: now,
           type: "user_message",
+          author: command.collaborationUser ?? null,
           messageId: command.messageId,
           inputIntent: "turn_start",
           text: dispatchText,
@@ -6192,6 +6194,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         completedAt: now,
         updatedAt: now,
         type: "user_message",
+        author: command.collaborationUser ?? null,
         messageId: command.messageId,
         inputIntent: "turn_start",
         text: dispatchText,
@@ -7723,7 +7726,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         attachments: queuedMessage.attachments,
         ...(queuedMessage.context ? { context: queuedMessage.context } : {}),
         createdBy: queuedMessage.createdBy,
-          author: queuedMessage.author ?? null,
+        author: queuedMessage.author ?? null,
         creationSource: queuedMessage.creationSource,
         ...(queuedMessage.scheduledTaskId === undefined
           ? {}

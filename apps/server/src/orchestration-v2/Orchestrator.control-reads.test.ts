@@ -733,5 +733,25 @@ it.effect(
         )?.text,
         "Alice",
       );
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("team-user-turn"),
+        threadId,
+        messageId: MessageId.make("team-user-message"),
+        text: "Implement our discussion",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "user",
+        creationSource: "web",
+        collaborationUser: bob,
+      });
+      const withTurn = yield* projections.getThreadProjection(threadId);
+      assert.deepStrictEqual(
+        withTurn.messages.find((message) => message.id === "team-user-message")?.author,
+        bob,
+      );
+      const userItem = withTurn.turnItems.find((item) => item.type === "user_message");
+      assert.ok(userItem?.type === "user_message");
+      assert.deepStrictEqual(userItem.author, bob);
     }).pipe(Effect.provide(layerTest)),
 );
