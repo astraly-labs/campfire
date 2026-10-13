@@ -295,9 +295,11 @@ export function makeContextAssistantManager(dependencies: ContextAssistantDepend
     const finish = Effect.suspend(() => {
       if (finished) return Effect.void;
       finished = true;
-      currentSession.busy = false;
-      currentSession.activeTurnId = null;
       return Scope.close(turnScope, Exit.void).pipe(
+        Effect.andThen(Effect.sync(() => {
+          currentSession.busy = false;
+          currentSession.activeTurnId = null;
+        })),
         Effect.andThen(completed || sessions.get(key) !== currentSession
           ? Effect.void
           : closeKey(key).pipe(Effect.asVoid)),
@@ -329,7 +331,7 @@ export function makeContextAssistantManager(dependencies: ContextAssistantDepend
             event.runOrdinal === ordinal
           );
         case "runtime_request.updated":
-          return event.threadId === currentSession.appThread.id;
+          return event.threadId === undefined || event.threadId === currentSession.appThread.id;
         default:
           return false;
       }
