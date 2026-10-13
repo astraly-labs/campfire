@@ -1,3 +1,5 @@
+import * as SqlClient from "effect/sql/SqlClient";
+import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as Mime from "effect/http/Mime";
 import {
   AuthOrchestrationOperateScope,
@@ -56,7 +58,8 @@ import {
 
 const OTLP_TRACES_PROXY_PATH = "/api/observability/v1/traces";
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "::1", "localhost"]);
-const SVG_CONTENT_SECURITY_POLICY = "default-src 'none'; style-src 'unsafe-inline'; sandbox";
+const SVG_CONTENT_SECURITY_POLICY =
+  "sandbox; default-src 'none'; base-uri 'none'; form-action 'none'; style-src 'unsafe-inline'; img-src data:";
 // HTML previews are agent output, not the app. The sandbox gives the document an
 // opaque origin: scripts run, but same-origin cookies, storage, and API calls are
 // out of reach. Relative sibling assets still load through their signed URLs.
@@ -344,6 +347,33 @@ class DecodeOtlpTraceRecordsError extends Data.TaggedError("DecodeOtlpTraceRecor
 // tracing this proxy would add more server spans than it forwards.
 // withTracerEnabled(false) drops the handler's spans, including the forward.
 // untracedRequestsLayer drops the HTTP server span.
+const HEALTH_HEADERS = { "cache-control": "no-store" } as const;
+export const livenessRouteLayer = HttpRouter.add(
+  "GET",
+  "/healthz",
+  HttpServerResponse.jsonUnsafe({ status: "ok" }, { headers: HEALTH_HEADERS }),
+);
+export const readinessRouteLayer = HttpRouter.add(
+  "GET",
+  "/readyz",
+  Effect.gen(function* () {
+    const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
+    const sql = yield* SqlClient.SqlClient;
+    return yield* startup.awaitCommandReady.pipe(
+      Effect.andThen(sql`SELECT 1 FROM orchestration_v2_projection_threads LIMIT 1`),
+      Effect.as(HttpServerResponse.jsonUnsafe({ status: "ready" }, { headers: HEALTH_HEADERS })),
+      Effect.catchCause(() =>
+        Effect.succeed(
+          HttpServerResponse.jsonUnsafe(
+            { status: "unavailable" },
+            { status: 503, headers: HEALTH_HEADERS },
+          ),
+        ),
+      ),
+    );
+  }),
+);
+
 export const layerOtlpTracesProxyRoute = HttpRouter.add(
   "POST",
   OTLP_TRACES_PROXY_PATH,
@@ -363,7 +393,11 @@ export const layerOtlpTracesProxyRoute = HttpRouter.add(
       catch: (cause) => new DecodeOtlpTraceRecordsError({ cause }),
     }).pipe(
       Effect.flatMap((records) => browserTraceCollector.record(records)),
-      Effect.catch((cause) => Effect.logWarning("Failed to decode browser OTLP traces", { cause })),
+      Effect.catch((error) =>
+        Effect.logWarning("[🔐 Security] Failed to decode browser OTLP traces", {
+          errorTag: error._tag,
+        }),
+      ),
     );
 
     if (otlpTracesUrl === undefined) {

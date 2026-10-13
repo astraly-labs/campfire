@@ -1,4 +1,9 @@
-import { ORCHESTRATION_V2_WS_METHODS, WS_METHODS, type WsRpcGroup } from "@t3tools/contracts";
+import {
+  PRESENCE_WS_METHODS,
+  ORCHESTRATION_V2_WS_METHODS,
+  WS_METHODS,
+  type WsRpcGroup,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as References from "effect/References";
@@ -15,6 +20,10 @@ type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
  * prefix. Adding an RPC to `WsRpcGroup` without a label is a type error.
  */
 const RPC_AGGREGATES = {
+  [WS_METHODS.contextAssistantAsk]: "contextAssistant",
+  [WS_METHODS.contextAssistantClose]: "contextAssistant",
+  [PRESENCE_WS_METHODS.heartbeat]: "presence",
+  [PRESENCE_WS_METHODS.subscribe]: "presence",
   [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: "orchestrationV2",
   [ORCHESTRATION_V2_WS_METHODS.getWorkflowScript]: "orchestration",
   [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: "orchestration",
@@ -57,10 +66,6 @@ const RPC_AGGREGATES = {
   [WS_METHODS.serverRemoveKeybinding]: "server",
   [WS_METHODS.serverRunStorageCleanup]: "server",
   [WS_METHODS.serverGetStorageCleanupReport]: "server",
-  [WS_METHODS.contextAssistantAsk]: "contextAssistant",
-  [WS_METHODS.contextAssistantClose]: "contextAssistant",
-  [WS_METHODS.presenceHeartbeat]: "presence",
-  [WS_METHODS.presenceSubscribe]: "presence",
   [WS_METHODS.serverGetSettings]: "server",
   [WS_METHODS.serverUpdateSettings]: "server",
   [WS_METHODS.serverSearchAcpRegistry]: "server",

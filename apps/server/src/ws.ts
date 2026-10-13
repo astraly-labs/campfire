@@ -1,3 +1,5 @@
+import { CodexSettings } from "@t3tools/contracts";
+import { resolveCodexHomeLayout } from "./provider/Drivers/CodexHomeLayout.ts";
 import { OrchestrationDispatchCommandError } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
@@ -248,7 +250,10 @@ import * as Presence from "./presence/Presence.ts";
 import { makeContextAssistantManager } from "./contextAssistant.ts";
 import * as ProjectionStore from "./orchestration-v2/ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "./orchestration-v2/ProviderAdapterRegistry.ts";
-import { authenticatedCollaborationUser, withAuthenticatedCollaboration } from "./auth/collaboration.ts";
+import {
+  authenticatedCollaborationUser,
+  withAuthenticatedCollaboration,
+} from "./auth/collaboration.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import {
@@ -1836,25 +1841,31 @@ const layerWsRpc = (
       });
 
       const mutateProject = Effect.fn("ws.projects.mutate")(function* (mutation: ProjectMutation) {
-        const result = yield* projectMutationOperation(projectService, withAuthenticatedCollaboration(mutation, currentSession));
+        const result = yield* projectMutationOperation(
+          projectService,
+          withAuthenticatedCollaboration(mutation, currentSession),
+        );
         if (mutation.type === "project.delete")
           yield* projectCloneTracker.discard(mutation.projectId);
         return result;
       });
 
       const handlers = ServerWsRpcGroup.of({
-        [PRESENCE_WS_METHODS.heartbeat]: (focus) => presence.touch({
-          connectionId: presenceConnectionId,
-          sessionId: currentSessionId,
-          user: {
-            subject: currentSession.subject,
-            displayName: currentSession.displayName ?? currentSession.subject,
-          },
-          focus,
-        }),
+        [PRESENCE_WS_METHODS.heartbeat]: (focus) =>
+          presence.touch({
+            connectionId: presenceConnectionId,
+            sessionId: currentSessionId,
+            user: {
+              subject: currentSession.subject,
+              displayName: currentSession.displayName ?? currentSession.subject,
+            },
+            focus,
+          }),
         [PRESENCE_WS_METHODS.subscribe]: () => presence.snapshots,
-        [WS_METHODS.contextAssistantAsk]: (input) => contextAssistant.ask(input, currentSessionId),
-        [WS_METHODS.contextAssistantClose]: (input) => contextAssistant.close(input.sessionId, currentSessionId),
+        [WS_METHODS.contextAssistantAsk]: (input) =>
+          Stream.unwrap(contextAssistant.ask(input, currentSessionId)),
+        [WS_METHODS.contextAssistantClose]: (input) =>
+          contextAssistant.close(input.sessionId, currentSessionId),
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           Effect.annotateCurrentSpan({
             "orchestration_v2.command_id": command.commandId,
@@ -1880,11 +1891,14 @@ const layerWsRpc = (
                   (command.type === "prepared-run.retry"
                     ? threadLaunch.retryPreparation(command)
                     : ThreadMessageIntake.dispatchCommand(
-                        ThreadManagementService.withCreationProvenance(withAuthenticatedCollaboration(command, currentSession), {
-                          createdBy: "user",
-                          creationSource:
-                            "creationSource" in command ? command.creationSource : "web",
-                        }),
+                        ThreadManagementService.withCreationProvenance(
+                          withAuthenticatedCollaboration(command, currentSession),
+                          {
+                            createdBy: "user",
+                            creationSource:
+                              "creationSource" in command ? command.creationSource : "web",
+                          },
+                        ),
                       )
                   ).pipe(Effect.provide(intakeContext)),
                 )
@@ -1998,7 +2012,9 @@ const layerWsRpc = (
                   ThreadMessageIntake.launchThread({
                     collaborationUser,
                     ...(input.kind === undefined ? {} : { kind: input.kind }),
-                    ...(input.reviewPullRequestNumber === undefined ? {} : { reviewPullRequestNumber: input.reviewPullRequestNumber }),
+                    ...(input.reviewPullRequestNumber === undefined
+                      ? {}
+                      : { reviewPullRequestNumber: input.reviewPullRequestNumber }),
                     commandId: input.commandId,
                     ...(input.threadId === undefined ? {} : { threadId: input.threadId }),
                     ...(input.reuseExistingThread === undefined
@@ -2811,7 +2827,10 @@ const layerWsRpc = (
               });
             }
             const thread = yield* threadManagement
-              .getThreadRecords(input.resource.threadId, [])
+              .getThreadRecords(
+                input.resource.threadId,
+                input.resource._tag === "codex-visualization" ? ["providerThreads"] : [],
+              )
               .pipe(
                 Effect.mapError(
                   (cause) =>
@@ -2821,6 +2840,44 @@ const layerWsRpc = (
                     }),
                 ),
               );
+            if (input.resource._tag === "codex-visualization") {
+              const activeProviderThread = thread.providerThreads.find(
+                (providerThread) =>
+                  providerThread.id === thread.thread.activeProviderThreadId &&
+                  providerThread.driver === "codex",
+              );
+              const nativeId = activeProviderThread?.nativeThreadRef?.nativeId;
+              if (!activeProviderThread || !nativeId)
+                return yield* new AssetWorkspaceContextNotFoundError({ resource: input.resource });
+              const settings = yield* serverSettings.getSettings.pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new AssetWorkspaceContextResolutionError({ resource: input.resource, cause }),
+                ),
+              );
+              const instance = settings.providerInstances[activeProviderThread.providerInstanceId];
+              if (instance?.driver !== "codex")
+                return yield* new AssetWorkspaceContextNotFoundError({ resource: input.resource });
+              const config = yield* Schema.decodeUnknownEffect(CodexSettings)(
+                instance.config ?? {},
+              ).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new AssetWorkspaceContextResolutionError({ resource: input.resource, cause }),
+                ),
+              );
+              const home = yield* resolveCodexHomeLayout(config);
+              return yield* issueAssetUrl({
+                resource: input.resource,
+                codexVisualization: {
+                  codexHomePath: home.effectiveHomePath ?? home.sharedHomePath,
+                  providerThreadId: nativeId,
+                  ...(thread.thread.worktreePath
+                    ? { worktreePath: thread.thread.worktreePath }
+                    : {}),
+                },
+              });
+            }
             const project = yield* projectService.getById(thread.thread.projectId).pipe(
               Effect.mapError(
                 (cause) =>
@@ -3309,7 +3366,10 @@ export const layer = Layer.unwrap(
                 }),
               ),
             ),
-          () => sessions.markDisconnected(session.sessionId).pipe(Effect.andThen(presence.drop(presenceConnectionId))),
+          () =>
+            sessions
+              .markDisconnected(session.sessionId)
+              .pipe(Effect.andThen(presence.drop(presenceConnectionId))),
         );
       }).pipe(
         Effect.catchTags({

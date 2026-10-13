@@ -1,4 +1,9 @@
-import { ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
+import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
+import * as ServerConfig from "../config.ts";
+import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -60,7 +65,28 @@ interface RegistryState {
   readonly records: ReadonlyMap<string, CredentialRecord>;
 }
 
+const PersistedScope = Schema.Struct({
+  environmentId: EnvironmentId,
+  threadId: ThreadId,
+  providerSessionId: Schema.String,
+  providerInstanceId: ProviderInstanceId,
+  capabilities: Schema.Array(
+    Schema.Literals(["preview", "orchestration", "worktree", "device", "pull-requests"]),
+  ),
+  issuedAt: Schema.Number,
+});
+const PersistedState = Schema.Struct({
+  version: Schema.Literals([1, 2]),
+  records: Schema.Array(
+    Schema.Struct({ tokenHash: Schema.String, scope: PersistedScope, lastUsedAt: Schema.Number }),
+  ),
+});
+const PersistedJson = Schema.fromJsonString(PersistedState);
+const decodePersisted = Schema.decodeUnknownEffect(PersistedJson);
+const encodePersisted = Schema.encodeEffect(PersistedJson);
+
 export interface McpSessionRegistryOptions {
+  readonly persistencePath?: string;
   readonly livenessWindowMs?: number;
   readonly now?: () => number;
 }
@@ -100,12 +126,94 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const environmentId = yield* environment.getEnvironmentId;
   const httpServer = yield* HttpServer.HttpServer;
-  const state = yield* SynchronizedRef.make<RegistryState>({ records: new Map() });
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const currentTimeMillis = options.now ? Effect.sync(options.now) : Clock.currentTimeMillis;
   const livenessWindowMs = options.livenessWindowMs ?? DEFAULT_LIVENESS_WINDOW_MS;
   const endpoint = NetAddress.isInetAddress(httpServer.address)
     ? `http://${getHttpMcpEndpointHost(httpServer.address.address)}:${httpServer.address.port}/mcp`
     : "http://127.0.0.1/mcp";
+
+  const loaded = options.persistencePath
+    ? yield* fs.readFileString(options.persistencePath).pipe(
+        Effect.flatMap(decodePersisted),
+        Effect.map(
+          (persisted) =>
+            new Map<string, CredentialRecord>(
+              persisted.records
+                .filter((record) => record.scope.environmentId === environmentId)
+                .map((record) => [
+                  record.tokenHash,
+                  {
+                    tokenHash: record.tokenHash,
+                    lastAliveAt: record.lastUsedAt,
+                    scope: {
+                      environmentId: record.scope.environmentId,
+                      issuedAt: record.scope.issuedAt,
+                      requestNamespace: record.scope.providerSessionId,
+                      thread: {
+                        threadId: record.scope.threadId,
+                        providerSessionId: record.scope.providerSessionId,
+                        providerInstanceId: record.scope.providerInstanceId,
+                      },
+                      client: undefined,
+                      capabilities: new Set(record.scope.capabilities),
+                    },
+                  },
+                ]),
+            ),
+        ),
+        Effect.catchTag("PlatformError", (error) =>
+          error.reason._tag === "NotFound"
+            ? Effect.succeed(new Map<string, CredentialRecord>())
+            : Effect.die(error),
+        ),
+        Effect.orDie,
+      )
+    : new Map<string, CredentialRecord>();
+  const state = yield* SynchronizedRef.make<RegistryState>({ records: loaded });
+  let lastPersistedAt = yield* currentTimeMillis;
+  const persist = Effect.fn("McpSessionRegistry.persist")(function* (
+    records: ReadonlyMap<string, CredentialRecord>,
+  ) {
+    if (!options.persistencePath) return;
+    const contents = yield* encodePersisted({
+      version: 2,
+      records: Array.from(records.values(), (record) => ({
+        tokenHash: record.tokenHash,
+        scope: {
+          environmentId: record.scope.environmentId,
+          ...record.scope.thread,
+          issuedAt: record.scope.issuedAt,
+          capabilities: [...record.scope.capabilities],
+        },
+        lastUsedAt: record.lastAliveAt,
+      })),
+    }).pipe(Effect.orDie);
+    yield* writeFileStringAtomically({ filePath: options.persistencePath, contents }).pipe(
+      Effect.provideService(FileSystem.FileSystem, fs),
+      Effect.provideService(Path.Path, path),
+      Effect.orDie,
+    );
+    yield* fs.chmod(options.persistencePath, 0o600).pipe(Effect.orDie);
+  });
+  const modifyRecords = <A>(
+    update: (
+      records: ReadonlyMap<string, CredentialRecord>,
+    ) => readonly [A, ReadonlyMap<string, CredentialRecord>],
+    forcePersist = false,
+  ) =>
+    SynchronizedRef.modifyEffect(state, ({ records }) =>
+      Effect.gen(function* () {
+        const [result, next] = update(records);
+        const now = yield* currentTimeMillis;
+        if (forcePersist || now - lastPersistedAt >= 60_000) {
+          yield* persist(next);
+          lastPersistedAt = now;
+        }
+        return [result, { records: next }] as const;
+      }),
+    );
 
   const hashToken = (token: string) =>
     crypto
@@ -145,11 +253,11 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
         ]),
         issuedAt,
       };
-      yield* SynchronizedRef.update(state, ({ records }) => {
+      yield* modifyRecords((records) => {
         const next = new Map(pruneDead(records, issuedAt));
         next.set(tokenHash, { tokenHash, scope, lastAliveAt: issuedAt });
-        return { records: next };
-      });
+        return [undefined, next] as const;
+      }, true);
       return {
         config: {
           environmentId,
@@ -170,13 +278,13 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
       if (rawToken.length === 0) return undefined;
       const tokenHash = yield* hashToken(rawToken);
       const timestamp = yield* currentTimeMillis;
-      return yield* SynchronizedRef.modify(state, ({ records }) => {
+      return yield* modifyRecords((records) => {
         const current = pruneDead(records, timestamp);
         const record = current.get(tokenHash);
-        if (!record) return [undefined, { records: current }] as const;
+        if (!record) return [undefined, current] as const;
         const next = new Map(current);
         next.set(tokenHash, { ...record, lastAliveAt: timestamp });
-        return [record.scope, { records: next }] as const;
+        return [record.scope, next] as const;
       });
     },
   );
@@ -184,7 +292,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
   const touch: McpSessionRegistryShape["touch"] = Effect.fn("McpSessionRegistry.touch")(
     function* (threadId) {
       const timestamp = yield* currentTimeMillis;
-      yield* SynchronizedRef.update(state, ({ records }) => {
+      yield* modifyRecords((records) => {
         const current = pruneDead(records, timestamp);
         const next = new Map(current);
         for (const [tokenHash, record] of current) {
@@ -192,15 +300,20 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
             next.set(tokenHash, { ...record, lastAliveAt: timestamp });
           }
         }
-        return { records: next };
+        return [undefined, next] as const;
       });
     },
   );
 
   const revokeWhere = (predicate: (record: CredentialRecord) => boolean) =>
-    SynchronizedRef.update(state, ({ records }) => ({
-      records: new Map(Array.from(records).filter(([, record]) => !predicate(record))),
-    }));
+    modifyRecords(
+      (records) =>
+        [
+          undefined,
+          new Map(Array.from(records).filter(([, record]) => !predicate(record))),
+        ] as const,
+      true,
+    );
 
   return McpSessionRegistry.of({
     issue,
@@ -214,14 +327,20 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
     revokeThread: Effect.fn("McpSessionRegistry.revokeThread")(function* (threadId) {
       yield* revokeWhere((record) => record.scope.thread.threadId === threadId);
     }),
-    revokeAll: SynchronizedRef.set(state, { records: new Map() }),
+    revokeAll: revokeWhere(() => true),
   });
 });
 
 let activeMcpSessionRegistry: McpSessionRegistryShape | undefined;
 
 const make = Effect.acquireRelease(
-  makeWithOptions().pipe(
+  Effect.gen(function* () {
+    const config = yield* ServerConfig.ServerConfig;
+    const path = yield* Path.Path;
+    return yield* makeWithOptions({
+      persistencePath: path.join(config.secretsDir, "mcp-credentials.json"),
+    });
+  }).pipe(
     Effect.tap((registry) =>
       Effect.sync(() => {
         activeMcpSessionRegistry = registry;

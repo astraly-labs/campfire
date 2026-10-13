@@ -1,3 +1,5 @@
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
@@ -20,10 +22,11 @@ const fakeEnvironment = ServerEnvironment.ServerEnvironment.of({
   getDescriptor: Effect.die("unused"),
 });
 
-const makeRegistry = (now: () => number, httpServer = fakeHttpServer) =>
+const makeRegistry = (now: () => number, httpServer = fakeHttpServer, persistencePath?: string) =>
   McpSessionRegistry.__testing
     .make({
       now,
+      ...(persistencePath ? { persistencePath } : {}),
       livenessWindowMs: 100,
     })
     .pipe(
@@ -179,4 +182,33 @@ it.effect("does not keep credentials of other threads alive", () =>
 
     expect(yield* registry.resolve(token)).toBeUndefined();
   }),
+);
+
+it.effect("restores hashed MCP credentials after a backend restart", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-mcp-credentials-" });
+    const persistencePath = path.join(tempDir, "credentials.json");
+    const first = yield* makeRegistry(() => 1_000, fakeHttpServer, persistencePath);
+    const issued = yield* first.issue({
+      threadId: ThreadId.make("thread-restart"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+    });
+    const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
+    const persisted = yield* fs.readFileString(persistencePath);
+    expect(persisted).not.toContain(token);
+
+    const restarted = yield* makeRegistry(() => 1_001, fakeHttpServer, persistencePath);
+    const resolved = yield* restarted.resolve(token);
+    expect(resolved?.thread.threadId).toBe(ThreadId.make("thread-restart"));
+    expect(resolved?.thread.providerInstanceId).toBe(ProviderInstanceId.make("codex"));
+    expect(resolved?.capabilities).toEqual(
+      new Set(["orchestration", "worktree", "pull-requests", "preview"]),
+    );
+    expect(resolved?.requestNamespace).toBe(issued.config.providerSessionId);
+    yield* restarted.revokeThread(ThreadId.make("thread-restart"));
+    const afterRevocation = yield* makeRegistry(() => 1_002, fakeHttpServer, persistencePath);
+    expect(yield* afterRevocation.resolve(token)).toBeUndefined();
+  }).pipe(Effect.provide(NodeServices.layer)),
 );

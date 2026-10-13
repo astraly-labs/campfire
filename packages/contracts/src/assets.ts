@@ -12,6 +12,10 @@ import { ToolActivityNativeAppReference } from "./providerRuntime.ts";
 const ASSET_PATH_MAX_LENGTH = 1024;
 
 export const AssetResource = Schema.Union([
+  Schema.TaggedStruct("codex-visualization", {
+    threadId: ThreadId,
+    fileName: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
+  }),
   Schema.TaggedStruct("workspace-file", {
     threadId: ThreadId,
     path: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),

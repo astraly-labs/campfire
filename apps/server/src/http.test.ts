@@ -689,9 +689,10 @@ describe("asset response security", () => {
     });
   });
 
-  it("does not sandbox HTML assets rendered inside the existing iframe sandbox", () => {
-    expect(assetResponseHeaders("/workspace/report.html")).not.toHaveProperty(
+  it("sandboxes HTML assets even outside the app iframe", () => {
+    expect(assetResponseHeaders("/workspace/report.html")).toHaveProperty(
       "Content-Security-Policy",
+      "sandbox allow-scripts allow-forms allow-popups allow-downloads",
     );
   });
 });
@@ -723,7 +724,8 @@ describe("http dev routing", () => {
 describe("assetResponseHeaders", () => {
   it("sandboxes SVG assets", () => {
     expect(assetResponseHeaders("/attachments/user-image.svg")).toMatchObject({
-      "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+      "Content-Security-Policy":
+        "sandbox; default-src 'none'; base-uri 'none'; form-action 'none'; style-src 'unsafe-inline'; img-src data:",
       "X-Content-Type-Options": "nosniff",
     });
     expect(assetResponseHeaders("/attachments/user-image.SVG")).toHaveProperty(
