@@ -132,6 +132,8 @@ import {
   RELAY_URL_SECRET,
 } from "./cloud/config.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
+import { googleOidcRoutesLayer } from "./auth/googleHttp.ts";
+import * as Presence from "./presence/Presence.ts";
 import * as CloudHttp from "./cloud/http.ts";
 import * as CloudLink from "./cloud/CloudLink.ts";
 import { pendingServiceUpdateExists } from "./cloud/updateHandoff.ts";
@@ -712,6 +714,7 @@ const layerMakeRoutes = Layer.mergeAll(
     DeviceHubProxy.layer,
     ServerBrowserStream.routeLayer,
     ServerHttp.layerStaticAndDevRoute,
+    googleOidcRoutesLayer,
     Ws.layer,
   ),
   // The MCP session registry is provided globally (shared with V2 provider
@@ -1102,6 +1105,7 @@ const layerMakeServer = Layer.unwrap(
       // The connect routes and the startup/shutdown link work share one instance.
       Layer.provide(CloudLink.layer),
       Layer.provideMerge(layerRuntimeServices),
+      Layer.provideMerge(Presence.layer),
       Layer.provideMerge(
         McpSessionRegistry.layer.pipe(
           Layer.provide(ServerEnvironment.layer.pipe(Layer.provide(ServerSecretStore.layer))),

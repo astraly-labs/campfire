@@ -362,6 +362,40 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
     }).pipe(Effect.provide(layerEnvironmentAuth({ mode: "web", host: "192.168.1.50" }))),
   );
 
+  it.effect("issues attributable and revocable Google browser sessions", () =>
+    Effect.gen(function* () {
+      const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+      const sessions = yield* SessionStore.SessionStore;
+      const issued = yield* serverAuth.issueTrustedBrowserSession(
+        {
+          subject: "google:alice-stable-subject",
+          displayName: "Alice Example",
+        },
+        requestMetadata,
+      );
+      const verified = yield* serverAuth.authenticateHttpRequest(
+        makeCookieRequest(sessions.cookieName, issued.sessionToken),
+      );
+
+      expect(verified.subject).toBe("google:alice-stable-subject");
+      expect(verified.displayName).toBe("Alice Example");
+      expect(verified.scopes).toEqual(AuthAdministrativeScopes);
+      const state = yield* serverAuth.getSessionState(
+        makeCookieRequest(sessions.cookieName, issued.sessionToken),
+      );
+      expect(state.identity).toEqual({
+        subject: "google:alice-stable-subject",
+        displayName: "Alice Example",
+      });
+      expect(yield* serverAuth.revokeSession(verified.sessionId)).toBe(true);
+
+      const revoked = yield* serverAuth
+        .authenticateHttpRequest(makeCookieRequest(sessions.cookieName, issued.sessionToken))
+        .pipe(Effect.flip);
+      expect(revoked._tag).toBe("ServerAuthInvalidCredentialError");
+    }).pipe(Effect.provide(layerEnvironmentAuth())),
+  );
+
   it.effect("preserves pairing grants after rejecting scopes they do not grant", () =>
     Effect.gen(function* () {
       const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
@@ -662,6 +696,40 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
         }),
       ),
     ),
+  );
+
+  it.effect("preserves Google identity on tickets and rejects other browser origins", () =>
+    Effect.gen(function* () {
+      const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+      const sessions = yield* SessionStore.SessionStore;
+      const issued = yield* serverAuth.issueTrustedBrowserSession(
+        { subject: "google:alice", displayName: "Alice" },
+        requestMetadata,
+      );
+      const authenticated = yield* serverAuth.authenticateHttpRequest({
+        ...makeCookieRequest(sessions.cookieName, issued.sessionToken),
+        headers: { host: "localhost:3773", origin: "https://team.ts.net:10000" },
+      });
+      const ticket = yield* serverAuth.issueWebSocketTicket(authenticated);
+      const upgrade = (origin: string) => serverAuth.authenticateWebSocketUpgrade({
+        url: `/ws?wsTicket=${ticket.ticket}`,
+        cookies: {},
+        headers: { host: "localhost:3773", origin },
+      } as never);
+      expect((yield* Effect.flip(upgrade("https://attacker.example")))._tag).toBe(
+        "ServerAuthInvalidCredentialError",
+      );
+      const verified = yield* upgrade("https://team.ts.net:10000");
+      expect(verified.subject).toBe("google:alice");
+      expect(verified.displayName).toBe("Alice");
+    }).pipe(Effect.provide(layerEnvironmentAuth({
+      googleOidc: {
+        clientId: "client",
+        clientSecret: "secret",
+        redirectUri: new URL("https://team.ts.net:10000/auth/google/callback"),
+        allowedEmails: ["alice@example.com"],
+      },
+    }))),
   );
 
   it.effect("accepts cookie sessions on HTTP requests only from the app's own origins", () =>

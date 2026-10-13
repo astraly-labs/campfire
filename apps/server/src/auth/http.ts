@@ -199,13 +199,25 @@ export function failEnvironmentInternal(reason: EnvironmentInternalErrorReason, 
   });
 }
 
-const appendSessionCookie = (cookieName: string, token: string, expiresAt: DateTime.DateTime) =>
+function requestUsesHttps(request: HttpServerRequest.HttpServerRequest): boolean {
+  if (request.headers["x-forwarded-proto"]?.split(",")[0]?.trim() === "https") return true;
+  const url = HttpServerRequest.toURL(request);
+  return url._tag === "Some" && url.value.protocol === "https:";
+}
+
+const appendSessionCookie = (
+  cookieName: string,
+  token: string,
+  expiresAt: DateTime.DateTime,
+  secure: boolean,
+) =>
   Effect.fromResult(
     Cookies.set(Cookies.empty, cookieName, token, {
       expires: DateTime.toDate(expiresAt),
       httpOnly: true,
       path: "/",
       sameSite: "lax",
+      secure,
     }),
   ).pipe(
     Effect.catch(() => failEnvironmentInternal("browser_session_cookie_failed")),
@@ -285,7 +297,7 @@ export const layer = HttpApiBuilder.group(
               result.sessionMethod === "browser-session-cookie" &&
               result.expiresAt
             ) {
-              yield* appendSessionCookie(sessions.cookieName, credential.token, result.expiresAt);
+              yield* appendSessionCookie(sessions.cookieName, credential.token, result.expiresAt, requestUsesHttps(request));
               yield* appendCredentialResponseHeaders;
             }
             return result;
@@ -321,6 +333,7 @@ export const layer = HttpApiBuilder.group(
                 httpOnly: true,
                 path: "/",
                 sameSite: "lax",
+                secure: requestUsesHttps(request),
               }),
             ).pipe(Effect.catch(() => failEnvironmentInternal("browser_session_cookie_failed")));
             const sessionCookies = result.expireNormalCookie

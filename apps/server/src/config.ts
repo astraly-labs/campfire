@@ -58,6 +58,13 @@ export interface DeriveServerPathsOptions {
   readonly baseDirIsExplicit?: boolean;
 }
 
+export interface GoogleOidcConfig {
+  readonly clientId: string;
+  readonly clientSecret: string;
+  readonly redirectUri: URL;
+  readonly allowedEmails: ReadonlyArray<string>;
+}
+
 /**
  * ServerConfig - Service tag for server runtime configuration.
  */
@@ -105,6 +112,7 @@ export class ServerConfig extends Context.Service<
     readonly logWebSocketEvents: boolean;
     readonly tailscaleServeEnabled: boolean;
     readonly tailscaleServePort: number;
+    readonly googleOidc?: GoogleOidcConfig;
   }
 >()("t3/config/ServerConfig") {
   /** @deprecated Import and use `layerTest` from this module. */

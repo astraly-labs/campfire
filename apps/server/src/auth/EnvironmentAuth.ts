@@ -108,6 +108,7 @@ export interface McpClientSession {
 export interface AuthenticatedSession {
   readonly sessionId: AuthSessionId;
   readonly subject: string;
+  readonly displayName?: string;
   readonly method: ServerAuthSessionMethod;
   readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
   readonly proofKeyThumbprint?: string;
@@ -490,6 +491,19 @@ export class EnvironmentAuth extends Context.Service<
       },
       ServerAuthInvalidCredentialError | ServerAuthInternalError
     >;
+    readonly issueTrustedBrowserSession: (
+      identity: {
+        readonly subject: string;
+        readonly displayName: string;
+      },
+      requestMetadata: AuthClientMetadata,
+    ) => Effect.Effect<
+      {
+        readonly response: AuthBrowserSessionResult;
+        readonly sessionToken: string;
+      },
+      ServerAuthInternalError
+    >;
     readonly exchangeBootstrapCredentialForAccessToken: (
       credential: string,
       requestedScopes: ReadonlyArray<AuthEnvironmentScope> | undefined,
@@ -761,6 +775,7 @@ export const make = Effect.gen(function* () {
       Effect.map((session) => ({
         sessionId: session.sessionId,
         subject: session.subject,
+        ...(session.client.label ? { displayName: session.client.label } : {}),
         method: session.method,
         scopes: session.scopes,
         ...(session.proofKeyThumbprint ? { proofKeyThumbprint: session.proofKeyThumbprint } : {}),
@@ -791,6 +806,7 @@ export const make = Effect.gen(function* () {
     ...(config.devUrl ? [config.devUrl.origin] : []),
     ...DESKTOP_RENDERER_ORIGINS,
     ...config.devAllowedOrigins,
+    ...(config.googleOidc ? [config.googleOidc.redirectUri.origin] : []),
   ]);
 
   const authenticateRequest = (
@@ -852,6 +868,10 @@ export const make = Effect.gen(function* () {
           ({
             authenticated: true,
             auth: descriptor,
+            identity: {
+              subject: session.subject,
+              displayName: session.displayName ?? session.subject,
+            },
             ...authScopeResponse(session.scopes),
             sessionMethod: session.method,
             ...(session.expiresAt ? { expiresAt: DateTime.toUtc(session.expiresAt) } : {}),
@@ -967,6 +987,37 @@ export const make = Effect.gen(function* () {
       ),
     );
   };
+
+  const issueTrustedBrowserSession: EnvironmentAuth["Service"]["issueTrustedBrowserSession"] = (
+    identity,
+    requestMetadata,
+  ) =>
+    sessions
+      .issue({
+        method: "browser-session-cookie",
+        subject: identity.subject,
+        scopes: AuthAdministrativeScopes,
+        client: {
+          ...requestMetadata,
+          label: identity.displayName,
+        },
+      })
+      .pipe(
+        Effect.mapError((cause) => new ServerAuthAuthenticatedSessionIssueError({ cause })),
+        Effect.map(
+          (session) =>
+            ({
+              response: {
+                authenticated: true,
+                ...authScopeResponse(session.scopes),
+                sessionMethod: session.method,
+                expiresAt: DateTime.toUtc(session.expiresAt),
+              } satisfies AuthBrowserSessionResult,
+              sessionToken: session.token,
+            }) satisfies BootstrapExchangeResult,
+        ),
+        Effect.withSpan("EnvironmentAuth.issueTrustedBrowserSession"),
+      );
 
   const exchangeBootstrapCredentialForAccessToken: EnvironmentAuth["Service"]["exchangeBootstrapCredentialForAccessToken"] =
     (credential, requestedScopes, requestMetadata, input) => {
@@ -1254,12 +1305,18 @@ export const make = Effect.gen(function* () {
       if (Option.isSome(requestUrl)) {
         const websocketTicket = requestUrl.value.searchParams.get(WEBSOCKET_TICKET_QUERY_PARAM);
         if (websocketTicket && websocketTicket.trim().length > 0) {
+          if (!isBrowserOriginAllowed(request, trustedBrowserOrigins)) {
+            return yield* new ServerAuthInvalidCredentialError({
+              diagnostic: "WebSocket origin is not allowed.",
+            });
+          }
           return yield* sessions.verifyWebSocketToken(websocketTicket).pipe(
             mapSessionVerificationErrors,
             Effect.flatMap(rejectMcpClientAudience),
             Effect.map((session) => ({
               sessionId: session.sessionId,
               subject: session.subject,
+              ...(session.client.label ? { displayName: session.client.label } : {}),
               method: session.method,
               scopes: session.scopes,
               ...(session.expiresAt ? { expiresAt: session.expiresAt } : {}),
@@ -1354,6 +1411,7 @@ export const make = Effect.gen(function* () {
       Effect.succeed(descriptor).pipe(Effect.withSpan("EnvironmentAuth.getDescriptor")),
     getSessionState,
     createBrowserSession,
+    issueTrustedBrowserSession,
     exchangeBootstrapCredentialForAccessToken,
     createPairingLink,
     issuePairingCredential,

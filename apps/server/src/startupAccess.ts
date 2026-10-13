@@ -89,6 +89,12 @@ export const resolveListeningPort = (address: unknown, fallbackPort: number): nu
   return fallbackPort;
 };
 
+export function googleLoginUrl(redirectUri: URL): string {
+  const url = new URL("/auth/google/login", redirectUri);
+  url.searchParams.set("returnTo", "/");
+  return url.toString();
+}
+
 export const buildPairingUrl = (connectionString: string, token: string): string => {
   const url = new URL(connectionString);
   url.pathname = "/pair";

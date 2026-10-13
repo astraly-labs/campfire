@@ -2,6 +2,7 @@ import { assert, expect, it } from "@effect/vitest";
 
 import {
   buildPairingUrl,
+  googleLoginUrl,
   formatHeadlessServeOutput,
   renderTerminalQrCode,
   resolveHeadlessConnectionHost,
@@ -76,4 +77,11 @@ it("formats headless serve output with the connection string, token, pairing url
   expect(output).toContain("Token: PAIRCODE");
   expect(output).toContain("Pairing URL: http://192.168.1.42:3773/pair#token=PAIRCODE");
   assert.isTrue(output.includes("█") || output.includes("▀") || output.includes("▄"));
+});
+
+
+it("uses the configured public origin for Google sign-in", () => {
+  expect(googleLoginUrl(new URL("https://team.ts.net:10000/auth/google/callback"))).toBe(
+    "https://team.ts.net:10000/auth/google/login?returnTo=%2F",
+  );
 });

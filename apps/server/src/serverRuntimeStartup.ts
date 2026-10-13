@@ -52,6 +52,7 @@ import {
   formatHostForUrl,
   isWildcardHost,
   issueHeadlessServeAccessInfo,
+  googleLoginUrl,
 } from "./startupAccess.ts";
 
 export class ServerRuntimeStartupError extends Schema.TaggedError<ServerRuntimeStartupError>()(
@@ -316,6 +317,9 @@ const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
 const resolveStartupBrowserTarget = Effect.gen(function* () {
   const serverConfig = yield* ServerConfig.ServerConfig;
   const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+  if (serverConfig.googleOidc && serverConfig.mode !== "desktop") {
+    return googleLoginUrl(serverConfig.googleOidc.redirectUri);
+  }
   const localUrl = `http://localhost:${serverConfig.port}`;
   const bindUrl =
     serverConfig.host && !isWildcardHost(serverConfig.host)
@@ -585,7 +589,12 @@ const make = (options?: StartupOptions) =>
             Effect.withSpan("server.startup.heartbeat.record"),
             Effect.ignoreCause({ log: true }),
           );
-          if (serverConfig.startupPresentation === "headless") {
+          if (serverConfig.googleOidc && serverConfig.startupPresentation === "headless") {
+            yield* runStartupPhase(
+              "headless.output",
+              Console.log(`Campfire is ready. Sign in with Google: ${googleLoginUrl(serverConfig.googleOidc.redirectUri)}`),
+            );
+          } else if (serverConfig.startupPresentation === "headless") {
             yield* Effect.logDebug("startup phase: headless access info");
             const accessInfo = yield* issueHeadlessServeAccessInfo();
             yield* runStartupPhase(
@@ -597,7 +606,9 @@ const make = (options?: StartupOptions) =>
             const startupBrowserTarget = yield* resolveStartupBrowserTarget;
             if (serverConfig.mode !== "desktop") {
               yield* Effect.logInfo(
-                "Authentication required. Open T3 Code using the pairing URL.",
+                serverConfig.googleOidc
+                  ? "[🔐 Auth] Sign in to Campfire using Google."
+                  : "Authentication required. Open T3 Code using the pairing URL.",
               ).pipe(Effect.annotateLogs({ pairingUrl: startupBrowserTarget }));
             }
             yield* runStartupPhase("browser.open", maybeOpenBrowser(startupBrowserTarget));

@@ -31,6 +31,7 @@ import {
   type AuthEnvironmentScope,
   type ScheduledTaskListResult,
   AuthSessionId,
+  PRESENCE_WS_METHODS,
   ClientConnectionMethod,
   ClientDeviceType,
   ClientOs,
@@ -243,6 +244,7 @@ import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
 import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
+import * as Presence from "./presence/Presence.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import {
@@ -1203,10 +1205,12 @@ const layerWsRpc = (
   clientAnalyticsProps: Readonly<Record<string, unknown>>,
   previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
   serverBrowser: ServerBrowser.ServerBrowser["Service"],
+  presenceConnectionId: string,
 ) =>
   ServerWsRpcGroup.toLayer(
     Effect.gen(function* () {
       const currentSessionId = currentSession.sessionId;
+      const presence = yield* Presence.Presence;
       const sql = yield* SqlClient.SqlClient;
       const threadManagement = yield* ThreadManagementService.ThreadManagementService;
       const intakeContext = yield* Effect.context<
@@ -1833,6 +1837,16 @@ const layerWsRpc = (
       });
 
       const handlers = ServerWsRpcGroup.of({
+        [PRESENCE_WS_METHODS.heartbeat]: (focus) => presence.touch({
+          connectionId: presenceConnectionId,
+          sessionId: currentSessionId,
+          user: {
+            subject: currentSession.subject,
+            displayName: currentSession.displayName ?? currentSession.subject,
+          },
+          focus,
+        }),
+        [PRESENCE_WS_METHODS.subscribe]: () => presence.snapshots,
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           Effect.annotateCurrentSpan({
             "orchestration_v2.command_id": command.commandId,
@@ -3187,6 +3201,9 @@ export const layer = Layer.unwrap(
         }
         const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
         const sessions = yield* SessionStore.SessionStore;
+        const presence = yield* Presence.Presence;
+        const crypto = yield* Crypto.Crypto;
+        const presenceConnectionId = yield* crypto.randomUUIDv4;
         const analytics = yield* AnalyticsService.AnalyticsService;
         const session = yield* serverAuth.authenticateWebSocketUpgrade(request).pipe(
           Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
@@ -3222,6 +3239,7 @@ export const layer = Layer.unwrap(
               clientAnalyticsProps,
               previewAutomationBroker,
               serverBrowser,
+              presenceConnectionId,
             ).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               // Request fibers run in the handlers' context, so this reporter sees
@@ -3271,7 +3289,7 @@ export const layer = Layer.unwrap(
                 }),
               ),
             ),
-          () => sessions.markDisconnected(session.sessionId),
+          () => sessions.markDisconnected(session.sessionId).pipe(Effect.andThen(presence.drop(presenceConnectionId))),
         );
       }).pipe(
         Effect.catchTags({

@@ -21,6 +21,7 @@ import {
   ChatGptHandoffInput,
   ChatGptHandoffState,
 } from "./providerSetup.ts";
+import { PRESENCE_WS_METHODS, PresenceHeartbeatInput, PresenceHeartbeatResult, PresenceSnapshot } from "./presence.ts";
 import * as Schema from "effect/Schema";
 import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
@@ -1875,7 +1876,20 @@ export class RpcScopeAuthorization extends RpcMiddleware.Service<RpcScopeAuthori
   { error: EnvironmentAuthorizationError },
 ) {}
 
+const WsPresenceHeartbeatRpc = Rpc.make(PRESENCE_WS_METHODS.heartbeat, {
+  payload: PresenceHeartbeatInput,
+  success: PresenceHeartbeatResult,
+});
+
+const WsPresenceSubscribeRpc = Rpc.make(PRESENCE_WS_METHODS.subscribe, {
+  payload: Schema.Struct({}),
+  success: PresenceSnapshot,
+  stream: true,
+});
+
 export const WsRpcGroup = RpcGroup.make(
+  WsPresenceHeartbeatRpc,
+  WsPresenceSubscribeRpc,
   WsServerProbeRpc,
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,
