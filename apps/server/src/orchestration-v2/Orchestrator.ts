@@ -1682,6 +1682,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           attachments: queuedMessage.attachments,
           ...(queuedMessage.context ? { context: queuedMessage.context } : {}),
           createdBy: queuedMessage.createdBy,
+          author: queuedMessage.author ?? null,
           creationSource: queuedMessage.creationSource,
           ...(queuedMessage.scheduledTaskId === undefined
             ? {}
@@ -1816,6 +1817,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                       contextHandoffId: handoff.id,
                     },
                     createdBy: queuedMessage.createdBy,
+          author: queuedMessage.author ?? null,
                     error: null,
                     createdAt: now,
                     updatedAt: now,
@@ -3816,6 +3818,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     readonly text: string;
     readonly attachments: ReadonlyArray<ChatAttachment>;
     readonly context?: import("@t3tools/contracts").OrchestrationMessageContext | undefined;
+    readonly author?: OrchestrationV2ConversationMessage["author"];
     readonly createdBy: OrchestrationV2ConversationMessage["createdBy"];
     readonly creationSource: OrchestrationV2ConversationMessage["creationSource"];
     readonly scheduledTaskId?: OrchestrationV2ConversationMessage["scheduledTaskId"];
@@ -3966,6 +3969,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         Effect.gen(function* () {
           const message: OrchestrationV2ConversationMessage = {
             createdBy: input.createdBy,
+            author: input.author ?? null,
             creationSource: input.creationSource,
             ...(input.delegatedCompletion === undefined
               ? {}
@@ -3988,6 +3992,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           };
           const turnItem: OrchestrationV2TurnItem = {
             createdBy: input.createdBy,
+            author: input.author ?? null,
             creationSource: input.creationSource,
             ...(input.scheduledTaskId === undefined
               ? {}
@@ -4273,6 +4278,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             contextHandoffId: restartHandoff.id,
           },
           createdBy: input.createdBy,
+            author: input.author ?? null,
           error: null,
           createdAt: now,
           updatedAt: now,
@@ -7717,6 +7723,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         attachments: queuedMessage.attachments,
         ...(queuedMessage.context ? { context: queuedMessage.context } : {}),
         createdBy: queuedMessage.createdBy,
+          author: queuedMessage.author ?? null,
         creationSource: queuedMessage.creationSource,
         ...(queuedMessage.scheduledTaskId === undefined
           ? {}
