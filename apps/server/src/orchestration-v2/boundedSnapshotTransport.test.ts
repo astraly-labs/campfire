@@ -301,7 +301,7 @@ it.layer(TestLayer)("compact bounded snapshot transport", (it) => {
           id: TurnItemId.make("collaboration-transport:user"), threadId, runId: null, nodeId: null,
           providerThreadId: null, providerTurnId: null, nativeItemRef: null, parentItemId: null,
           ordinal: 1, status: "completed", title: null, startedAt: at, completedAt: at, updatedAt: at,
-          type: "user_message", messageId: MessageId.make("collaboration-transport:user"), inputIntent: "turn_start", text: "Review this change", attachments: [], author: alice,
+          type: "user_message", messageId: MessageId.make("collaboration-transport:user"), inputIntent: "turn_start", text: "Review this change", attachments: [], author: alice, createdBy: "user", creationSource: "web",
         },
       });
       const httpProjection = yield* withHttp(async (get) => {
