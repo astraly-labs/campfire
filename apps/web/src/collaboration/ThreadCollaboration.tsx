@@ -134,7 +134,7 @@ function CollaborationToolbar({ context }: { readonly context: CollaborationCont
     <PresenceAvatarStack viewers={viewers} />
     <Button size="icon-sm" variant="ghost" aria-label={context.unread ? "Open unread team discussion" : "Open team discussion"} onClick={() => context.open()}>
       <MessageCircleIcon className={context.unread ? "size-4 text-primary" : "size-4"} />
-      {context.messageCount > 0 ? <span className="text-[10px]">{context.messageCount > 99 ? "99+" : context.messageCount}</span> : null}
+      {context.messageCount > 0 ? <span className="text-3xs">{context.messageCount > 99 ? "99+" : context.messageCount}</span> : null}
     </Button>
     <Button size="icon-sm" variant="ghost" aria-label="Open private briefing" onClick={context.openBriefing}><LockKeyholeIcon className="size-4" /></Button>
   </div>;

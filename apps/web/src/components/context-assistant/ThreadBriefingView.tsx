@@ -9,7 +9,6 @@ import {
 import {
   ArrowUpIcon,
   CheckCheckIcon,
-  GitPullRequestArrowIcon,
   LockKeyholeIcon,
   NetworkIcon,
   RotateCcwIcon,
@@ -25,7 +24,9 @@ import {
 } from "react";
 
 import ChatMarkdown from "../ChatMarkdown";
+import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import { Button } from "../ui/button";
+import { InputGroup, InputGroupAddon } from "../ui/input-group";
 import { Textarea } from "../ui/textarea";
 import { cn } from "~/lib/utils";
 import { contextAssistantEnvironment } from "~/state/contextAssistant";
@@ -66,7 +67,7 @@ const QUICK_ACTIONS = [
     description: "Choices made and why",
     prompt:
       "List the key decisions made in this thread, the reasoning behind them, and any alternatives that were rejected.",
-    icon: GitPullRequestArrowIcon,
+    icon: PullRequestGlyph.pullRequest,
   },
   {
     label: "Architecture map",
@@ -233,7 +234,7 @@ export function ThreadBriefingView({
       className={cn("min-h-0 flex-1 flex-col bg-muted/10", hidden ? "hidden" : "flex")}
     >
       <div className="flex min-h-0 flex-1 flex-col">
-        <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
+        <div ref={scrollRef} className="scrollbar-gutter-both min-h-0 flex-1 overflow-y-auto">
           <div className="mx-auto flex w-full max-w-3xl flex-col px-4 py-8 sm:px-8 sm:py-12">
             {messages.length === 0 ? (
               <>
@@ -318,32 +319,33 @@ export function ThreadBriefingView({
           </div>
         </div>
 
-        <div className="border-t border-border/70 bg-background/95 px-4 pb-[calc(env(safe-area-inset-bottom)+1rem)] pt-3 backdrop-blur sm:px-8">
-          <form onSubmit={handleSubmit} className="mx-auto w-full max-w-3xl">
+        <div className="border-t border-border/70 bg-background/95 px-4 pb-safe pt-3 backdrop-blur sm:px-8">
+          <form onSubmit={handleSubmit} className="mx-auto w-full max-w-3xl pb-4">
             {error ? <p className="mb-2 text-xs text-destructive">{error}</p> : null}
-            <div className="relative">
+            <InputGroup className="items-end">
               <Textarea
                 value={prompt}
                 size="sm"
+                unstyled
                 rows={2}
                 disabled={isAnswering}
                 aria-label="Ask about this thread"
                 placeholder="Ask about this thread…"
                 onChange={(event) => setPrompt(event.target.value)}
                 onKeyDown={handleKeyDown}
-                className="pr-12"
               />
-              <Button
-                type="submit"
-                size="icon-sm"
-                disabled={!prompt.trim() || isAnswering}
-                aria-label="Send briefing question"
-                className="absolute bottom-2 right-2"
-              >
-                <ArrowUpIcon className="size-4" />
-              </Button>
-            </div>
-            <p className="mt-2 flex items-center justify-center gap-1.5 text-[11px] text-muted-foreground">
+              <InputGroupAddon align="inline-end">
+                <Button
+                  type="submit"
+                  size="icon-sm"
+                  disabled={!prompt.trim() || isAnswering}
+                  aria-label="Send briefing question"
+                >
+                  <ArrowUpIcon className="size-4" />
+                </Button>
+              </InputGroupAddon>
+            </InputGroup>
+            <p className="mt-2 flex items-center justify-center gap-1.5 text-2xs text-muted-foreground">
               <LockKeyholeIcon className="size-3" />
               This briefing is not added to the conversation.
             </p>

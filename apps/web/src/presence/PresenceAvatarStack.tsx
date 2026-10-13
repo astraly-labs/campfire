@@ -38,9 +38,9 @@ export function PresenceAvatarStack({ viewers }: { viewers: ReadonlyArray<Presen
             render={
               <span
                 className={cn(
-                  "-ml-1.5 inline-flex size-5 first:ml-0 items-center justify-center rounded-full text-[9px] font-semibold ring-2 ring-background",
+                  "-ml-1.5 inline-flex size-5 first:ml-0 items-center justify-center rounded-full text-3xs font-semibold ring-2 ring-background",
                   PALETTE[presenceColorIndex(viewer.user.subject)],
-                  viewer.typing && "ring-amber-400",
+                  viewer.typing && "ring-warning-foreground",
                 )}
               >
                 {presenceInitials(viewer.user.displayName)}

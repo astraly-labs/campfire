@@ -28,7 +28,7 @@ export function CollaborationAvatar(props: {
             aria-label={label}
             className={cn(
               "inline-flex shrink-0 items-center justify-center rounded-full font-semibold ring-1 ring-background",
-              size === "xs" ? "size-4 text-[8px]" : "size-6 text-[10px]",
+              size === "xs" ? "size-4 text-4xs" : "size-6 text-3xs",
               COLOR_CLASSES[presenceColorIndex(user.subject)],
               className,
             )}

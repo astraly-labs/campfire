@@ -1,6 +1,7 @@
 import { SearchIcon, XIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../components/ui/tooltip";
 import { isGiphyConfigured, searchGifs, trendingGifs, type GiphyGif } from "./giphyClient";
 
 export function GifPicker(props: {
@@ -67,29 +68,38 @@ export function GifPicker(props: {
           <p className="text-xs text-muted-foreground">No GIFs found.</p>
         ) : (
           <div className="grid grid-cols-2 gap-1.5">
-            {results.map((gif) => (
-              <button
-                key={gif.id}
-                type="button"
-                title={gif.title}
-                onClick={() => onPick(gif)}
-                className="overflow-hidden rounded-md bg-muted ring-1 ring-border hover:ring-primary"
-                style={{ aspectRatio: `${gif.width} / ${gif.height}` }}
-              >
-                <img
-                  src={gif.previewUrl}
-                  alt={gif.title || "GIF"}
-                  loading="lazy"
-                  referrerPolicy="no-referrer"
-                  className="size-full object-cover"
-                />
-              </button>
-            ))}
+            {results.map((gif) => {
+              const label = gif.title || "Select GIF";
+              return (
+                <Tooltip key={gif.id}>
+                  <TooltipTrigger
+                    render={
+                      <button
+                        type="button"
+                        aria-label={label}
+                        onClick={() => onPick(gif)}
+                        className="overflow-hidden rounded-md bg-muted ring-1 ring-border hover:ring-primary"
+                        style={{ aspectRatio: `${gif.width} / ${gif.height}` }}
+                      />
+                    }
+                  >
+                    <img
+                      src={gif.previewUrl}
+                      alt=""
+                      loading="lazy"
+                      referrerPolicy="no-referrer"
+                      className="size-full object-cover"
+                    />
+                  </TooltipTrigger>
+                  <TooltipPopup>{label}</TooltipPopup>
+                </Tooltip>
+              );
+            })}
           </div>
         )}
       </div>
       {isGiphyConfigured() ? (
-        <div className="border-t px-2 py-1 text-[10px] text-muted-foreground">Powered by GIPHY</div>
+        <div className="border-t px-2 py-1 text-3xs text-muted-foreground">Powered by GIPHY</div>
       ) : null}
     </div>
   );

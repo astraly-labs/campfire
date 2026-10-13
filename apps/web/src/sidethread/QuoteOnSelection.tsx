@@ -80,7 +80,7 @@ export function QuoteOnSelection(props: {
                 transform: "translateY(-100%)",
                 zIndex: 60,
               }}
-              className="inline-flex items-center gap-1.5 rounded-md border bg-popover px-2 py-1 text-[11px] font-medium shadow-lg hover:bg-accent"
+              className="inline-flex items-center gap-1.5 rounded-md border bg-popover px-2 py-1 text-2xs font-medium shadow-lg hover:bg-accent"
             >
               <QuoteIcon className="size-3" /> Quote in discussion
             </button>,

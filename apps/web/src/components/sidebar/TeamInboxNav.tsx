@@ -37,19 +37,17 @@ export function TeamInboxNav() {
   }, [isMobile, navigate, setOpenMobile]);
 
   return (
-    <SidebarGroup className="px-2 py-0">
+    <SidebarGroup>
       <SidebarMenu>
         <SidebarMenuItem>
           <SidebarMenuButton
-            size="sm"
             isActive={pathname === "/inbox"}
-            className="gap-2 px-2 py-1.5 text-sm font-medium text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
             onClick={openInbox}
           >
             <InboxIcon className="size-4 shrink-0" />
             <span className="min-w-0 flex-1 truncate text-left">Inbox</span>
             {unreadCount > 0 ? (
-              <span className="min-w-5 rounded-full bg-primary px-1.5 py-0.5 text-center text-[10px] font-semibold leading-none text-primary-foreground tabular-nums">
+              <span className="min-w-5 rounded-full bg-primary px-1.5 py-0.5 text-center text-3xs font-semibold leading-none text-primary-foreground tabular-nums">
                 {unreadCount > 99 ? "99+" : unreadCount}
               </span>
             ) : null}

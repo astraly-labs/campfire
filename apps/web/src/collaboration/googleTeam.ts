@@ -35,7 +35,11 @@ export function googleTeamMembersFromSessions(
 
 export function useGoogleTeam(environmentId: EnvironmentId | null) {
   const access = useEnvironmentQuery(
-    environmentId === null ? null : authEnvironment.accessChanges({ environmentId, input: null }),
+    environmentId === null
+      ? null
+      : // This read-only auth stream exposes server-owned session labels, not an environment action.
+        // oxlint-disable-next-line t3code/no-rpc-permission-bypass -- Auth metadata has no permission-aware command equivalent.
+        authEnvironment.accessChanges({ environmentId, input: null }),
   );
   const members = useMemo(() => {
     const event = access.data;

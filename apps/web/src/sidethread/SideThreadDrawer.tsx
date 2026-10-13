@@ -35,6 +35,7 @@ import {
   SheetPopup,
   SheetTitle,
 } from "../components/ui/sheet";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../components/ui/tooltip";
 import { notifyPresenceTyping } from "../presence/presence";
 import { useThreadShells } from "../state/entities";
 import { threadEnvironment } from "../state/threads";
@@ -287,13 +288,15 @@ export function SideThreadDrawer(props: {
   return (
     <Sheet open={open} onOpenChange={(nextOpen) => !nextOpen && onClose()}>
       <SheetPopup side="right" className="sm:max-w-[460px]">
-        <SheetHeader className="border-b pb-4">
-          <div className="flex items-center gap-2 pr-8">
-            <MessageCircleIcon className="size-4 text-muted-foreground" />
-            <SheetTitle className="text-base">Team discussion</SheetTitle>
-          </div>
-          <SheetDescription>One shared side thread for this agent thread.</SheetDescription>
-        </SheetHeader>
+        <div className="border-b">
+          <SheetHeader>
+            <div className="flex items-center gap-2 pr-8">
+              <MessageCircleIcon className="size-4 text-muted-foreground" />
+              <SheetTitle>Team discussion</SheetTitle>
+            </div>
+            <SheetDescription>One shared side thread for this agent thread.</SheetDescription>
+          </SheetHeader>
+        </div>
         <div data-slot="sheet-panel" className="flex min-h-0 flex-1 flex-col gap-3 px-6 py-4">
           <div className="flex min-h-32 flex-1 flex-col gap-3 overflow-y-auto pr-1">
             {!sideThread ? (
@@ -334,24 +337,24 @@ export function SideThreadDrawer(props: {
                           labelPrefix="Sent by"
                         />
                         <span className="text-xs font-medium">{message.author.displayName}</span>
-                        <time className="ml-auto text-[10px] text-muted-foreground">
+                        <time className="ml-auto text-3xs text-muted-foreground">
                           {timestamp}
                           {message.editedAt ? " · edited" : ""}
                         </time>
                       </div>
                     ) : (
-                      <time className="float-right ml-2 text-[10px] text-muted-foreground">
+                      <time className="float-right ml-2 text-3xs text-muted-foreground">
                         {timestamp}
                         {message.editedAt ? " · edited" : ""}
                       </time>
                     )}
                     {reply ? (
-                      <div className="mb-2 truncate rounded-md border-l-2 border-primary/50 bg-background/55 px-2 py-1 text-[11px] text-muted-foreground">
+                      <div className="mb-2 truncate rounded-md border-l-2 border-primary/50 bg-background/55 px-2 py-1 text-2xs text-muted-foreground">
                         Reply to {reply.author.displayName}: {reply.text || "attachment"}
                       </div>
                     ) : null}
                     {quoted ? (
-                      <div className="mb-2 line-clamp-2 rounded-md border-l-2 border-sky-400 bg-background/55 px-2 py-1 text-[11px] text-muted-foreground">
+                      <div className="mb-2 line-clamp-2 rounded-md border-info bg-background/55 px-2 py-1 text-2xs text-muted-foreground">
                         Agent thread: {quoted.text}
                       </div>
                     ) : null}
@@ -377,27 +380,36 @@ export function SideThreadDrawer(props: {
                       </div>
                     ) : null}
                     <div className="mt-2 flex flex-wrap items-center gap-1 opacity-70 transition-opacity group-hover:opacity-100">
-                      {(message.reactions ?? []).map((reaction) => (
-                        <button
-                          key={reaction.emoji}
-                          type="button"
-                          className="rounded-full border bg-background px-2 py-0.5 text-xs"
-                          title={reaction.users.map((user) => user.displayName).join(", ")}
-                          onClick={() =>
-                            void react({
-                              environmentId,
-                              input: {
-                                threadId,
-                                sideThreadId,
-                                messageId: message.id,
-                                emoji: reaction.emoji,
-                              },
-                            })
-                          }
-                        >
-                          {reaction.emoji} {reaction.users.length}
-                        </button>
-                      ))}
+                      {(message.reactions ?? []).map((reaction) => {
+                        const reactors = reaction.users.map((user) => user.displayName).join(", ");
+                        return (
+                          <Tooltip key={reaction.emoji}>
+                            <TooltipTrigger
+                              render={
+                                <button
+                                  type="button"
+                                  className="rounded-full border bg-background px-2 py-0.5 text-xs"
+                                  aria-label={`${reaction.emoji} from ${reactors}`}
+                                  onClick={() =>
+                                    void react({
+                                      environmentId,
+                                      input: {
+                                        threadId,
+                                        sideThreadId,
+                                        messageId: message.id,
+                                        emoji: reaction.emoji,
+                                      },
+                                    })
+                                  }
+                                />
+                              }
+                            >
+                              {reaction.emoji} {reaction.users.length}
+                            </TooltipTrigger>
+                            <TooltipPopup>{reactors}</TooltipPopup>
+                          </Tooltip>
+                        );
+                      })}
                       <span className="inline-flex items-center gap-0.5">
                         {QUICK_REACTIONS.map((emoji) => (
                           <button
@@ -417,7 +429,7 @@ export function SideThreadDrawer(props: {
                       </span>
                       <button
                         type="button"
-                        className="ml-auto inline-flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground"
+                        className="ml-auto inline-flex items-center gap-1 text-3xs text-muted-foreground hover:text-foreground"
                         onClick={() => {
                           setReplyToId(message.id);
                           setEditingId(null);
@@ -428,7 +440,7 @@ export function SideThreadDrawer(props: {
                       {own ? (
                         <button
                           type="button"
-                          className="inline-flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground"
+                          className="inline-flex items-center gap-1 text-3xs text-muted-foreground hover:text-foreground"
                           onClick={() => {
                             setEditingId(message.id);
                             setReplyToId(null);
@@ -488,7 +500,7 @@ export function SideThreadDrawer(props: {
                 maxLength={20_000}
                 rows={4}
                 placeholder="Write to the team…"
-                className="w-full resize-none rounded-xl border bg-background p-3 text-sm outline-none focus:ring-2 focus:ring-ring"
+                className="w-full resize-none rounded-xl border bg-background p-3 text-sm outline-none focus:ring-2 focus:ring-inset focus:ring-ring"
               />
               {!editingId && team.length > 0 ? (
                 <div className="flex flex-wrap gap-1">
@@ -498,7 +510,7 @@ export function SideThreadDrawer(props: {
                       <button
                         key={member.subject}
                         type="button"
-                        className="rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground hover:text-foreground"
+                        className="rounded-full bg-muted px-2 py-0.5 text-3xs text-muted-foreground hover:text-foreground"
                         onClick={() =>
                           setDraft(
                             (current) =>
@@ -596,7 +608,7 @@ export function SideThreadDrawer(props: {
                           setGifPickerOpen(false);
                         }}
                       />
-                      <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground">
+                      <span className="inline-flex items-center gap-1 text-3xs text-muted-foreground">
                         <SmilePlusIcon className="size-3" /> reactions enabled
                       </span>
                     </>

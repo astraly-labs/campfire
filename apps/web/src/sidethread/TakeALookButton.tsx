@@ -119,7 +119,7 @@ export function TakeALookButton(props: {
       </PopoverTrigger>
       <PopoverPopup align="start" side="bottom" className="w-64">
         <div className="flex flex-col gap-1">
-          <p className="px-1 text-[11px] font-medium text-muted-foreground">Take a look…</p>
+          <p className="px-1 text-2xs font-medium text-muted-foreground">Take a look…</p>
           {candidates.length === 0 ? (
             <p className="px-1 py-2 text-xs text-muted-foreground/70">No Google teammates yet.</p>
           ) : (
@@ -158,7 +158,7 @@ export function TakeALookButton(props: {
                       </span>
                       <span className="flex min-w-0 flex-1 flex-col">
                         <span className="truncate font-medium">{user.displayName}</span>
-                        <span className="truncate text-[10px] text-muted-foreground/70">
+                        <span className="truncate text-3xs text-muted-foreground/70">
                           @{mentionHandleForGoogleUser(user)}
                           {user.connected ? " · online" : ""}
                         </span>

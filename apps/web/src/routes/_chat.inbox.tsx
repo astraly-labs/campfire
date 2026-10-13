@@ -74,7 +74,7 @@ function TeamInboxRouteView() {
   };
 
   return (
-    <SidebarInset className="h-dvh min-h-0 overflow-hidden bg-background text-foreground">
+    <SidebarInset className="h-dvh min-h-0 overflow-hidden">
       <div className="flex min-h-0 flex-1 flex-col">
         <header className="flex items-center gap-2 border-b px-3 py-2 sm:px-5 sm:py-3">
           <SidebarTrigger className="size-7 shrink-0 md:hidden" />
@@ -116,7 +116,7 @@ function TeamInboxRouteView() {
             </EmptyHeader>
           </Empty>
         ) : (
-          <div className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-5">
+          <div className="scrollbar-gutter-both min-h-0 flex-1 overflow-y-auto p-3 sm:p-5">
             <div className="mx-auto flex max-w-3xl flex-col gap-2">
               {items.map((item) => (
                 <button
@@ -130,7 +130,7 @@ function TeamInboxRouteView() {
                     <div className="flex items-center gap-2">
                       <span className="truncate text-sm font-medium">{item.thread.title}</span>
                       {item.isMention ? (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">
+                        <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-3xs font-medium text-primary">
                           <AtSignIcon className="size-3" /> mention
                         </span>
                       ) : (
