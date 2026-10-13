@@ -1,3 +1,4 @@
+import { applySideThreadEvent } from "@t3tools/shared/sideThreadEvents";
 import type {
   OrchestrationV2DomainEvent,
   OrchestrationV2Run,
@@ -284,6 +285,14 @@ export function applyOrchestrationV2ProjectionEvent(
       };
     case "runtime-request.updated":
       return { ...base, runtimeRequests: upsertEntity(base.runtimeRequests, event.payload) };
+    case "sidethread.created":
+    case "sidethread.message-posted":
+    case "sidethread.message-reacted":
+    case "sidethread.message-edited":
+    case "sidethread.marked-read":
+    case "sidethread.archived":
+    case "sidethread.imported":
+      return { ...base, sideThreads: applySideThreadEvent(base.sideThreads ?? [], event) };
     case "message.updated":
       return { ...base, messages: upsertEntity(base.messages, event.payload) };
     case "plan.updated":

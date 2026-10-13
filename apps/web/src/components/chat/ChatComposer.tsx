@@ -1,3 +1,5 @@
+import { notifyPresenceTyping } from "../../presence/presence";
+import { useThreadCollaboration } from "../../collaboration/threadCollaborationContext";
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
 import { useComposerTypingGuard } from "./useComposerTypingGuard";
 import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
@@ -1713,6 +1715,7 @@ export interface ChatComposerProps {
 // --------------------------------------------------------------------------
 
 export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps) {
+  const collaboration = useThreadCollaboration();
   const {
     composerDraftTarget,
     environmentId,
@@ -3735,6 +3738,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       cursorAdjacentToMention: boolean,
       contextIds: string[],
     ) => {
+      if (collaboration) notifyPresenceTyping(collaboration.threadRef.environmentId, collaboration.threadRef.threadId);
       expandComposerForEditorChange();
       if (activePendingProgress?.activeQuestion && pendingUserInputs.length > 0) {
         if (activePendingProgress.activeQuestion.allowCustomAnswer === false) return;

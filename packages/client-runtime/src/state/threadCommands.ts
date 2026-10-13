@@ -18,6 +18,18 @@ import {
   createEnvironmentRpcCommand,
 } from "./runtime.ts";
 import {
+  type CreateSideThreadInput,
+  createSideThread,
+  type PostSideThreadMessageInput,
+  postSideThreadMessage,
+  type ReactToSideThreadMessageInput,
+  reactToSideThreadMessage,
+  type EditSideThreadMessageInput,
+  editSideThreadMessage,
+  type MarkSideThreadReadInput,
+  markSideThreadRead,
+  type ArchiveSideThreadInput,
+  archiveSideThread,
   type ThreadCommandInput,
   type ArchiveThreadInput,
   type CancelQueuedRunInput,
@@ -149,6 +161,43 @@ export function createThreadEnvironmentAtoms<R, E>(
       JSON.stringify([environmentId, input.threadId]),
   };
   const commands = {
+    createSideThread: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:createSideThread",
+      execute: (input: CreateSideThreadInput) => createSideThread(input),
+      scheduler,
+      concurrency,
+    }),
+    postSideThreadMessage: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:postSideThreadMessage",
+      execute: (input: PostSideThreadMessageInput) => postSideThreadMessage(input),
+      scheduler,
+      concurrency,
+    }),
+    reactToSideThreadMessage: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:reactToSideThreadMessage",
+      execute: (input: ReactToSideThreadMessageInput) => reactToSideThreadMessage(input),
+      scheduler,
+      concurrency,
+    }),
+    editSideThreadMessage: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:editSideThreadMessage",
+      execute: (input: EditSideThreadMessageInput) => editSideThreadMessage(input),
+      scheduler,
+      concurrency,
+    }),
+    markSideThreadRead: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:markSideThreadRead",
+      execute: (input: MarkSideThreadReadInput) => markSideThreadRead(input),
+      scheduler,
+      concurrency,
+    }),
+    archiveSideThread: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:archiveSideThread",
+      execute: (input: ArchiveSideThreadInput) => archiveSideThread(input),
+      scheduler,
+      concurrency,
+    }),
+
     create: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:create",
       execute: (input: CreateThreadInput) => createThread(input),

@@ -89,6 +89,10 @@ function threadRunStatusIsActive(status: ThreadRuntimeSummary["status"]): boolea
 }
 
 export interface EnvironmentThreadShell {
+  readonly collaborationCreatedBy?: import("@t3tools/contracts").CollaborationUser | null;
+  readonly teamDiscussion?: import("@t3tools/contracts").SideThreadShellSummary;
+  readonly kind?: "default" | "review";
+  readonly reviewPullRequestNumber?: number | null;
   readonly environmentId: EnvironmentId;
   readonly id: ThreadId;
   readonly projectId: ProjectId;
@@ -290,6 +294,10 @@ export function presentThreadShell(
           },
     deletedAt: nullableIso(thread.deletedAt),
     source: thread,
+    ...(thread.collaborationCreatedBy === undefined ? {} : { collaborationCreatedBy: thread.collaborationCreatedBy }),
+    ...(thread.teamDiscussion === undefined ? {} : { teamDiscussion: thread.teamDiscussion }),
+    ...(thread.kind === undefined ? {} : { kind: thread.kind }),
+    ...(thread.reviewPullRequestNumber === undefined ? {} : { reviewPullRequestNumber: thread.reviewPullRequestNumber }),
   };
 }
 

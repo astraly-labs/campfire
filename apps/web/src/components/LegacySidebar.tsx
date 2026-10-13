@@ -1,3 +1,5 @@
+import { useCollaborationSidebarThreads, CollaborationThreadOwner, ReviewThreadBadge } from "../collaboration/SidebarCollaboration";
+import { TeamInboxNav } from "./sidebar/TeamInboxNav";
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
 import { resolveThreadCurrentPullRequestLink } from "@t3tools/shared/threadPullRequests";
 import { Spinner } from "~/components/ui/spinner";
@@ -816,7 +818,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                     className="min-w-0 flex-1 truncate text-sm"
                     data-testid={`thread-title-${thread.id}`}
                   >
-                    {thread.title}
+                    <CollaborationThreadOwner thread={thread} /> {thread.kind === "review" ? <ReviewThreadBadge thread={thread} /> : null} {thread.title}
                   </span>
                 }
               />
@@ -3211,7 +3213,8 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
 
 export default function LegacySidebar() {
   const projects = useProjects();
-  const sidebarThreads = useThreadShells();
+  const allCollaborationThreads = useThreadShells();
+  const { threads: sidebarThreads, controls: collaborationControls } = useCollaborationSidebarThreads(allCollaborationThreads, projects);
   const projectExpandedById = useUiStateStore((store) => store.projectExpandedById);
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const reorderProjects = useUiStateStore((store) => store.reorderProjects);
@@ -3852,6 +3855,8 @@ export default function LegacySidebar() {
         <SidebarThreadDetailPrewarmer key={scopedThreadKey(threadRef)} threadRef={threadRef} />
       ))}
       <SidebarChromeHeader isElectron={isElectron} />
+      <TeamInboxNav />
+      {collaborationControls}
 
       <SidebarProjectsContent
         showArm64IntelBuildWarning={showArm64IntelBuildWarning}

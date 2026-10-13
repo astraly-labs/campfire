@@ -1,3 +1,5 @@
+import { useThreadCollaboration } from "../collaboration/threadCollaborationContext";
+import { CodexInlineVisualization, splitCodexInlineVisualizations } from "./chat/CodexInlineVisualization";
 import { MarkdownFindContext, useFindRevealRef } from "./chat/markdownFindContext";
 import {
   buildFileLinkParentSuffixByPath,
@@ -212,6 +214,23 @@ import {
 } from "../browser/openFileInPreview";
 import { resolveLinkTarget } from "../browser/browserLinkTarget";
 import { PullRequestLinkPreview } from "./pullRequest/PullRequestLinkPreview";
+
+export function githubPullRequestNumber(href: string): number | null {
+  try {
+    const url = new URL(href);
+    if (
+      (url.protocol !== "https:" && url.protocol !== "http:") ||
+      url.hostname.toLowerCase() !== "github.com"
+    ) {
+      return null;
+    }
+    const match = url.pathname.match(/^\/[^/]+\/[^/]+\/pull\/([1-9]\d*)(?:\/|$)/u);
+    const pullRequestNumber = match?.[1] ? Number(match[1]) : NaN;
+    return Number.isSafeInteger(pullRequestNumber) ? pullRequestNumber : null;
+  } catch {
+    return null;
+  }
+}
 
 interface ChatMarkdownProps {
   text: string;
@@ -2910,6 +2929,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
     );
   },
   a: function MarkdownAnchor({ node, href, children, title: _title, ...props }) {
+    const collaboration = useThreadCollaboration();
     const {
       canOperateHost,
       canOperatePreview,
@@ -3136,11 +3156,15 @@ const CHAT_MARKDOWN_COMPONENTS = {
           )}
         </a>
       );
+      const reviewNumber = href ? githubPullRequestNumber(href) : null;
+      const withReview = (content: ReactNode) => collaboration && reviewNumber !== null
+        ? <span className="inline-flex max-w-full items-center gap-1 align-baseline">{content}<Button size="xs" variant="outline" aria-label={`Review pull request #${reviewNumber}`} onClick={() => collaboration.review(reviewNumber)}>Review</Button></span>
+        : content;
       if (!faviconHost || !href) {
-        return link;
+        return withReview(link);
       }
       if (pullRequestPreviewTarget !== null) {
-        return (
+        return withReview(
           <PullRequestLinkPreview
             link={link}
             originalUrl={href}
@@ -3163,7 +3187,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
           />
         );
       }
-      return (
+      return withReview(
         <Tooltip>
           <TooltipTrigger render={link} />
           <TooltipPopup side="top">{href}</TooltipPopup>
@@ -3412,7 +3436,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
   },
 } satisfies Components;
 
-function ChatMarkdown({
+function ChatMarkdownContent({
   text,
   className,
   lineBreaks = false,
@@ -3458,17 +3482,11 @@ function ChatMarkdown({
       <ChatMarkdownRendererContext value={componentState}>
         <ReactMarkdown
           remarkPlugins={remarkPlugins}
-          rehypePlugins={
-            parseRawHtml
-              ? CHAT_MARKDOWN_RENDER_REHYPE_PLUGINS
-              : CHAT_MARKDOWN_LITERAL_HTML_REHYPE_PLUGINS
-          }
+          rehypePlugins={parseRawHtml ? CHAT_MARKDOWN_RENDER_REHYPE_PLUGINS : CHAT_MARKDOWN_LITERAL_HTML_REHYPE_PLUGINS}
           skipHtml={false}
           components={CHAT_MARKDOWN_COMPONENTS}
           urlTransform={markdownUrlTransform}
-        >
-          {text}
-        </ReactMarkdown>
+        >{text}</ReactMarkdown>
       </ChatMarkdownRendererContext>
       {localMediaPreview ? (
         <ExpandedImageDialog
@@ -3478,6 +3496,14 @@ function ChatMarkdown({
       ) : null}
     </div>
   );
+}
+
+function ChatMarkdown(props: ChatMarkdownProps) {
+  const threadRef = props.threadRef;
+  if (!threadRef || !props.text.includes("::codex-inline-vis{")) return <ChatMarkdownContent {...props} />;
+  return <>{splitCodexInlineVisualizations(props.text).map((segment) => segment.kind === "visualization"
+    ? <CodexInlineVisualization key={`vis:${segment.offset}`} threadRef={threadRef} fileName={segment.fileName} />
+    : <ChatMarkdownContent key={`md:${segment.offset}`} {...props} text={segment.text} />)}</>;
 }
 
 export default memo(ChatMarkdown);

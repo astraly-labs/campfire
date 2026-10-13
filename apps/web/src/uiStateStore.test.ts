@@ -20,6 +20,7 @@ import {
 
 function makeUiState(overrides: Partial<UiState> = {}): UiState {
   return {
+    threadAffiliationOverrideByThreadKey: {},
     projectExpandedById: {},
     projectOrder: [],
     sidebarProjectScopeKey: null,

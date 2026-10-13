@@ -1,3 +1,5 @@
+import { useCollaborationSidebarThreads, CollaborationThreadOwner, ReviewThreadBadge } from "../collaboration/SidebarCollaboration";
+import { TeamInboxNav } from "./sidebar/TeamInboxNav";
 import { type EnvironmentId, type ScopedProjectRef } from "@t3tools/contracts";
 import { ThreadHoverCard, ThreadHoverCardPopup } from "./ThreadHoverCard";
 import { CollapsibleSectionHeader } from "./ui/collapsible-section-header";
@@ -1670,6 +1672,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
         className="min-w-0 flex-1 rounded-sm border border-input bg-card px-1 text-sm font-medium text-card-foreground outline-none focus:border-foreground"
       />
     ) : (
+      <><CollaborationThreadOwner thread={thread} />{thread.kind === "review" ? <ReviewThreadBadge thread={thread} /> : null}
       <span
         aria-hidden
         className={cn(
@@ -1700,7 +1703,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
         )}
       >
         {thread.title}
-      </span>
+      </span></>
     );
   const accessibleTitle = isRenaming ? null : <span className="sr-only">{thread.title}</span>;
 
@@ -2372,7 +2375,7 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
                   thread.titleRegeneration != null && "opacity-55",
                 )}
               >
-                {thread.title}
+                <CollaborationThreadOwner thread={thread} /> {thread.kind === "review" ? <ReviewThreadBadge thread={thread} /> : null} {thread.title}
               </span>
               <span id={`${props.resultId}-pr`} className="contents">
                 <ThreadSearchPullRequestNumber
@@ -2420,7 +2423,8 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
 export default function Sidebar() {
   const projects = useProjects();
   const projectOrder = useUiStateStore((store) => store.projectOrder);
-  const threads = useThreadShells();
+  const allCollaborationThreads = useThreadShells();
+  const { threads, controls: collaborationControls } = useCollaborationSidebarThreads(allCollaborationThreads, projects);
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
@@ -5052,6 +5056,8 @@ export default function Sidebar() {
     <>
       <ThreadContextDragGhost />
       <SidebarChromeHeader isElectron={isElectron} />
+      <TeamInboxNav />
+      {collaborationControls}
       <SidebarContent
         className="min-h-full"
         fixedHeader={

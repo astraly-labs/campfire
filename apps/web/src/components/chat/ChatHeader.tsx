@@ -1,3 +1,4 @@
+import { ThreadCollaborationToolbar } from "../../collaboration/ThreadCollaboration";
 import {
   AuthOrchestrationOperateScope,
   type EnvironmentId,
@@ -436,6 +437,7 @@ export const ChatHeader = memo(function ChatHeader({
           )}
         </WorkspaceBreadcrumbItem>
       </WorkspaceBreadcrumb>
+      <ThreadCollaborationToolbar />
     </div>
   );
 });

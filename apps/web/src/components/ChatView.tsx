@@ -1,3 +1,4 @@
+import { ThreadCollaborationProvider } from "../collaboration/ThreadCollaboration";
 import { ThreadFind, ThreadFindCanvas, type ThreadFindControls } from "./chat/ThreadFindProvider";
 import { THREAD_FIND_BAR_RESERVED_HEIGHT } from "./chat/ThreadFindBar";
 import { usageLimitRecoveryBannerItem } from "./chat/UsageLimitRecoveryBanner";
@@ -12224,7 +12225,9 @@ export default function ChatView(props: ChatViewProps) {
       cwd={activeWorkspaceRoot}
       checkpoints={serverProjection?.checkpoints}
     >
-      {content}
+      <ThreadCollaborationProvider key={routeThreadKey} thread={activeThread} projection={isServerThread ? serverProjection : null} project={activeProject} providers={serverConfig?.providers ?? []} settings={settings} cwd={activeWorkspaceRoot ?? undefined}>
+        {content}
+      </ThreadCollaborationProvider>
     </FileMetadataThreadProvider>
   );
 }

@@ -19,7 +19,10 @@ const LEGACY_PERSISTED_STATE_KEYS = [
   "codething:renderer-state:v1",
 ] as const;
 
+export type ThreadAffiliationOverride = "mine" | "other";
+
 export interface PersistedUiState {
+  threadAffiliationOverrideByThreadKey?: Record<string, ThreadAffiliationOverride>;
   projectExpandedById?: Record<string, boolean>;
   projectOrder?: string[];
   threadLastVisitedAtById?: Record<string, string>;
@@ -34,6 +37,7 @@ export interface PersistedUiState {
 }
 
 export interface UiProjectState {
+  threadAffiliationOverrideByThreadKey: Record<string, ThreadAffiliationOverride>;
   projectExpandedById: Record<string, boolean>;
   projectOrder: string[];
   // Logical project key the sidebar list is scoped to, or null for "all
@@ -59,6 +63,7 @@ export interface UiState
   extends UiProjectState, UiThreadState, UiEndpointState, UiPullRequestState {}
 
 const initialState: UiState = {
+  threadAffiliationOverrideByThreadKey: {},
   projectExpandedById: {},
   projectOrder: [],
   sidebarProjectScopeKey: null,
@@ -121,6 +126,18 @@ function isPullRequestMergeMethod(value: unknown): value is PullRequestMergeMeth
   return value === "merge" || value === "squash" || value === "rebase";
 }
 
+function sanitizeThreadAffiliationOverrides(
+  value: PersistedUiState["threadAffiliationOverrideByThreadKey"],
+): Record<string, ThreadAffiliationOverride> {
+  if (!value || typeof value !== "object") return {};
+  return Object.fromEntries(
+    Object.entries(value).filter(
+      (entry): entry is [string, ThreadAffiliationOverride] =>
+        entry[0].length > 0 && (entry[1] === "mine" || entry[1] === "other"),
+    ),
+  );
+}
+
 export function parsePersistedState(parsed: PersistedUiState): UiState {
   const projectExpandedById =
     parsed.projectExpandedById === undefined
@@ -148,6 +165,7 @@ export function parsePersistedState(parsed: PersistedUiState): UiState {
   return {
     projectExpandedById,
     projectOrder,
+    threadAffiliationOverrideByThreadKey: sanitizeThreadAffiliationOverrides(parsed.threadAffiliationOverrideByThreadKey),
     threadLastVisitedAtById: sanitizeTimestampRecord(parsed.threadLastVisitedAtById),
     threadChangedFilesExpandedById:
       parsed.threadChangedFilesExpansionVersion === THREAD_CHANGED_FILES_EXPANSION_VERSION
@@ -226,6 +244,7 @@ export function persistState(state: UiState): void {
       JSON.stringify({
         projectExpandedById,
         projectOrder: state.projectOrder,
+        threadAffiliationOverrideByThreadKey: state.threadAffiliationOverrideByThreadKey,
         threadLastVisitedAtById: state.threadLastVisitedAtById,
         defaultAdvertisedEndpointKey: state.defaultAdvertisedEndpointKey,
         sidebarProjectScopeKey: state.sidebarProjectScopeKey,
@@ -291,6 +310,26 @@ export function markThreadUnread(
     threadLastVisitedAtById: {
       ...state.threadLastVisitedAtById,
       [threadId]: unreadVisitedAt,
+    },
+  };
+}
+
+export function setThreadAffiliation(
+  state: UiState,
+  threadKey: string,
+  override: ThreadAffiliationOverride | null,
+): UiState {
+  if ((state.threadAffiliationOverrideByThreadKey[threadKey] ?? null) === override) return state;
+  if (override === null) {
+    const next = { ...state.threadAffiliationOverrideByThreadKey };
+    delete next[threadKey];
+    return { ...state, threadAffiliationOverrideByThreadKey: next };
+  }
+  return {
+    ...state,
+    threadAffiliationOverrideByThreadKey: {
+      ...state.threadAffiliationOverrideByThreadKey,
+      [threadKey]: override,
     },
   };
 }
@@ -424,6 +463,7 @@ export function reorderProjects(
 }
 
 interface UiStateStore extends UiState {
+  setThreadAffiliation: (threadKey: string, override: ThreadAffiliationOverride | null) => void;
   markThreadVisited: (threadId: string, visitedAt: string) => void;
   markThreadUnread: (threadId: string, latestTurnCompletedAt: string | null | undefined) => void;
   setThreadChangedFilesExpanded: (threadId: string, turnId: string, expanded: boolean) => void;
@@ -439,6 +479,7 @@ interface UiStateStore extends UiState {
 }
 
 export const useUiStateStore = create<UiStateStore>((set) => ({
+  setThreadAffiliation: (threadKey, override) => set((state) => setThreadAffiliation(state, threadKey, override)),
   ...readPersistedState(),
   markThreadVisited: (threadId, visitedAt) =>
     set((state) => markThreadVisited(state, threadId, visitedAt)),
