@@ -717,7 +717,10 @@ const layerMakeRoutes = Layer.mergeAll(
     ServerBrowserStream.routeLayer,
     ServerHttp.layerStaticAndDevRoute,
     googleOidcRoutesLayer,
-    Ws.layer,
+    Ws.layer.pipe(
+      Layer.provide(ProjectionStoreV2.layer),
+      Layer.provide(ProviderAdapterRegistry.layerFromProviderInstanceRegistry),
+    ),
   ),
   // The MCP session registry is provided globally (shared with V2 provider
   // sessions) rather than inline here. The orchestrator toolkit resolves

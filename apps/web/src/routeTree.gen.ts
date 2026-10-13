@@ -32,9 +32,9 @@ import { Route as SettingsConnectionsRouteImport } from './routes/settings.conne
 import { Route as SettingsArchivedRouteImport } from './routes/settings.archived'
 import { Route as SettingsAppearanceRouteImport } from './routes/settings.appearance'
 import { Route as ProjectsProjectKeyRouteImport } from './routes/projects.$projectKey'
-import { Route as ChatInboxRouteImport } from './routes/_chat.inbox'
 import { Route as ChatPullRequestsRouteImport } from './routes/_chat.pull-requests'
 import { Route as ChatNewRouteImport } from './routes/_chat.new'
+import { Route as ChatInboxRouteImport } from './routes/_chat.inbox'
 import { Route as ChatDraftDraftIdRouteImport } from './routes/_chat.draft.$draftId'
 import { Route as ChatEnvironmentIdThreadIdRouteImport } from './routes/_chat.$environmentId.$threadId'
 
@@ -153,11 +153,6 @@ const ProjectsProjectKeyRoute = ProjectsProjectKeyRouteImport.update({
   path: '/projects/$projectKey',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ChatInboxRoute = ChatInboxRouteImport.update({
-  id: '/inbox',
-  path: '/inbox',
-  getParentRoute: () => ChatRoute,
-} as any)
 const ChatPullRequestsRoute = ChatPullRequestsRouteImport.update({
   id: '/pull-requests',
   path: '/pull-requests',
@@ -166,6 +161,11 @@ const ChatPullRequestsRoute = ChatPullRequestsRouteImport.update({
 const ChatNewRoute = ChatNewRouteImport.update({
   id: '/new',
   path: '/new',
+  getParentRoute: () => ChatRoute,
+} as any)
+const ChatInboxRoute = ChatInboxRouteImport.update({
+  id: '/inbox',
+  path: '/inbox',
   getParentRoute: () => ChatRoute,
 } as any)
 const ChatDraftDraftIdRoute = ChatDraftDraftIdRouteImport.update({
@@ -188,8 +188,8 @@ export interface FileRoutesByFullPath {
   '/settings': typeof SettingsRouteWithChildren
   '/usage': typeof UsageRoute
   '/welcome': typeof WelcomeRoute
-  '/new': typeof ChatNewRoute
   '/inbox': typeof ChatInboxRoute
+  '/new': typeof ChatNewRoute
   '/pull-requests': typeof ChatPullRequestsRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
@@ -216,8 +216,8 @@ export interface FileRoutesByTo {
   '/settings': typeof SettingsRouteWithChildren
   '/usage': typeof UsageRoute
   '/welcome': typeof WelcomeRoute
-  '/new': typeof ChatNewRoute
   '/inbox': typeof ChatInboxRoute
+  '/new': typeof ChatNewRoute
   '/pull-requests': typeof ChatPullRequestsRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
@@ -247,8 +247,8 @@ export interface FileRoutesById {
   '/settings': typeof SettingsRouteWithChildren
   '/usage': typeof UsageRoute
   '/welcome': typeof WelcomeRoute
-  '/_chat/new': typeof ChatNewRoute
   '/_chat/inbox': typeof ChatInboxRoute
+  '/_chat/new': typeof ChatNewRoute
   '/_chat/pull-requests': typeof ChatPullRequestsRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
@@ -279,8 +279,8 @@ export interface FileRouteTypes {
     | '/settings'
     | '/usage'
     | '/welcome'
-    | '/new'
     | '/inbox'
+    | '/new'
     | '/pull-requests'
     | '/projects/$projectKey'
     | '/settings/appearance'
@@ -307,8 +307,8 @@ export interface FileRouteTypes {
     | '/settings'
     | '/usage'
     | '/welcome'
-    | '/new'
     | '/inbox'
+    | '/new'
     | '/pull-requests'
     | '/projects/$projectKey'
     | '/settings/appearance'
@@ -337,8 +337,8 @@ export interface FileRouteTypes {
     | '/settings'
     | '/usage'
     | '/welcome'
-    | '/_chat/new'
     | '/_chat/inbox'
+    | '/_chat/new'
     | '/_chat/pull-requests'
     | '/projects/$projectKey'
     | '/settings/appearance'
@@ -534,13 +534,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProjectsProjectKeyRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/_chat/inbox': {
-      id: '/_chat/inbox'
-      path: '/inbox'
-      fullPath: '/inbox'
-      preLoaderRoute: typeof ChatInboxRouteImport
-      parentRoute: typeof ChatRoute
-    }
     '/_chat/pull-requests': {
       id: '/_chat/pull-requests'
       path: '/pull-requests'
@@ -553,6 +546,13 @@ declare module '@tanstack/react-router' {
       path: '/new'
       fullPath: '/new'
       preLoaderRoute: typeof ChatNewRouteImport
+      parentRoute: typeof ChatRoute
+    }
+    '/_chat/inbox': {
+      id: '/_chat/inbox'
+      path: '/inbox'
+      fullPath: '/inbox'
+      preLoaderRoute: typeof ChatInboxRouteImport
       parentRoute: typeof ChatRoute
     }
     '/_chat/draft/$draftId': {
@@ -573,8 +573,8 @@ declare module '@tanstack/react-router' {
 }
 
 interface ChatRouteChildren {
-  ChatNewRoute: typeof ChatNewRoute
   ChatInboxRoute: typeof ChatInboxRoute
+  ChatNewRoute: typeof ChatNewRoute
   ChatPullRequestsRoute: typeof ChatPullRequestsRoute
   ChatIndexRoute: typeof ChatIndexRoute
   ChatEnvironmentIdThreadIdRoute: typeof ChatEnvironmentIdThreadIdRoute
@@ -582,8 +582,8 @@ interface ChatRouteChildren {
 }
 
 const ChatRouteChildren: ChatRouteChildren = {
-  ChatNewRoute: ChatNewRoute,
   ChatInboxRoute: ChatInboxRoute,
+  ChatNewRoute: ChatNewRoute,
   ChatPullRequestsRoute: ChatPullRequestsRoute,
   ChatIndexRoute: ChatIndexRoute,
   ChatEnvironmentIdThreadIdRoute: ChatEnvironmentIdThreadIdRoute,
