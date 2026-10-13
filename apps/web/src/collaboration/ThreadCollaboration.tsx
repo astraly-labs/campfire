@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { useNavigate } from "@tanstack/react-router";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useNavigate, useSearch } from "@tanstack/react-router";
 import { MessageCircleIcon, LockKeyholeIcon } from "lucide-react";
 import { MessageId, ThreadId, type ModelSelection, type OrchestrationV2ThreadProjection, type ServerProvider } from "@t3tools/contracts";
 import type { UnifiedSettings } from "@t3tools/contracts/settings";
@@ -40,7 +40,6 @@ export function ThreadCollaborationProvider(props: {
   const threadRef = useMemo(() => scopeThreadRef(thread.environmentId, thread.id), [thread.environmentId, thread.id]);
   const team = useGoogleTeam(thread.environmentId);
   const [discussion, setDiscussion] = useState<{ messageId: MessageId | null; quote: string } | null>(null);
-  const [briefingOpen, setBriefingOpen] = useState(false);
   const [reviewNumber, setReviewNumber] = useState<number | null>(null);
   const [startingReview, setStartingReview] = useState(false);
   const reviewInFlight = useRef(false);
@@ -48,6 +47,15 @@ export function ThreadCollaborationProvider(props: {
   const consumeRequest = useSideThreadUiStore((state) => state.consumeOpenRequest);
   const threadKey = scopedThreadKey(threadRef);
   const navigate = useNavigate();
+  const briefingOpen = useSearch({ strict: false, select: (search) => search.view === "briefing" });
+  const setBriefingOpen = useCallback((open: boolean) => {
+    void navigate({
+      to: "/$environmentId/$threadId",
+      params: buildThreadRouteParams(threadRef),
+      search: open ? { view: "briefing" } : {},
+      replace: true,
+    });
+  }, [navigate, threadRef]);
   const updateProject = useAtomCommand(projectEnvironment.update, { reportFailure: false });
   const create = useAtomCommand(threadEnvironment.create, { reportFailure: false });
   const start = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
@@ -66,7 +74,7 @@ export function ThreadCollaborationProvider(props: {
     open: (messageId, quote = "") => setDiscussion({ messageId: messageId ?? null, quote }),
     review: setReviewNumber,
     openBriefing: () => setBriefingOpen(true),
-  }), [threadRef, team, unread, sideThread?.messages.length]);
+  }), [threadRef, team, unread, sideThread?.messages.length, setBriefingOpen]);
   const startReview = async (modelSelection: ModelSelection) => {
     if (!project || reviewNumber === null || reviewInFlight.current) return;
     reviewInFlight.current = true;

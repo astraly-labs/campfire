@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import type { EnvironmentProject, EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { GitPullRequestArrowIcon } from "lucide-react";
+import { ScanEyeIcon } from "lucide-react";
 import { useGoogleTeam } from "./googleTeam";
 import { CollaborationAvatar } from "./CollaborationAvatar";
 import { isGoogleOwnedByCurrentAccount } from "../sidebarThreadAffiliation";
@@ -53,6 +53,6 @@ export function ReviewThreadBadge({ thread }: { readonly thread: EnvironmentThre
   const project = projects.find((entry) => entry.environmentId === thread.environmentId && entry.id === thread.projectId);
   const result = usePullRequestResolution({ environmentId: thread.environmentId, cwd: thread.worktreePath ?? project?.workspaceRoot ?? null, reference: thread.reviewPullRequestNumber ? `#${thread.reviewPullRequestNumber}` : null });
   const pr = result.data?.pullRequest;
-  const color = pr?.state === "merged" ? "text-violet-500" : pr?.state === "closed" ? "text-zinc-500" : "text-emerald-500";
-  return <span title={`PR review${thread.reviewPullRequestNumber ? ` #${thread.reviewPullRequestNumber}` : ''}${pr ? ` · ${pr.state}` : ''}`} className={`inline-flex shrink-0 ${color}`}><GitPullRequestArrowIcon className="size-3.5" /></span>;
+  const color = pr?.state === "merged" ? "text-violet-500" : pr?.state === "closed" ? "text-zinc-500" : "text-sky-600 dark:text-sky-300/90";
+  return <span title={`PR review${thread.reviewPullRequestNumber ? ` #${thread.reviewPullRequestNumber}` : ''}${pr ? ` · ${pr.state}` : ''}`} className={`inline-flex shrink-0 ${color}`}><ScanEyeIcon className="size-3.5" /></span>;
 }

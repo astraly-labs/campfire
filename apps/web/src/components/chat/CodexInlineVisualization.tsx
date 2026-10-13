@@ -1,7 +1,8 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { LoaderCircle } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 
-import { useAssetUrlState } from "~/assets/assetUrls";
+import { useAssetUrlRefresh, useAssetUrlState } from "~/assets/assetUrls";
 
 export type CodexInlineVisualizationSegment =
   | { readonly kind: "markdown"; readonly text: string; readonly offset: number }
@@ -30,15 +31,35 @@ export function splitCodexInlineVisualizations(
   return segments.length > 0 ? segments : [{ kind: "markdown", text, offset: 0 }];
 }
 
+const RETRY_DELAYS_MS = [500, 1_000, 2_000, 4_000, 8_000] as const;
+
 export function CodexInlineVisualization(props: {
   readonly threadRef: ScopedThreadRef;
   readonly fileName: string;
 }) {
-  const assetUrl = useAssetUrlState(props.threadRef.environmentId, {
-    _tag: "codex-visualization",
+  const resource = useMemo(() => ({
+    _tag: "codex-visualization" as const,
     threadId: props.threadRef.threadId,
     fileName: props.fileName,
-  });
+  }), [props.threadRef.threadId, props.fileName]);
+  const assetUrl = useAssetUrlState(props.threadRef.environmentId, resource);
+  const refresh = useAssetUrlRefresh(props.threadRef.environmentId, resource);
+  const [retryAttempt, setRetryAttempt] = useState(0);
+  useEffect(() => setRetryAttempt(0), [props.threadRef.environmentId, resource]);
+  useEffect(() => {
+    if (assetUrl._tag === "Success") setRetryAttempt(0);
+  }, [assetUrl._tag]);
+  useEffect(() => {
+    // A streamed directive can precede the generated file becoming visible on disk.
+    if (assetUrl._tag !== "Failure") return;
+    const delay = RETRY_DELAYS_MS[retryAttempt];
+    if (delay === undefined) return;
+    const timer = setTimeout(() => {
+      setRetryAttempt((attempt) => attempt + 1);
+      void refresh().catch(() => undefined);
+    }, delay);
+    return () => clearTimeout(timer);
+  }, [assetUrl._tag, refresh, retryAttempt]);
 
   return (
     <div className="my-3 flex h-[28rem] max-h-[70vh] min-h-80 w-full overflow-hidden rounded-lg border border-border bg-background">
