@@ -69,35 +69,29 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
       threadId: command.threadId,
       attachments: images,
     });
-    return yield* threads
-      .dispatch({
-        ...command,
-        attachments: [
-          ...claimed.attachments.filter(
-            (attachment): attachment is ChatImageAttachment => attachment.type === "image",
-          ),
-          ...gifs,
-        ],
-      })
-      .pipe(
-        Effect.tap((result) =>
-          releaseUnusedClaims(
-            claimed.claimedPaths,
-            result.storedEvents.flatMap(({ event }) =>
-              event.type === "sidethread.message-posted"
-                ? (event.payload.attachments ?? []).filter(
-                    (attachment) => attachment.type === "image",
-                  )
-                : [],
-            ),
+    const claimedImages = claimed.attachments.map((attachment): ChatImageAttachment => ({
+      ...attachment,
+      type: "image",
+    }));
+    return yield* threads.dispatch({ ...command, attachments: [...claimedImages, ...gifs] }).pipe(
+      Effect.tap((result) =>
+        releaseUnusedClaims(
+          claimed.claimedPaths,
+          result.storedEvents.flatMap(({ event }) =>
+            event.type === "sidethread.message-posted"
+              ? (event.payload.attachments ?? []).filter(
+                  (attachment) => attachment.type === "image",
+                )
+              : [],
           ),
         ),
-        Effect.tapError((error) =>
-          dispatchWasNotAccepted(error)
-            ? AttachmentClaims.releaseClaimedAttachments(claimed.claimedPaths)
-            : Effect.void,
-        ),
-      );
+      ),
+      Effect.tapError((error) =>
+        dispatchWasNotAccepted(error)
+          ? AttachmentClaims.releaseClaimedAttachments(claimed.claimedPaths)
+          : Effect.void,
+      ),
+    );
   }
   if (command.type === "runtime-request.respond" && command.attachmentsByQuestionId) {
     const config = yield* ServerConfig.ServerConfig;

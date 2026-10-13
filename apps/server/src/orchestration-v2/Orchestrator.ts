@@ -4013,7 +4013,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             completedAt: now,
             updatedAt: now,
             type: "user_message",
-            author: input.author ?? null,
             messageId: input.messageId,
             inputIntent:
               input.command.type === "queued-message.promote-to-steer"
@@ -5500,7 +5499,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           completedAt: now,
           updatedAt: now,
           type: "user_message",
-          author: command.collaborationUser ?? null,
           messageId: command.messageId,
           inputIntent: "turn_start",
           text: dispatchText,
@@ -6193,7 +6191,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         completedAt: now,
         updatedAt: now,
         type: "user_message",
-        author: command.collaborationUser ?? null,
         messageId: command.messageId,
         inputIntent: "turn_start",
         text: dispatchText,
