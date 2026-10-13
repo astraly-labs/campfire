@@ -17,7 +17,7 @@ import { useThreadPresence } from "../presence/presence";
 import { ThreadBriefingView } from "../components/context-assistant/ThreadBriefingView";
 import { PullRequestReviewDialog } from "../components/PullRequestReviewDialog";
 import { Button } from "../components/ui/button";
-import { Sheet, SheetPopup, SheetHeader, SheetTitle, SheetDescription, SheetPanel } from "../components/ui/sheet";
+import { Sheet, SheetPopup, SheetHeader, SheetTitle, SheetDescription } from "../components/ui/sheet";
 import { threadEnvironment } from "../state/threads";
 import { projectEnvironment } from "../state/projects";
 import { useAtomCommand } from "../state/use-atom-command";
@@ -107,12 +107,12 @@ export function ThreadCollaborationProvider(props: {
     <Sheet open={briefingOpen} onOpenChange={setBriefingOpen}>
       <SheetPopup side="right" className="sm:max-w-2xl">
         <SheetHeader><SheetTitle>Private briefing</SheetTitle><SheetDescription>Ask about this thread without posting to its shared conversation.</SheetDescription></SheetHeader>
-        <SheetPanel className="flex min-h-0 flex-1 flex-col">
+        <div data-slot="sheet-panel" className="flex min-h-0 flex-1 flex-col px-6 pb-6">
           {briefingOpen ? <ThreadBriefingView environmentId={thread.environmentId} sourceThreadId={thread.id} threadRef={threadRef} cwd={props.cwd} hidden={false} /> : null}
-        </SheetPanel>
+        </div>
       </SheetPopup>
     </Sheet>
-    {project && reviewNumber !== null ? <PullRequestReviewDialog open pullRequestNumber={reviewNumber} defaultModelSelection={project.defaultReviewModelSelection ?? project.defaultModelSelection ?? thread.modelSelection} providers={props.providers} settings={props.settings} isStarting={startingReview} onOpenChange={(open) => { if (!open) setReviewNumber(null); }} onStart={(selection) => void startReview(selection)} /> : null}
+    {project && reviewNumber !== null ? <PullRequestReviewDialog open environmentId={thread.environmentId} pullRequestNumber={reviewNumber} defaultModelSelection={project.defaultReviewModelSelection ?? project.defaultModelSelection ?? thread.modelSelection} providers={props.providers} settings={props.settings} isStarting={startingReview} onOpenChange={(open) => { if (!open) setReviewNumber(null); }} onStart={(selection) => void startReview(selection)} /> : null}
   </ThreadCollaborationContext>;
 }
 

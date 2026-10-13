@@ -1,4 +1,4 @@
-import type { ModelSelection, ProviderInstanceId, ServerProvider } from "@t3tools/contracts";
+import type { EnvironmentId, ModelSelection, ProviderInstanceId, ServerProvider } from "@t3tools/contracts";
 import type { UnifiedSettings } from "@t3tools/contracts/settings";
 import { createModelSelection } from "@t3tools/shared/model";
 import { useEffect, useMemo, useState } from "react";
@@ -22,6 +22,7 @@ import {
 
 interface PullRequestReviewDialogProps {
   open: boolean;
+  environmentId: EnvironmentId;
   pullRequestNumber: number;
   defaultModelSelection: ModelSelection;
   providers: ReadonlyArray<ServerProvider>;
@@ -33,6 +34,7 @@ interface PullRequestReviewDialogProps {
 
 export function PullRequestReviewDialog({
   open,
+  environmentId,
   pullRequestNumber,
   defaultModelSelection,
   providers,
@@ -108,12 +110,13 @@ export function PullRequestReviewDialog({
           <div className="grid gap-1.5">
             <span className="text-xs font-medium text-foreground">Review model</span>
             <ProviderModelPicker
+              environmentId={environmentId}
+              isComposerOwned={false}
               activeInstanceId={modelSelection.instanceId}
               model={modelSelection.model}
               lockedProvider={null}
               instanceEntries={instanceEntries}
               modelOptionsByInstance={modelOptionsByInstance}
-              triggerVariant="outline"
               triggerClassName="w-full max-w-none text-foreground/90 hover:text-foreground"
               disabled={isStarting || instanceEntries.length === 0}
               onInstanceModelChange={(instanceId: ProviderInstanceId, model: string) => {

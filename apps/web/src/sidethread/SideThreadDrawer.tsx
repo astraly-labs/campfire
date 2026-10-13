@@ -32,7 +32,6 @@ import {
   Sheet,
   SheetDescription,
   SheetHeader,
-  SheetPanel,
   SheetPopup,
   SheetTitle,
 } from "../components/ui/sheet";
@@ -295,7 +294,7 @@ export function SideThreadDrawer(props: {
           </div>
           <SheetDescription>One shared side thread for this agent thread.</SheetDescription>
         </SheetHeader>
-        <SheetPanel className="flex min-h-0 flex-1 flex-col gap-3 py-4">
+        <div data-slot="sheet-panel" className="flex min-h-0 flex-1 flex-col gap-3 px-6 py-4">
           <div className="flex min-h-32 flex-1 flex-col gap-3 overflow-y-auto pr-1">
             {!sideThread ? (
               <p className="text-sm text-muted-foreground">Opening discussion…</p>
@@ -619,7 +618,7 @@ export function SideThreadDrawer(props: {
               </div>
             </div>
           )}
-        </SheetPanel>
+        </div>
       </SheetPopup>
     </Sheet>
   );
