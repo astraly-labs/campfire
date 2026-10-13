@@ -53,7 +53,7 @@ const readSettings = Effect.gen(function* () {
 /** A released V1 database at migration 54 whose project carries all four settings. */
 const seedV1Database = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
-  yield* runMigrations({ toMigrationInclusive: 54 });
+  yield* runMigrations({ toMigrationInclusive: 60 });
   const events = [
     {
       type: "project.created",

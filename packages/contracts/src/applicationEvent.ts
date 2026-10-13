@@ -1,3 +1,4 @@
+import { CollaborationUser } from "./collaboration.ts";
 import * as Schema from "effect/Schema";
 
 import {
@@ -46,6 +47,8 @@ export const ApplicationProjectCreatedPayload = Schema.Struct({
   workspaceRoot: TrimmedNonEmptyString,
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
   defaultModelSelection: Schema.NullOr(ModelSelection),
+  defaultReviewModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
+  createdBy: Schema.optional(Schema.NullOr(CollaborationUser)),
   // Per-project override for where new threads start; optional so persisted
   // events from older servers still decode.
   defaultThreadEnvMode: Schema.optional(Schema.NullOr(ThreadEnvMode)),
@@ -64,6 +67,7 @@ export const ApplicationProjectMetaUpdatedPayload = Schema.Struct({
   workspaceRoot: Schema.optional(TrimmedNonEmptyString),
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
+  defaultReviewModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
   // Absent = leave unchanged; null = clear the override.
   defaultThreadEnvMode: Schema.optional(Schema.NullOr(ThreadEnvMode)),
   autoPull: Schema.optional(Schema.Boolean),

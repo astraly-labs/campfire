@@ -68,3 +68,4 @@ export * from "./clientRpcPermissions.ts";
 
 export * from "./presence.ts";
 export * from "./contextAssistant.ts";
+export * from "./collaboration.ts";

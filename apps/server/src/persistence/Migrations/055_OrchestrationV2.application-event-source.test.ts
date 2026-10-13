@@ -12,7 +12,7 @@ layer("055_OrchestrationV2 application event source", (it) => {
   it.effect("baselines current V1 project state in the shared event log", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: 49 });
+      yield* runMigrations({ toMigrationInclusive: 55 });
       yield* sql`
         INSERT INTO projection_projects (
           project_id,

@@ -58,6 +58,41 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
   command: OrchestrationV2Command,
 ) {
   const threads = yield* ThreadManagement.ThreadManagementService;
+  if (command.type === "sidethread.message.post") {
+    const images = (command.attachments ?? []).filter((attachment) => attachment.type === "image");
+    const gifs = (command.attachments ?? []).filter((attachment) => attachment.type === "gif");
+    const claimed = yield* AttachmentClaims.claimPendingAttachments({
+      threadId: command.threadId,
+      attachments: images,
+    });
+    return yield* threads
+      .dispatch({
+        ...command,
+        attachments: [
+          ...claimed.attachments.filter((attachment) => attachment.type === "image"),
+          ...gifs,
+        ],
+      })
+      .pipe(
+        Effect.tap((result) =>
+          releaseUnusedClaims(
+            claimed.claimedPaths,
+            result.storedEvents.flatMap(({ event }) =>
+              event.type === "sidethread.message-posted"
+                ? (event.payload.attachments ?? []).filter(
+                    (attachment) => attachment.type === "image",
+                  )
+                : [],
+            ),
+          ),
+        ),
+        Effect.tapError((error) =>
+          dispatchWasNotAccepted(error)
+            ? AttachmentClaims.releaseClaimedAttachments(claimed.claimedPaths)
+            : Effect.void,
+        ),
+      );
+  }
   if (command.type === "runtime-request.respond" && command.attachmentsByQuestionId) {
     const config = yield* ServerConfig.ServerConfig;
     const incomingByQuestionId = command.attachmentsByQuestionId;

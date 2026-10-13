@@ -1,3 +1,4 @@
+import type { CollaborationUser } from "@t3tools/contracts";
 import {
   type CommandId,
   type EventId,
@@ -18,6 +19,8 @@ import type { ProjectRow } from "./ProjectStore.ts";
 
 export interface ProjectCreateCommand {
   readonly type: "project.create";
+  readonly collaborationUser?: CollaborationUser | null;
+  readonly defaultReviewModelSelection?: ModelSelection | null;
   readonly commandId: CommandId;
   readonly projectId: ProjectId;
   readonly title: string;
@@ -32,6 +35,7 @@ export interface ProjectMetaUpdateCommand {
   readonly title?: string;
   readonly workspaceRoot?: string;
   readonly defaultModelSelection?: ModelSelection | null;
+  readonly defaultReviewModelSelection?: ModelSelection | null;
   readonly defaultThreadEnvMode?: ThreadEnvMode | null;
   readonly autoPull?: boolean;
   readonly faviconPath?: string | null;
@@ -171,6 +175,8 @@ export function planProjectCommand(input: {
           // Project creation has no user model choice. Older clients sent an
           // automatic seed, but only a metadata update records an explicit default.
           defaultModelSelection: null,
+          defaultReviewModelSelection: command.defaultReviewModelSelection ?? null,
+          createdBy: command.collaborationUser ?? null,
           faviconPath: null,
           projectIcon: null,
           scripts: command.scripts ?? [],
@@ -213,6 +219,9 @@ export function planProjectCommand(input: {
           projectId: command.projectId,
           ...(command.title === undefined ? {} : { title: command.title }),
           ...(command.workspaceRoot === undefined ? {} : { workspaceRoot: command.workspaceRoot }),
+          ...(command.defaultReviewModelSelection === undefined
+            ? {}
+            : { defaultReviewModelSelection: command.defaultReviewModelSelection }),
           ...(command.defaultModelSelection === undefined
             ? {}
             : { defaultModelSelection: command.defaultModelSelection }),

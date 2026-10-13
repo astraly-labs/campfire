@@ -1,3 +1,4 @@
+import { planSideThreadCommand } from "./SideThreadCommands.ts";
 import type {
   OrchestrationV2SearchThreadInput,
   OrchestrationV2SearchThreadResult,
@@ -433,6 +434,12 @@ const threadPullRequestLinksEqual = Schema.toEquivalence(Schema.NullOr(ThreadLin
 
 function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
   switch (command.type) {
+    case "sidethread.create":
+    case "sidethread.message.post":
+    case "sidethread.message.react":
+    case "sidethread.message.edit":
+    case "sidethread.mark-read":
+    case "sidethread.archive":
     case "thread.create":
     case "thread.archive":
     case "thread.unarchive":
@@ -2235,7 +2242,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const emitEvent = emit(events, command);
     const thread: OrchestrationV2AppThread = {
       createdBy: command.createdBy,
+      ...("collaborationUser" in command ? { author: command.collaborationUser ?? null } : {}),
       creationSource: command.creationSource,
+      collaborationCreatedBy: command.collaborationUser ?? null,
+      kind: command.kind ?? "default",
+      reviewPullRequestNumber: command.reviewPullRequestNumber ?? null,
       id: command.threadId,
       projectId: command.projectId,
       title: command.title,
@@ -3610,6 +3621,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         targetThreadId: command.targetThreadId,
         ...(command.title === undefined ? {} : { title: command.title }),
         createdBy: command.createdBy,
+        ...("collaborationUser" in command ? { author: command.collaborationUser ?? null } : {}),
         creationSource: command.creationSource,
         createdAt: now,
       })
@@ -3747,6 +3759,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       status: "pending",
       resolution: null,
       createdBy: command.createdBy,
+      ...("collaborationUser" in command ? { author: command.collaborationUser ?? null } : {}),
       error:
         sourceProviderThread === undefined ? "Source merge-back run has no provider thread." : null,
       createdAt: now,
@@ -4889,6 +4902,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ...(command.context ? { context: command.context } : {}),
           attachments: command.attachments,
           createdBy: command.createdBy,
+          ...("collaborationUser" in command ? { author: command.collaborationUser ?? null } : {}),
           creationSource: command.creationSource,
           ...(command.scheduledTaskId === undefined
             ? {}
@@ -5088,6 +5102,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         };
         const message: OrchestrationV2ConversationMessage = {
           createdBy: command.createdBy,
+          ...("collaborationUser" in command ? { author: command.collaborationUser ?? null } : {}),
           creationSource: command.creationSource,
           ...(command.scheduledTaskId === undefined
             ? {}
@@ -5432,6 +5447,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         };
         const message: OrchestrationV2ConversationMessage = {
           createdBy: command.createdBy,
+          ...("collaborationUser" in command ? { author: command.collaborationUser ?? null } : {}),
           creationSource: command.creationSource,
           ...(command.scheduledTaskId === undefined
             ? {}
@@ -5455,6 +5471,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         };
         const turnItem: OrchestrationV2TurnItem = {
           createdBy: command.createdBy,
+          ...("collaborationUser" in command ? { author: command.collaborationUser ?? null } : {}),
           creationSource: command.creationSource,
           ...(command.scheduledTaskId === undefined
             ? {}
@@ -6126,6 +6143,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       };
       const message: OrchestrationV2ConversationMessage = {
         createdBy: command.createdBy,
+        ...("collaborationUser" in command ? { author: command.collaborationUser ?? null } : {}),
         creationSource: command.creationSource,
         ...(command.scheduledTaskId === undefined
           ? {}
@@ -6147,6 +6165,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       };
       const turnItem: OrchestrationV2TurnItem = {
         createdBy: command.createdBy,
+        ...("collaborationUser" in command ? { author: command.collaborationUser ?? null } : {}),
         creationSource: command.creationSource,
         ...(command.scheduledTaskId === undefined
           ? {}
@@ -6343,6 +6362,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             contextHandoffId: providerSwitchHandoff.id,
           },
           createdBy: command.createdBy,
+          ...("collaborationUser" in command ? { author: command.collaborationUser ?? null } : {}),
           error: null,
           createdAt: now,
           updatedAt: now,
@@ -6642,6 +6662,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           title: taskTitle,
           now,
           createdBy: command.createdBy,
+          ...("collaborationUser" in command ? { author: command.collaborationUser ?? null } : {}),
           creationSource: command.creationSource,
         }),
         runtimeMode: command.runtimeMode,
@@ -6654,6 +6675,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         parentNodeId: command.parentNodeId,
         origin: "app_owned",
         createdBy: command.createdBy,
+        ...("collaborationUser" in command ? { author: command.collaborationUser ?? null } : {}),
         driver: targetAdapter.driver,
         providerInstanceId: command.modelSelection.instanceId,
         providerThreadId: null,
@@ -6755,6 +6777,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const childMessageCommand = {
         type: "message.dispatch",
         createdBy: command.createdBy,
+        ...("collaborationUser" in command ? { author: command.collaborationUser ?? null } : {}),
         creationSource: command.creationSource,
         commandId: command.commandId,
         threadId: childThreadId,
@@ -6799,6 +6822,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         status: "consumed",
         resolution: null,
         createdBy: command.createdBy,
+        ...("collaborationUser" in command ? { author: command.collaborationUser ?? null } : {}),
         error: null,
         createdAt: now,
         updatedAt: now,
@@ -6880,6 +6904,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const task: OrchestrationV2Subagent = {
       ...original,
       createdBy: command.createdBy,
+      ...("collaborationUser" in command ? { author: command.collaborationUser ?? null } : {}),
       driver: adapter.driver,
       id: taskId,
       runId: owner.id,
@@ -10666,6 +10691,39 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }
       | undefined;
     switch (command.type) {
+      case "sidethread.create":
+      case "sidethread.message.post":
+      case "sidethread.message.react":
+      case "sidethread.message.edit":
+      case "sidethread.mark-read":
+      case "sidethread.archive": {
+        const projection = yield* projectionStore
+          .getThreadProjection(command.threadId)
+          .pipe(mapDispatchError(command));
+        const linked =
+          command.type === "sidethread.message.post" && command.linkedRef
+            ? yield* projectionStore
+                .getThreadShell(command.linkedRef.threadId)
+                .pipe(mapDispatchError(command))
+            : null;
+        const planned = planSideThreadCommand({
+          command,
+          projection,
+          linkedThreadExists: linked !== null,
+        });
+        if ("error" in planned)
+          return yield* new OrchestratorCommandRejectedError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: planned.error,
+          });
+        yield* emit(
+          events,
+          command,
+        )({ ...planned.event, threadId: command.threadId, occurredAt: yield* DateTime.now });
+        break;
+      }
+
       case "thread.create":
         yield* dispatchThreadCreate(command, events);
         break;

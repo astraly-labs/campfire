@@ -1,3 +1,4 @@
+import { CollaborationUser } from "@t3tools/contracts";
 import {
   type ApplicationProjectEvent,
   IsoDateTime,
@@ -34,6 +35,8 @@ export const ProjectRow = Schema.Struct({
   title: Schema.String,
   workspaceRoot: Schema.String,
   defaultModelSelection: Schema.NullOr(ModelSelection),
+  defaultReviewModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
+  createdBy: Schema.optional(Schema.NullOr(CollaborationUser)),
   defaultThreadEnvMode: Schema.NullOr(ThreadEnvMode),
   autoPull: Schema.Boolean,
   faviconPath: Schema.NullOr(Schema.String),
@@ -48,6 +51,10 @@ export type ProjectRow = typeof ProjectRow.Type;
 const ProjectDbRow = Schema.Struct({
   ...ProjectRow.fields,
   defaultModelSelection: Schema.NullOr(Schema.fromJsonString(ModelSelection)),
+  defaultReviewModelSelection: Schema.optional(
+    Schema.NullOr(Schema.fromJsonString(ModelSelection)),
+  ),
+  createdBy: Schema.optional(Schema.NullOr(Schema.fromJsonString(CollaborationUser))),
   autoPull: Schema.BooleanFromBit,
   projectIcon: Schema.NullOr(Schema.fromJsonString(StoredProjectIcon)),
   scripts: Schema.fromJsonString(Schema.Array(ProjectScript)),
@@ -61,6 +68,8 @@ function toShell(row: ProjectRow): OrchestrationProjectShell {
     workspaceRoot: row.workspaceRoot,
     repositoryIdentity: null,
     defaultModelSelection: row.defaultModelSelection,
+    defaultReviewModelSelection: row.defaultReviewModelSelection ?? null,
+    createdBy: row.createdBy ?? null,
     defaultThreadEnvMode: row.defaultThreadEnvMode,
     autoPull: row.autoPull,
     faviconPath: row.faviconPath,
@@ -118,6 +127,8 @@ export const make = Effect.gen(function* () {
         title,
         workspace_root AS "workspaceRoot",
         default_model_selection_json AS "defaultModelSelection",
+        default_review_model_selection_json AS "defaultReviewModelSelection",
+        created_by_json AS "createdBy",
         default_thread_env_mode AS "defaultThreadEnvMode",
         auto_pull AS "autoPull",
         favicon_path AS "faviconPath",
@@ -148,6 +159,8 @@ export const make = Effect.gen(function* () {
             title,
             workspace_root,
             default_model_selection_json,
+            default_review_model_selection_json,
+            created_by_json,
             default_thread_env_mode,
             auto_pull,
             favicon_path,
@@ -162,6 +175,8 @@ export const make = Effect.gen(function* () {
             ${encoded.title},
             ${encoded.workspaceRoot},
             ${encoded.defaultModelSelection},
+            ${encoded.defaultReviewModelSelection ?? null},
+            ${encoded.createdBy ?? null},
             ${encoded.defaultThreadEnvMode},
             ${encoded.autoPull},
             ${encoded.faviconPath},
@@ -176,6 +191,8 @@ export const make = Effect.gen(function* () {
             title = excluded.title,
             workspace_root = excluded.workspace_root,
             default_model_selection_json = excluded.default_model_selection_json,
+            default_review_model_selection_json = excluded.default_review_model_selection_json,
+            created_by_json = excluded.created_by_json,
             default_thread_env_mode = excluded.default_thread_env_mode,
             auto_pull = excluded.auto_pull,
             favicon_path = excluded.favicon_path,
@@ -222,6 +239,8 @@ export const make = Effect.gen(function* () {
           title: payload.title,
           workspaceRoot: payload.workspaceRoot,
           defaultModelSelection: payload.defaultModelSelection,
+          defaultReviewModelSelection: payload.defaultReviewModelSelection ?? null,
+          createdBy: payload.createdBy ?? null,
           defaultThreadEnvMode: payload.defaultThreadEnvMode ?? null,
           autoPull: false,
           faviconPath: payload.faviconPath ?? null,
@@ -247,6 +266,9 @@ export const make = Effect.gen(function* () {
         ...row,
         ...(payload.title === undefined ? {} : { title: payload.title }),
         ...(payload.workspaceRoot === undefined ? {} : { workspaceRoot: payload.workspaceRoot }),
+        ...(payload.defaultReviewModelSelection === undefined
+          ? {}
+          : { defaultReviewModelSelection: payload.defaultReviewModelSelection }),
         ...(payload.defaultModelSelection === undefined
           ? {}
           : { defaultModelSelection: payload.defaultModelSelection }),

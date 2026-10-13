@@ -1,3 +1,4 @@
+import type { CollaborationUser, ThreadKind } from "@t3tools/contracts";
 import * as WorktreeSetupTracker from "../project/WorktreeSetupTracker.ts";
 import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
@@ -73,6 +74,9 @@ export interface ThreadLaunchInitialMessage {
 }
 
 export interface ThreadLaunchInput {
+  readonly collaborationUser?: CollaborationUser | null;
+  readonly kind?: ThreadKind;
+  readonly reviewPullRequestNumber?: number | null;
   readonly commandId: CommandId;
   readonly threadId?: ThreadId;
   readonly reuseExistingThread?: boolean;
@@ -847,6 +851,9 @@ const make = Effect.gen(function* () {
               })
             : threads.dispatch({
                 type: "thread.create",
+                collaborationUser: input.collaborationUser ?? null,
+                kind: input.kind ?? "default",
+                reviewPullRequestNumber: input.reviewPullRequestNumber ?? null,
                 commandId: input.commandId,
                 threadId: candidateThreadId,
                 projectId: input.projectId,
@@ -892,6 +899,7 @@ const make = Effect.gen(function* () {
           const dispatched = yield* threads
             .dispatch({
               type: "message.dispatch",
+              collaborationUser: input.collaborationUser ?? null,
               commandId: messageCommandId,
               threadId,
               messageId,

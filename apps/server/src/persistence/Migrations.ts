@@ -57,7 +57,6 @@ import Migration0040 from "./Migrations/040_ProjectionProjectFaviconPath.ts";
 import Migration0041 from "./Migrations/041_AuthSessionClientConnection.ts";
 import Migration0042 from "./Migrations/042_ProjectionThreadLinkedPullRequest.ts";
 import Migration0043 from "./Migrations/043_ProjectionThreadsUnsettledAt.ts";
-import Migration0044 from "./Migrations/044_ClearAutomaticProjectModelDefaults.ts";
 import Migration0045 from "./Migrations/045_ProjectionProjectsAutoPull.ts";
 import Migration0046 from "./Migrations/046_RepairAutomaticSettlementTimestamps.ts";
 import Migration0047 from "./Migrations/047_ProjectionProjectIcon.ts";
@@ -75,6 +74,23 @@ import Migration0058 from "./Migrations/058_WebhookRelayDeliveries.ts";
 import Migration0059 from "./Migrations/059_McpAppModelContext.ts";
 import Migration0060 from "./Migrations/060_ThreadSnapshotWindowIndexes.ts";
 import Migration0061 from "./Migrations/061_PullRequestReviewGuides.ts";
+import Migration0068 from "./Migrations/068_CampfireV2Collaboration.ts";
+
+import Campfire0044 from "./Migrations/044_ProjectionThreadSideThreads.ts";
+import Campfire0045 from "./Migrations/045_ProjectionCollaborationIdentity.ts";
+import Campfire0046 from "./Migrations/046_CanonicalizeProjectionSideThreads.ts";
+import Campfire0047 from "./Migrations/047_ProjectionProjectsDefaultReviewModelSelection.ts";
+import Campfire0048 from "./Migrations/048_ProjectionThreadsReviewKind.ts";
+
+const Campfire0049 = Migration0039.pipe(Effect.andThen(Migration0043));
+const Campfire0050 = Migration0034.pipe(
+  Effect.andThen(Migration0035),
+  Effect.andThen(Migration0036),
+  Effect.andThen(Migration0037),
+  Effect.andThen(Migration0038),
+  Effect.andThen(Migration0039),
+  Effect.andThen(Migration0043),
+);
 
 /**
  * Migration loader with all migrations defined inline.
@@ -130,31 +146,38 @@ export const migrationEntries = [
   [41, "AuthSessionClientConnection", Migration0041],
   [42, "ProjectionThreadLinkedPullRequest", Migration0042],
   [43, "ProjectionThreadsUnsettledAt", Migration0043],
-  [44, "ClearAutomaticProjectModelDefaults", Migration0044],
-  [45, "ProjectionProjectsAutoPull", Migration0045],
-  [46, "RepairAutomaticSettlementTimestamps", Migration0046],
-  [47, "ProjectionProjectIcon", Migration0047],
-  [48, "ProjectionThreadBranchPullRequest", Migration0048],
-  [49, "ProjectionThreadsActiveOrderKey", Migration0049],
-  [50, "ProjectionThreadPullRequests", Migration0050],
-  [51, "ProjectionThreadMessageContext", Migration0051],
-  [52, "ProjectionThreadTitleState", Migration0052],
-  [53, "PullRequestFilesViewed", Migration0053],
-  [54, "ProjectionThreadsAutoSettleDisabledAt", Migration0054],
-  // Released as 53 and 54 in V2 previews; reconcileV2PreviewMigration preserves their ledger.
+  [44, "ProjectionThreadSideThreads", Campfire0044],
+  [45, "ProjectionCollaborationIdentity", Campfire0045],
+  [46, "CanonicalizeProjectionSideThreads", Campfire0046],
+  [47, "ProjectionProjectsDefaultReviewModelSelection", Campfire0047],
+  [48, "ProjectionThreadsReviewKind", Campfire0048],
+  [49, "ReconcileCollidedMigrationHistory", Campfire0049],
+  [50, "ReconcileAllCollidedMigrationHistory", Campfire0050],
+  [51, "ProjectionProjectsAutoPull", Migration0045],
+  [52, "RepairAutomaticSettlementTimestamps", Migration0046],
+  [53, "ProjectionProjectIcon", Migration0047],
+  [54, "ProjectionThreadBranchPullRequest", Migration0048],
+  [55, "ProjectionThreadsActiveOrderKey", Migration0049],
+  [56, "ProjectionThreadPullRequests", Migration0050],
+  [57, "ProjectionThreadMessageContext", Migration0051],
+  [58, "ProjectionThreadTitleState", Migration0052],
+  [59, "PullRequestFilesViewed", Migration0053],
+  [60, "ProjectionThreadsAutoSettleDisabledAt", Migration0054],
+  // Upstream V2 preview ledgers are reconciled to Campfire IDs before migrating.
   // Preserve this migration's schema. Future V2 schema changes need new migrations.
-  [55, "OrchestrationV2", Migration0055],
-  [56, "RemoveRedundantProjectionIndexes", Migration0056],
-  [57, "ScheduledTaskWebhooks", Migration0057],
-  [58, "WebhookRelayDeliveries", Migration0058],
-  [59, "McpAppModelContext", Migration0059],
-  [60, "ThreadSnapshotWindowIndexes", Migration0060],
-  [61, "PullRequestReviewGuides", Migration0061],
+  [61, "OrchestrationV2", Migration0055],
+  [62, "RemoveRedundantProjectionIndexes", Migration0056],
+  [63, "ScheduledTaskWebhooks", Migration0057],
+  [64, "WebhookRelayDeliveries", Migration0058],
+  [65, "McpAppModelContext", Migration0059],
+  [66, "ThreadSnapshotWindowIndexes", Migration0060],
+  [67, "PullRequestReviewGuides", Migration0061],
+  [68, "CampfireV2Collaboration", Migration0068],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
 
-const makeMigrationLoader = (throughId?: number) =>
+export const makeMigrationLoader = (throughId?: number) =>
   Migrator.fromRecord(
     Object.fromEntries(
       migrationEntries
@@ -163,8 +186,8 @@ const makeMigrationLoader = (throughId?: number) =>
     ),
   );
 
-// V2's schema migrations start at 55 after the legacy schema migrations.
-const FIRST_V2_MIGRATION_ID = 55;
+// V2's schema migrations start at 61 after the legacy schema migrations.
+const FIRST_V2_MIGRATION_ID = 61;
 
 /**
  * Fail before migrating when the migrator would skip one of V2's own
@@ -228,6 +251,19 @@ export interface RunMigrationsOptions {
 export const runMigrations = Effect.fn("runMigrations")(function* ({
   toMigrationInclusive,
 }: RunMigrationsOptions = {}) {
+  const sql = yield* SqlClient.SqlClient;
+  const ledgerExists =
+    yield* sql`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'effect_sql_migrations'`;
+  if (ledgerExists.length > 0) {
+    const upstreamHistory =
+      yield* sql`SELECT migration_id FROM effect_sql_migrations WHERE name = 'OrchestrationV2' AND migration_id < 59`;
+    if (upstreamHistory.length > 0)
+      return yield* new Migrator.MigrationError({
+        kind: "BadState",
+        message:
+          "This database has an upstream V2 migration ledger. Campfire needs an explicit ledger conversion before upgrading it.",
+      });
+  }
   const includesV2 =
     toMigrationInclusive === undefined || toMigrationInclusive >= FIRST_V2_MIGRATION_ID;
   const previewMigrations = includesV2 ? yield* reconcileV2PreviewMigration() : [];

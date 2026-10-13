@@ -374,8 +374,8 @@ layer("016_CanonicalizeModelSelections", (it) => {
   );
 });
 
-layer("044_ClearAutomaticProjectModelDefaults", (it) => {
-  it.effect("clears create-time seeds and preserves explicit project defaults", () =>
+layer("Campfire preserves project model defaults", (it) => {
+  it.effect("preserves create-time and explicit defaults through migration 44", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       yield* runMigrations({ toMigrationInclusive: 43 });
@@ -435,13 +435,16 @@ layer("044_ClearAutomaticProjectModelDefaults", (it) => {
         ORDER BY project_id
       `;
       assert.deepStrictEqual(projects, [
-        { projectId: "project-auto", selection: null },
+        { projectId: "project-auto", selection: '{"instanceId":"codex","model":"gpt-5.6-sol"}' },
         {
           projectId: "project-explicit",
           selection:
             '{"instanceId":"codex","model":"gpt-5.6-sol","options":[{"id":"reasoningEffort","value":"high"}]}',
         },
-        { projectId: "project-title-only", selection: null },
+        {
+          projectId: "project-title-only",
+          selection: '{"instanceId":"codex","model":"gpt-5.6-sol"}',
+        },
       ]);
 
       const createdEvents = yield* sql<{
@@ -456,9 +459,9 @@ layer("044_ClearAutomaticProjectModelDefaults", (it) => {
         ORDER BY stream_id
       `;
       assert.deepStrictEqual(createdEvents, [
-        { streamId: "project-auto", model: null },
+        { streamId: "project-auto", model: "gpt-5.6-sol" },
         { streamId: "project-explicit", model: "gpt-5.6-sol" },
-        { streamId: "project-title-only", model: null },
+        { streamId: "project-title-only", model: "gpt-5.6-sol" },
       ]);
     }),
   );

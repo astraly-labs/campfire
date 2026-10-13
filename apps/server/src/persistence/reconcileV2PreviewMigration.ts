@@ -5,8 +5,8 @@ import * as SqlClient from "effect/sql/SqlClient";
 import PullRequestFilesViewed from "./Migrations/053_PullRequestFilesViewed.ts";
 import AutoSettleDisabledAt from "./Migrations/054_ProjectionThreadsAutoSettleDisabledAt.ts";
 
-// Published previews assigned V2 to 53, then 54. Keep their schema and import
-// progress intact while reserving main's migration ids for upgrades from main.
+// The fork reserves 1–50 for Campfire. Reconcile V2 preview positions relative
+// to its own ledger without replaying schema or losing import progress.
 export const reconcileV2PreviewMigration = Effect.fn("reconcileV2PreviewMigration")(function* () {
   const sql = yield* SqlClient.SqlClient;
   return yield* sql.withTransaction(
@@ -16,19 +16,19 @@ export const reconcileV2PreviewMigration = Effect.fn("reconcileV2PreviewMigratio
       `;
       if (tables.length === 0) return [];
       const history = yield* sql<{ readonly migration_id: number; readonly name: string }>`
-        SELECT migration_id, name FROM effect_sql_migrations WHERE migration_id >= 53
+        SELECT migration_id, name FROM effect_sql_migrations WHERE migration_id >= 59
       `;
       const legacy = history.find(
         (row) =>
-          row.name === "OrchestrationV2" && (row.migration_id === 53 || row.migration_id === 54),
+          row.name === "OrchestrationV2" && (row.migration_id === 59 || row.migration_id === 60),
       );
       if (!legacy) return [];
       const valid = history.every(
         (row) =>
           row === legacy ||
-          (legacy.migration_id === 54 &&
-            ((row.migration_id === 53 && row.name === "PullRequestFilesViewed") ||
-              (row.migration_id === 55 && row.name === "RemoveRedundantProjectionIndexes"))),
+          (legacy.migration_id === 60 &&
+            ((row.migration_id === 59 && row.name === "PullRequestFilesViewed") ||
+              (row.migration_id === 61 && row.name === "RemoveRedundantProjectionIndexes"))),
       );
       if (!valid) {
         return yield* new Migrator.MigrationError({
@@ -37,19 +37,19 @@ export const reconcileV2PreviewMigration = Effect.fn("reconcileV2PreviewMigratio
         });
       }
       const executed: Array<readonly [number, string]> = [];
-      if (legacy.migration_id === 53) {
+      if (legacy.migration_id === 59) {
         yield* PullRequestFilesViewed;
-        executed.push([53, "PullRequestFilesViewed"]);
+        executed.push([59, "PullRequestFilesViewed"]);
       }
       yield* AutoSettleDisabledAt;
-      executed.push([54, "ProjectionThreadsAutoSettleDisabledAt"]);
+      executed.push([60, "ProjectionThreadsAutoSettleDisabledAt"]);
       // Move the later entry first to avoid a primary-key collision.
-      yield* sql`UPDATE effect_sql_migrations SET migration_id = 56 WHERE migration_id = 55 AND name = 'RemoveRedundantProjectionIndexes'`;
-      yield* sql`UPDATE effect_sql_migrations SET migration_id = 55 WHERE migration_id = ${legacy.migration_id} AND name = 'OrchestrationV2'`;
-      if (legacy.migration_id === 53) {
-        yield* sql`INSERT INTO effect_sql_migrations (migration_id, name) VALUES (53, 'PullRequestFilesViewed')`;
+      yield* sql`UPDATE effect_sql_migrations SET migration_id = 62 WHERE migration_id = 61 AND name = 'RemoveRedundantProjectionIndexes'`;
+      yield* sql`UPDATE effect_sql_migrations SET migration_id = 61 WHERE migration_id = ${legacy.migration_id} AND name = 'OrchestrationV2'`;
+      if (legacy.migration_id === 59) {
+        yield* sql`INSERT INTO effect_sql_migrations (migration_id, name) VALUES (59, 'PullRequestFilesViewed')`;
       }
-      yield* sql`INSERT INTO effect_sql_migrations (migration_id, name) VALUES (54, 'ProjectionThreadsAutoSettleDisabledAt')`;
+      yield* sql`INSERT INTO effect_sql_migrations (migration_id, name) VALUES (60, 'ProjectionThreadsAutoSettleDisabledAt')`;
       return executed;
     }),
   );

@@ -12,7 +12,7 @@ it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))(
     it.effect("migrates old threads without changing their timestamps or assigning an order", () =>
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
-        yield* runMigrations({ toMigrationInclusive: 48 });
+        yield* runMigrations({ toMigrationInclusive: 54 });
         const now = "2026-01-01T00:00:00.000Z";
         yield* sql`
         INSERT INTO projection_threads (
@@ -23,7 +23,7 @@ it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))(
           '{"instanceId":"codex","model":"gpt-5.4"}', 'full-access', ${now}, ${now}
         )
       `;
-        yield* runMigrations({ toMigrationInclusive: 49 });
+        yield* runMigrations({ toMigrationInclusive: 55 });
         const migrated = yield* sql<{ readonly activeOrderKey: string | null }>`
         SELECT active_order_key AS "activeOrderKey" FROM projection_threads WHERE thread_id = 'thread-1'
       `;

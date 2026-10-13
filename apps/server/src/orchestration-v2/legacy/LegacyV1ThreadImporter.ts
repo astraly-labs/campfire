@@ -1,3 +1,5 @@
+import { CollaborationUser, SideThread } from "@t3tools/contracts";
+import { canonicalizeSideThreads } from "@t3tools/shared/sideThread";
 import {
   threadPullRequestKeysEqual,
   threadPullRequestsOf,
@@ -37,6 +39,10 @@ const IMPORT_EVENT_PREFIX = "migration:v1";
 const TRANSCRIPT_EVENT_BATCH_SIZE = 100;
 
 interface LegacyThreadRow {
+  readonly side_threads_json: string;
+  readonly created_by_json: string | null;
+  readonly kind: string;
+  readonly review_pull_request_number: number | null;
   readonly thread_id: string;
   readonly project_id: string;
   readonly title: string;
@@ -68,6 +74,7 @@ interface LegacyRepairRow extends LegacyThreadRow {
 }
 
 interface LegacyMessageRow {
+  readonly author_json: string | null;
   readonly message_id: string;
   readonly thread_id: string;
   readonly role: "user" | "assistant";
@@ -204,6 +211,12 @@ function importedThread(row: LegacyThreadRow): OrchestrationV2AppThread {
       : pullRequests;
   return {
     createdBy: "system",
+    collaborationCreatedBy:
+      row.created_by_json === null
+        ? null
+        : Schema.decodeUnknownSync(Schema.fromJsonString(CollaborationUser))(row.created_by_json),
+    kind: row.kind === "review" ? "review" : "default",
+    reviewPullRequestNumber: row.review_pull_request_number,
     creationSource: "server",
     id: threadId,
     projectId: ProjectId.make(row.project_id),
@@ -250,6 +263,10 @@ function messageEvents(row: LegacyMessageRow): ReadonlyArray<OrchestrationV2Doma
   const attachments = attachmentsFor(row);
   const message: OrchestrationV2ConversationMessage = {
     createdBy: row.role === "user" ? "user" : "agent",
+    author:
+      row.author_json === null
+        ? null
+        : Schema.decodeUnknownSync(Schema.fromJsonString(CollaborationUser))(row.author_json),
     creationSource: "server",
     id: messageId,
     threadId,
@@ -290,6 +307,7 @@ function messageEvents(row: LegacyMessageRow): ReadonlyArray<OrchestrationV2Doma
       ? {
           ...baseTurnItem,
           createdBy: "user",
+          author: message.author ?? null,
           creationSource: "server",
           type: "user_message",
           messageId,
@@ -357,6 +375,7 @@ const make = Effect.gen(function* () {
         role,
         text,
         attachments_json,
+        author_json,
         context_json,
         is_streaming,
         created_at,
@@ -380,6 +399,7 @@ const make = Effect.gen(function* () {
           message.role,
           message.text,
           message.attachments_json,
+          message.author_json,
           message.context_json,
           message.is_streaming,
           message.created_at,
@@ -410,6 +430,7 @@ const make = Effect.gen(function* () {
           message.role,
           message.text,
           message.attachments_json,
+          message.author_json,
           message.context_json,
           message.is_streaming,
           message.created_at,
@@ -445,6 +466,10 @@ const make = Effect.gen(function* () {
     const repairRows = yield* sql<LegacyRepairRow>`
       SELECT
         thread.thread_id,
+        thread.side_threads_json,
+        thread.created_by_json,
+        thread.kind,
+        thread.review_pull_request_number,
         thread.project_id,
         thread.title,
         thread.model_selection_json,
@@ -549,6 +574,10 @@ const make = Effect.gen(function* () {
     const rows = yield* sql<LegacyThreadRow>`
       SELECT
         thread.thread_id,
+        thread.side_threads_json,
+        thread.created_by_json,
+        thread.kind,
+        thread.review_pull_request_number,
         thread.project_id,
         thread.title,
         thread.model_selection_json,
@@ -588,6 +617,12 @@ const make = Effect.gen(function* () {
     for (const row of rows) {
       const thread = importedThread(row);
       const previews = yield* listShellMessages(thread.id);
+      const sideThreads = canonicalizeSideThreads(
+        thread.id,
+        yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Array(SideThread)))(
+          row.side_threads_json,
+        ),
+      );
       const events: Array<OrchestrationV2DomainEvent> = [
         {
           id: EventId.make(`${IMPORT_EVENT_PREFIX}:thread:${row.thread_id}:created`),
@@ -597,6 +632,13 @@ const make = Effect.gen(function* () {
           occurredAt: thread.createdAt,
           payload: thread,
         },
+        ...sideThreads.map((sideThread): OrchestrationV2DomainEvent => ({
+          id: EventId.make(`${IMPORT_EVENT_PREFIX}:side-thread:${sideThread.id}`),
+          type: "sidethread.imported",
+          threadId: thread.id,
+          occurredAt: thread.updatedAt,
+          payload: { threadId: thread.id, sideThread },
+        })),
         ...previews.flatMap(messageEvents),
         {
           id: EventId.make(`${IMPORT_EVENT_PREFIX}:thread:${row.thread_id}:shell`),

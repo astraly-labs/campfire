@@ -1,3 +1,5 @@
+import { SideThread, SideThreadShellSummary } from "@t3tools/contracts";
+import { applySideThreadEvent, sideThreadShellSummary } from "@t3tools/shared/sideThreadEvents";
 import { projectTurnItemForWire } from "./WireProjection.ts";
 import * as Stream from "effect/Stream";
 import { makeThreadFind, findProjectedThreadItems } from "./ThreadFind.ts";
@@ -718,6 +720,14 @@ export function applyToProjection(
   };
 
   switch (event.type) {
+    case "sidethread.created":
+    case "sidethread.message-posted":
+    case "sidethread.message-reacted":
+    case "sidethread.message-edited":
+    case "sidethread.marked-read":
+    case "sidethread.archived":
+    case "sidethread.imported":
+      return { ...base, sideThreads: applySideThreadEvent(projection.sideThreads ?? [], event) };
     case "thread.created":
     case "thread.archived":
     case "thread.unarchived":
@@ -969,6 +979,7 @@ type PayloadRow = {
 };
 
 type ShellThreadRow = {
+  readonly side_thread_summary_json: string | null;
   readonly thread_id: string;
   readonly payload_json: string;
   readonly forked_from_run_source_thread_id: string | null;
@@ -1027,6 +1038,14 @@ const encodeTimelineSources = Schema.encodeEffect(
   ),
 );
 const encodeIdList = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
+
+const decodeSideThreads = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.Array(SideThread)),
+);
+const encodeSideThreads = Schema.encodeEffect(Schema.fromJsonString(Schema.Array(SideThread)));
+const decodeSideThreadSummary = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(SideThreadShellSummary),
+);
 
 const encodeThreadPayload = Schema.encodeEffect(
   Schema.fromJsonString(OrchestrationV2AppThreadJsonSchema),
@@ -1460,6 +1479,10 @@ export function threadShellFromProjection(
   });
   return {
     createdBy: projection.thread.createdBy,
+    collaborationCreatedBy: projection.thread.collaborationCreatedBy ?? null,
+    kind: projection.thread.kind ?? "default",
+    reviewPullRequestNumber: projection.thread.reviewPullRequestNumber ?? null,
+    teamDiscussion: sideThreadShellSummary(projection.thread.id, projection.sideThreads ?? []),
     creationSource: projection.thread.creationSource,
     id: projection.thread.id,
     projectId: projection.thread.projectId,
@@ -1595,6 +1618,7 @@ function isActivityRunForShell(
 }
 
 type ShellThreadState = {
+  readonly teamDiscussion?: SideThreadShellSummary | undefined;
   readonly thread: OrchestrationV2ThreadProjection["thread"];
   readonly latestRunId: RunId | null;
   readonly latestRunStatus: OrchestrationV2ShellThreadStatus;
@@ -1728,6 +1752,10 @@ function shellFromState(input: {
 }): OrchestrationV2ThreadShell {
   return {
     createdBy: input.state.thread.createdBy,
+    collaborationCreatedBy: input.state.thread.collaborationCreatedBy ?? null,
+    kind: input.state.thread.kind ?? "default",
+    reviewPullRequestNumber: input.state.thread.reviewPullRequestNumber ?? null,
+    teamDiscussion: input.state.teamDiscussion,
     creationSource: input.state.thread.creationSource,
     id: input.state.thread.id,
     projectId: input.state.thread.projectId,
@@ -1823,6 +1851,26 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     const apply: ProjectionStoreV2Shape["apply"] = (event) =>
       Effect.gen(function* () {
         switch (event.type) {
+          case "sidethread.created":
+          case "sidethread.message-posted":
+          case "sidethread.message-reacted":
+          case "sidethread.message-edited":
+          case "sidethread.marked-read":
+          case "sidethread.archived":
+          case "sidethread.imported": {
+            const rows =
+              yield* sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_side_threads WHERE thread_id = ${event.threadId}`;
+            const current =
+              rows[0] === undefined ? [] : yield* decodeSideThreads(rows[0].payload_json);
+            const next = applySideThreadEvent(current, event);
+            const payloadJson = yield* encodeSideThreads(next);
+            const summary = sideThreadShellSummary(event.threadId, next);
+            yield* sql`INSERT INTO orchestration_v2_projection_side_threads (thread_id, payload_json, summary_json)
+              VALUES (${event.threadId}, ${payloadJson}, ${summary === undefined ? null : JSON.stringify(summary)})
+              ON CONFLICT(thread_id) DO UPDATE SET payload_json = excluded.payload_json, summary_json = excluded.summary_json`;
+            break;
+          }
+
           case "thread.created":
           case "thread.archived":
           case "thread.unarchived":
@@ -3279,7 +3327,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           for (const row of rows) messageOrdinals.set(row.message_id, row.ordinal);
         }
         const orderedMessages = sortMessagesByTurnItemOrder(messages, turnItems, messageOrdinals);
+        const sideThreadRows =
+          yield* sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_side_threads WHERE thread_id = ${threadId}`;
+        const sideThreads =
+          sideThreadRows[0] === undefined
+            ? []
+            : yield* decodeSideThreads(sideThreadRows[0].payload_json);
         const projection = {
+          sideThreads,
           thread,
           runs,
           attempts,
@@ -5161,6 +5216,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             SELECT
               t.thread_id,
               t.payload_json,
+              (SELECT summary_json FROM orchestration_v2_projection_side_threads AS side WHERE side.thread_id = t.thread_id) AS side_thread_summary_json,
               CASE
                 WHEN json_extract(t.payload_json, '$.forkedFrom.type') = 'run'
                   THEN json_extract(t.payload_json, '$.forkedFrom.threadId')
@@ -5703,6 +5759,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           }),
         ];
         return {
+          teamDiscussion:
+            row.side_thread_summary_json === null
+              ? undefined
+              : yield* decodeSideThreadSummary(row.side_thread_summary_json),
           thread,
           latestRunId,
           latestRunStatus,

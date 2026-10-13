@@ -21,7 +21,7 @@ layer("055_OrchestrationV2", (it) => {
   it.effect("upgrades released schema 53 through the latest migrations", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: 53 });
+      yield* runMigrations({ toMigrationInclusive: 59 });
 
       const executed = yield* runMigrations();
       assert.deepStrictEqual(executed, [

@@ -1,3 +1,5 @@
+import { CommandId, SideThreadId, SideThreadMessageId, type SideThread } from "@t3tools/contracts";
+import { planSideThreadCommand } from "../SideThreadCommands.ts";
 import { assert, it } from "@effect/vitest";
 import { EventId, ThreadId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -532,5 +534,115 @@ it.layer(layerTest)("LegacyV1ThreadImporter", (it) => {
       `;
       assert.deepStrictEqual(eventsAfterRestart, eventsBeforeRetry);
     }),
+  );
+  it.effect(
+    "preserves Campfire discussion, authors and review metadata across V2 import and replay",
+    () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const importer = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
+        const projections = yield* ProjectionStore.ProjectionStoreV2;
+        const sink = yield* EventSink.EventSinkV2;
+        const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+        const threadId = ThreadId.make("campfire-import");
+        const now = "2026-10-13T12:00:00.000Z";
+        const alice = { subject: "google:alice", displayName: "Alice" };
+        const bob = { subject: "google:bob", displayName: "Bob" };
+        const discussion: SideThread = {
+          id: SideThreadId.make(`thread:${threadId}`),
+          createdBy: alice,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          messages: [
+            {
+              id: SideThreadMessageId.make("alice-message"),
+              author: alice,
+              text: "Review this change",
+              createdAt: now,
+              reactions: [{ emoji: "👍", users: [bob] }],
+              mentions: [bob],
+            },
+          ],
+          readBy: [{ user: alice, lastReadAt: now }],
+        };
+        yield* sql`INSERT INTO projection_projects (project_id, title, workspace_root, default_model_selection_json, scripts_json, created_at, updated_at)
+        VALUES ('campfire-project', 'Campfire', '/campfire', '{"instanceId":"codex","model":"gpt-5.4"}', '[]', ${now}, ${now})`;
+        yield* sql`INSERT INTO projection_threads (thread_id, project_id, title, model_selection_json, runtime_mode, interaction_mode, created_at, updated_at, side_threads_json, created_by_json, kind, review_pull_request_number)
+        VALUES (${threadId}, 'campfire-project', 'Review', '{"instanceId":"codex","model":"gpt-5.4"}', 'full-access', 'default', ${now}, ${now}, ${JSON.stringify([discussion])}, ${JSON.stringify(alice)}, 'review', 123)`;
+        yield* sql`INSERT INTO projection_thread_messages (message_id, thread_id, role, text, attachments_json, is_streaming, created_at, updated_at, author_json)
+        VALUES ('campfire-human-message', ${threadId}, 'user', 'Please review', '[]', 0, ${now}, ${now}, ${JSON.stringify(bob)})`;
+        yield* importer.reconcileShells;
+        yield* importer.ensureTranscript(threadId);
+        const imported = yield* projections.getThreadProjection(threadId);
+        assert.deepStrictEqual(imported.sideThreads, [discussion]);
+        assert.deepStrictEqual(imported.thread.collaborationCreatedBy, alice);
+        assert.equal(imported.thread.kind, "review");
+        assert.equal(imported.thread.reviewPullRequestNumber, 123);
+        assert.deepStrictEqual(imported.messages[0]?.author, bob);
+        assert.deepStrictEqual(
+          (yield* projections.getThreadShell(threadId))?.teamDiscussion?.latestMessage?.author,
+          alice,
+        );
+        const rejectedEdit = planSideThreadCommand({
+          projection: imported,
+          linkedThreadExists: true,
+          command: {
+            type: "sidethread.message.edit",
+            commandId: CommandId.make("bob-edit"),
+            threadId,
+            sideThreadId: discussion.id,
+            messageId: discussion.messages[0]!.id,
+            text: "Forged edit",
+            collaborationUser: bob,
+            createdAt: now,
+          },
+        });
+        assert.isTrue("error" in rejectedEdit);
+        const posted = planSideThreadCommand({
+          projection: imported,
+          linkedThreadExists: true,
+          command: {
+            type: "sidethread.message.post",
+            commandId: CommandId.make("bob-post"),
+            threadId,
+            sideThreadId: discussion.id,
+            messageId: SideThreadMessageId.make("bob-message"),
+            text: "Reviewed",
+            collaborationUser: bob,
+            createdAt: now,
+          },
+        });
+        if ("error" in posted) throw new Error(posted.error);
+        yield* sink.write({
+          events: [
+            {
+              ...posted.event,
+              id: EventId.make("bob-posted"),
+              threadId,
+              occurredAt: DateTime.makeUnsafe(now),
+            },
+          ],
+        });
+        const afterPost = yield* projections.getThreadProjection(threadId);
+        assert.deepStrictEqual(
+          afterPost.sideThreads?.[0]?.messages.map((message) => message.author),
+          [alice, bob],
+        );
+        yield* importer.reconcileShells;
+        assert.equal(
+          (yield* projections.getThreadProjection(threadId)).sideThreads?.[0]?.messages.length,
+          2,
+        );
+        yield* maintenance.rebuild;
+        assert.deepStrictEqual(
+          (yield* projections.getThreadProjection(threadId)).sideThreads,
+          afterPost.sideThreads,
+        );
+        const legacy = yield* sql<{
+          side_threads_json: string;
+        }>`SELECT side_threads_json FROM projection_threads WHERE thread_id = ${threadId}`;
+        assert.equal(legacy[0]?.side_threads_json, JSON.stringify([discussion]));
+      }),
   );
 });

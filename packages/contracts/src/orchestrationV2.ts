@@ -1,3 +1,16 @@
+import {
+  CollaborationUser,
+  SideThread,
+  SideThreadCommand,
+  SideThreadCreatedPayload,
+  SideThreadMessagePostedPayload,
+  SideThreadMessageReactedPayload,
+  SideThreadMessageEditedPayload,
+  SideThreadMarkedReadPayload,
+  SideThreadArchivedPayload,
+  SideThreadShellSummary,
+  ThreadKind,
+} from "./collaboration.ts";
 import { OrchestrationMessageContext } from "./composerContext.ts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -362,6 +375,9 @@ export const OrchestrationV2LimitRecoveryUpdate = Schema.Struct({
 export type OrchestrationV2LimitRecoveryUpdate = typeof OrchestrationV2LimitRecoveryUpdate.Type;
 
 export const OrchestrationV2AppThread = Schema.Struct({
+  collaborationCreatedBy: Schema.optional(Schema.NullOr(CollaborationUser)),
+  kind: Schema.optional(ThreadKind),
+  reviewPullRequestNumber: Schema.optional(Schema.NullOr(PositiveInt)),
   ...OrchestrationV2CreationFields,
   id: ThreadId,
   projectId: ProjectId,
@@ -1202,6 +1218,7 @@ export const OrchestrationV2Notification = Schema.Struct({
 export type OrchestrationV2Notification = typeof OrchestrationV2Notification.Type;
 
 export const OrchestrationV2ConversationMessage = Schema.Struct({
+  author: Schema.optional(Schema.NullOr(CollaborationUser)),
   notification: Schema.optional(OrchestrationV2Notification),
   ...OrchestrationV2CreationFields,
   scheduledTaskId: Schema.optional(ScheduledTaskId),
@@ -1470,6 +1487,7 @@ export const OrchestrationV2TurnItem = Schema.Union([
     ...OrchestrationV2TurnItemBaseFields,
     ...OrchestrationV2CreationFields,
     type: Schema.Literal("user_message"),
+    author: Schema.optional(Schema.NullOr(CollaborationUser)),
     messageId: MessageId,
     scheduledTaskId: Schema.optional(ScheduledTaskId),
     senderThreadId: Schema.optional(ThreadId),
@@ -1736,6 +1754,41 @@ const OrchestrationV2EventBase = Schema.Struct({
 export const OrchestrationV2DomainEvent = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("sidethread.created"),
+    payload: SideThreadCreatedPayload,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("sidethread.message-posted"),
+    payload: SideThreadMessagePostedPayload,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("sidethread.message-reacted"),
+    payload: SideThreadMessageReactedPayload,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("sidethread.message-edited"),
+    payload: SideThreadMessageEditedPayload,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("sidethread.marked-read"),
+    payload: SideThreadMarkedReadPayload,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("sidethread.archived"),
+    payload: SideThreadArchivedPayload,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("sidethread.imported"),
+    payload: Schema.Struct({ threadId: ThreadId, sideThread: SideThread }),
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
     type: Schema.Literal("thread.created"),
     payload: OrchestrationV2AppThread,
   }),
@@ -1874,6 +1927,7 @@ export const OrchestrationV2DomainEvent = Schema.Union([
 export type OrchestrationV2DomainEvent = typeof OrchestrationV2DomainEvent.Type;
 
 export const OrchestrationV2ThreadProjection = Schema.Struct({
+  sideThreads: Schema.optional(Schema.Array(SideThread)),
   thread: OrchestrationV2AppThread,
   runs: Schema.Array(OrchestrationV2Run),
   attempts: Schema.Array(OrchestrationV2RunAttempt),
@@ -1925,6 +1979,10 @@ export type OrchestrationV2LatestVisibleMessageSummary =
   typeof OrchestrationV2LatestVisibleMessageSummary.Type;
 
 export const OrchestrationV2ThreadShell = Schema.Struct({
+  teamDiscussion: Schema.optional(SideThreadShellSummary),
+  collaborationCreatedBy: Schema.optional(Schema.NullOr(CollaborationUser)),
+  kind: Schema.optional(ThreadKind),
+  reviewPullRequestNumber: Schema.optional(Schema.NullOr(PositiveInt)),
   ...OrchestrationV2CreationFields,
   id: ThreadId,
   projectId: ProjectId,
@@ -2249,6 +2307,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     ...OrchestrationV2TurnItemJsonBaseFields,
     ...OrchestrationV2CreationFields,
     type: Schema.Literal("user_message"),
+    author: Schema.optional(Schema.NullOr(CollaborationUser)),
     messageId: MessageId,
     scheduledTaskId: Schema.optional(ScheduledTaskId),
     senderThreadId: Schema.optional(ThreadId),
@@ -2556,6 +2615,41 @@ export type OrchestrationV2RawProviderEventJson = typeof OrchestrationV2RawProvi
 export const OrchestrationV2DomainEventJson = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("sidethread.created"),
+    payload: SideThreadCreatedPayload,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("sidethread.message-posted"),
+    payload: SideThreadMessagePostedPayload,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("sidethread.message-reacted"),
+    payload: SideThreadMessageReactedPayload,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("sidethread.message-edited"),
+    payload: SideThreadMessageEditedPayload,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("sidethread.marked-read"),
+    payload: SideThreadMarkedReadPayload,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("sidethread.archived"),
+    payload: SideThreadArchivedPayload,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("sidethread.imported"),
+    payload: Schema.Struct({ threadId: ThreadId, sideThread: SideThread }),
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
     type: Schema.Literal("thread.created"),
     payload: OrchestrationV2AppThreadJson,
   }),
@@ -2701,8 +2795,12 @@ export const OrchestrationV2StoredEventJson = Schema.Struct({
 export type OrchestrationV2StoredEventJson = typeof OrchestrationV2StoredEventJson.Type;
 
 export const OrchestrationV2Command = Schema.Union([
+  ...SideThreadCommand.members,
   Schema.Struct({
     type: Schema.Literal("thread.create"),
+    collaborationUser: Schema.optional(Schema.NullOr(CollaborationUser)),
+    kind: Schema.optional(ThreadKind),
+    reviewPullRequestNumber: Schema.optional(Schema.NullOr(PositiveInt)),
     ...OrchestrationV2CreationFields,
     commandId: CommandId,
     threadId: ThreadId,
@@ -2928,6 +3026,7 @@ export const OrchestrationV2Command = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("message.dispatch"),
+    collaborationUser: Schema.optional(Schema.NullOr(CollaborationUser)),
     notification: Schema.optional(OrchestrationV2Notification),
     ...OrchestrationV2CreationFields,
     scheduledTaskId: Schema.optional(ScheduledTaskId),
@@ -3294,6 +3393,9 @@ export type OrchestrationV2ArchivedShellStreamItem =
   typeof OrchestrationV2ArchivedShellStreamItem.Type;
 
 export const OrchestrationV2ThreadLaunchInput = Schema.Struct({
+  collaborationUser: Schema.optional(Schema.NullOr(CollaborationUser)),
+  kind: Schema.optional(ThreadKind),
+  reviewPullRequestNumber: Schema.optional(Schema.NullOr(PositiveInt)),
   commandId: CommandId,
   creationSource: Schema.optional(OrchestrationV2CreationSource),
   threadId: Schema.optional(ThreadId),
