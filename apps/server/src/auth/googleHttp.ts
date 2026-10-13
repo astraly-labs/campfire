@@ -58,7 +58,7 @@ const googleOidcLoginRouteLayer = HttpRouter.add(
     if (config === undefined) {
       return noStore(HttpServerResponse.text("Google sign-in is not configured.", { status: 404 }));
     }
-    const flow = googleOidcFlowForConfig(config);
+    const flow = yield* googleOidcFlowForConfig(config);
     const secureCookies = config.redirectUri.protocol === "https:";
     const requestUrl = HttpServerRequest.toURL(request);
     if (Option.isNone(requestUrl)) {
@@ -99,7 +99,7 @@ const googleOidcCallbackRouteLayer = HttpRouter.add(
     if (config === undefined) {
       return noStore(HttpServerResponse.text("Google sign-in is not configured.", { status: 404 }));
     }
-    const flow = googleOidcFlowForConfig(config);
+    const flow = yield* googleOidcFlowForConfig(config);
     const secureCookies = config.redirectUri.protocol === "https:";
     const requestUrl = HttpServerRequest.toURL(request);
     if (Option.isNone(requestUrl)) {

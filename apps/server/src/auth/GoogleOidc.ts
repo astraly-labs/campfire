@@ -9,6 +9,7 @@ import { HttpBody, HttpClient, UrlParams } from "effect/http";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 
 import type { GoogleOidcConfig } from "../config.ts";
+import { timingSafeEqualBase64Url } from "./utils.ts";
 
 export const GOOGLE_OIDC_TRANSACTION_COOKIE = "campfire_google_oidc";
 const GOOGLE_AUTHORIZATION_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth";
@@ -188,13 +189,10 @@ export function makeGoogleOidcFlow<R>(
           next.delete(input.state);
           return [candidate, next] as const;
         });
-        const expectedBinding = Buffer.from(transaction?.binding ?? "");
-        const presentedBinding = Buffer.from(input.binding);
         if (
           transaction === undefined ||
           transaction.expiresAtMs <= now ||
-          expectedBinding.length !== presentedBinding.length ||
-          !NodeCrypto.timingSafeEqual(expectedBinding, presentedBinding)
+          !timingSafeEqualBase64Url(transaction.binding, input.binding)
         ) {
           return yield* new GoogleOidcTransactionError({ reason: "expired_or_replayed" });
         }
@@ -299,7 +297,8 @@ const productionFlows = new WeakMap<GoogleOidcConfig, GoogleOidcFlow<HttpClient.
 
 export function googleOidcFlowForConfig(
   config: GoogleOidcConfig,
-): GoogleOidcFlow<HttpClient.HttpClient> {
+): Effect.Effect<GoogleOidcFlow<HttpClient.HttpClient>, never, Crypto.Crypto> {
+  return Effect.gen(function* () {
   const cached = productionFlows.get(config);
   if (cached !== undefined) return cached;
   const tokenClient: GoogleOidcTokenClient<HttpClient.HttpClient> = {
@@ -308,9 +307,10 @@ export function googleOidcFlowForConfig(
         Effect.flatMap((client) => client.exchangeAndVerify(input)),
       ),
   };
-  const flow = Effect.runSync(makeGoogleOidcFlow(config, tokenClient));
+  const flow = yield* makeGoogleOidcFlow(config, tokenClient);
   productionFlows.set(config, flow);
   return flow;
+  });
 }
 
 export function setGoogleOidcFlowForTesting(
