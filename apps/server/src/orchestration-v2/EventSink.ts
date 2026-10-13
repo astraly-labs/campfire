@@ -211,6 +211,9 @@ const layerBase: Layer.Layer<
     const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
     const projectStore = yield* ProjectStore.ProjectStoreV2;
     const turnItemPositions = yield* TurnItemPositionStore.TurnItemPositionStoreV2;
+    // Internal reactors retain a sequence notification, then read their missing
+    // range from SQLite. A slow reactor must not retain every event payload.
+    const committedHead = yield* PubSub.sliding<number>(1);
     const liveEvents = yield* PubSub.unbounded<OrchestrationV2StoredEvent>();
     const liveEventsByType = new Map<
       OrchestrationV2DomainEvent["type"],
@@ -218,6 +221,8 @@ const layerBase: Layer.Layer<
     >();
     const publishLiveEvents = (events: ReadonlyArray<OrchestrationV2StoredEvent>) =>
       Effect.gen(function* () {
+        const last = events.at(-1);
+        if (last) yield* PubSub.publish(committedHead, last.sequence);
         yield* PubSub.publishAll(liveEvents, events);
         for (const [type, pubsub] of liveEventsByType) {
           yield* PubSub.publishAll(
@@ -727,6 +732,27 @@ const layerBase: Layer.Layer<
         }).pipe(Stream.filter(matches));
       return Stream.unwrap(
         Effect.gen(function* () {
+          if (input?.bounded !== true) {
+            const subscription = yield* PubSub.subscribe(committedHead);
+            const highWater = yield* eventStore.latestSequence();
+            let cursor = afterSequence;
+            return Stream.concat(Stream.make(highWater), Stream.fromSubscription(subscription)).pipe(
+              Stream.flatMap((throughSequence) => {
+                if (throughSequence <= cursor) return Stream.empty;
+                return catchUp({
+                  afterSequence: cursor,
+                  throughSequence,
+                  ...(input?.threadId === undefined ? {} : { threadId: input.threadId }),
+                  ...(input?.eventType === undefined ? {} : { eventType: input.eventType }),
+                }).pipe(
+                  Stream.tap((stored) => Effect.sync(() => { cursor = stored.sequence; })),
+                  Stream.concat(Stream.fromEffect(Effect.sync(() => {
+                    cursor = Math.max(cursor, throughSequence);
+                  })).pipe(Stream.drain)),
+                );
+              }),
+            );
+          }
           let pubsub = liveEvents;
           if (input?.eventType !== undefined) {
             const existing = liveEventsByType.get(input.eventType);
@@ -738,23 +764,14 @@ const layerBase: Layer.Layer<
               liveEventsByType.set(input.eventType, pubsub);
             }
           }
-          if (input?.bounded === true) {
-            return replayAndBufferProjectedLiveEvents({
-              subscribe: PubSub.subscribe(pubsub),
-              latestSequence: eventStore.latestSequence(),
-              afterSequence,
-              filter: matches,
-              replay,
-              project: (stored) => ({ ...stored, event: projectDomainEventForWire(stored.event) }),
-            });
-          }
-          const subscription = yield* PubSub.subscribe(pubsub);
-          const highWater = yield* eventStore.latestSequence();
-          const live = Stream.fromSubscription(subscription).pipe(
-            Stream.filter((stored) => stored.sequence > Math.max(highWater, afterSequence)),
-            Stream.filter(matches),
-          );
-          return Stream.concat(replay(highWater), live);
+          return replayAndBufferProjectedLiveEvents({
+            subscribe: PubSub.subscribe(pubsub),
+            latestSequence: eventStore.latestSequence(),
+            afterSequence,
+            filter: matches,
+            replay,
+            project: (stored) => ({ ...stored, event: projectDomainEventForWire(stored.event) }),
+          });
         }),
       );
     };

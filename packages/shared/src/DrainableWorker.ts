@@ -1,7 +1,7 @@
 /**
  * DrainableWorker - A queue-based worker that exposes a `drain()` effect.
  *
- * Wraps the common `Queue.unbounded` + `Effect.forever` pattern and adds
+ * Wraps a bounded queue and `Effect.forever` worker and adds
  * a signal that resolves when the queue is empty **and** the current item
  * has finished processing. This lets tests replace timing-sensitive
  * `Effect.sleep` calls with deterministic `drain()`.
@@ -30,7 +30,7 @@ export interface DrainableWorker<A> {
 }
 
 /**
- * Create a drainable worker that processes items from an unbounded queue.
+ * Create a drainable worker with lossless backpressure on its producers.
  *
  * The worker is forked into the current scope and will be interrupted when
  * the scope closes. A finalizer shuts down the queue and drops queued items,
@@ -44,10 +44,12 @@ export interface DrainableWorker<A> {
  */
 export const makeDrainableWorker = <A, E, R>(
   process: (item: A) => Effect.Effect<void, E, R>,
+  options: { readonly capacity?: number } = {},
 ): Effect.Effect<DrainableWorker<A>, never, Scope.Scope | R> =>
   Effect.gen(function* () {
     const outstanding = yield* TxRef.make(0);
-    const queue = yield* Effect.acquireRelease(TxQueue.unbounded<A>(), (queue) =>
+    const capacity = Math.max(1, Math.floor(options.capacity ?? 1_024));
+    const queue = yield* Effect.acquireRelease(TxQueue.bounded<A>(capacity), (queue) =>
       // Uncount only the dropped items: an item still running uncounts itself,
       // even when a parallel scope closes it after this finalizer.
       TxQueue.clear(queue).pipe(

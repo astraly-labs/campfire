@@ -1,3 +1,4 @@
+import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import * as ServerSettings from "../serverSettings.ts";
 import { assert, it } from "@effect/vitest";
 import {
@@ -553,6 +554,77 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
           );
         }),
       ),
+  );
+
+  it.effect("replays a slow worker's backlog from bounded database pages", () =>
+    Effect.scoped(Effect.gen(function* () {
+      const sink = yield* EventSink.EventSinkV2;
+      const now = yield* DateTime.now;
+      const thread = makeThread(ThreadId.make("thread:durable-worker-backlog"), now);
+      const [created] = yield* sink.write({ events: [threadCreatedEvent({
+        id: "event:durable-worker-backlog:created", thread, now,
+      })] });
+      const releaseWorker = yield* Deferred.make<void>();
+      const enqueueBlocked = yield* Deferred.make<void>();
+      const initialReadStarted = yield* Deferred.make<void>();
+      const releaseInitialRead = yield* Deferred.make<void>();
+      const processed: number[] = [];
+      const worker = yield* makeDrainableWorker((sequence: number) => Effect.gen(function* () {
+        yield* Deferred.await(releaseWorker);
+        processed.push(sequence);
+      }), { capacity: 1 });
+      const pageLimits: unknown[] = [];
+      const observeReads: Statement.Transformer = (statement) => {
+        const [query, parameters] = statement.compile();
+        if (query.includes("FROM orchestration_events") && query.includes("MAX(sequence)")) {
+          return Deferred.succeed(initialReadStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseInitialRead)), Effect.as(statement),
+          );
+        }
+        if (query.includes("FROM orchestration_events") && query.includes("LIMIT")) {
+          pageLimits.push(parameters.at(-1));
+        }
+        return Effect.succeed(statement);
+      };
+      let offered = 0;
+      const count = 1_004;
+      const reader = yield* sink.stream({ threadId: thread.id, afterSequence: created!.sequence }).pipe(
+        Stream.take(count),
+        Stream.runForEach((stored) => Effect.gen(function* () {
+          offered += 1;
+          if (offered === 3) yield* Deferred.succeed(enqueueBlocked, undefined);
+          yield* worker.enqueue(stored.sequence);
+        })),
+        Effect.provideService(Statement.CurrentTransformer, observeReads),
+        Effect.forkScoped,
+      );
+      yield* Deferred.await(initialReadStarted);
+      const append = (start: number, length: number) => sink.write({
+        events: Array.from({ length }, (_, index) => ({
+          id: EventId.make(`event:durable-worker-backlog:${start + index}`),
+          type: "thread.metadata-updated" as const,
+          threadId: thread.id,
+          occurredAt: now,
+          payload: { ...thread, title: `Update ${start + index}` },
+        })),
+      });
+      const written = [...(yield* append(0, 3))];
+      yield* Deferred.succeed(releaseInitialRead, undefined);
+      yield* Deferred.await(enqueueBlocked);
+      const readsWhileBlocked = pageLimits.length;
+      for (let batch = 0; batch < 7; batch += 1) {
+        written.push(...(yield* append(3 + batch * 143, 143)));
+      }
+      assert.equal(pageLimits.length, readsWhileBlocked);
+      assert.equal(offered, 3);
+      yield* Deferred.succeed(releaseWorker, undefined);
+      yield* Fiber.join(reader);
+      yield* worker.drain;
+      assert.deepEqual(processed, written.map((stored) => stored.sequence));
+      // The backlog was replayed in pages, rather than retained as live payloads.
+      assert.isTrue(pageLimits.length >= readsWhileBlocked + 4);
+      assert.isTrue(pageLimits.every((limit) => limit === 256));
+    })),
   );
 
   it.effect("filters worker replay and live queues without losing matching events", () =>
