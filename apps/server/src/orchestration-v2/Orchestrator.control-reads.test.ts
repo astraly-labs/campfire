@@ -1,3 +1,5 @@
+import { SideThreadId, SideThreadMessageId, type CollaborationUser } from "@t3tools/contracts";
+import * as Exit from "effect/Exit";
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
@@ -623,4 +625,113 @@ it.effect("keeps delegated child pull-request links independent of the parent", 
     assert.deepEqual(parentAfterChildLink.thread.linkedPullRequest, parentPullRequest);
     assert.deepEqual(parentAfterChildLink.thread.pullRequests, parent.thread.pullRequests);
   }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect(
+  "serializes two authenticated teammates and retains discussion across metadata changes",
+  () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const threadId = ThreadId.make("thread:two-teammates");
+      const sideThreadId = SideThreadId.make(`thread:${threadId}`);
+      const alice = { subject: "google:alice", displayName: "Alice" };
+      const bob = { subject: "google:bob", displayName: "Bob" };
+      const now = "2026-10-13T12:00:00.000Z";
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("team-create"),
+        threadId,
+        projectId: ProjectId.make("team-project"),
+        title: "Team",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+        collaborationUser: alice,
+      });
+      yield* Effect.all(
+        [alice, bob].map((user) =>
+          orchestrator.dispatch({
+            type: "sidethread.create",
+            commandId: CommandId.make(`discussion:${user.subject}`),
+            threadId,
+            sideThreadId,
+            collaborationUser: user,
+            createdAt: now,
+          }),
+        ),
+        { concurrency: "unbounded" },
+      );
+      const post = (user: CollaborationUser) =>
+        orchestrator.dispatch({
+          type: "sidethread.message.post",
+          commandId: CommandId.make(`post:${user.subject}`),
+          threadId,
+          sideThreadId,
+          messageId: SideThreadMessageId.make(`message:${user.subject}`),
+          text: user.displayName,
+          collaborationUser: user,
+          createdAt: now,
+        });
+      yield* Effect.all([post(alice), post(bob)], { concurrency: "unbounded" });
+      yield* post(alice);
+      const projection = yield* projections.getThreadProjection(threadId);
+      assert.equal(projection.sideThreads?.length, 1);
+      assert.sameMembers(
+        projection.sideThreads?.[0]?.messages.map((message) => message.author.subject) ?? [],
+        [alice.subject, bob.subject],
+      );
+      const rejected = yield* Effect.exit(
+        orchestrator.dispatch({
+          type: "sidethread.message.edit",
+          commandId: CommandId.make("forged-edit"),
+          threadId,
+          sideThreadId,
+          messageId: SideThreadMessageId.make(`message:${alice.subject}`),
+          text: "Forged",
+          collaborationUser: bob,
+          createdAt: now,
+        }),
+      );
+      assert.isTrue(Exit.isFailure(rejected));
+      yield* orchestrator.dispatch({
+        type: "sidethread.mark-read",
+        commandId: CommandId.make("read-new"),
+        threadId,
+        sideThreadId,
+        collaborationUser: bob,
+        lastReadAt: now,
+        createdAt: now,
+      });
+      yield* orchestrator.dispatch({
+        type: "sidethread.mark-read",
+        commandId: CommandId.make("read-stale"),
+        threadId,
+        sideThreadId,
+        collaborationUser: bob,
+        lastReadAt: "2026-10-12T12:00:00.000Z",
+        createdAt: now,
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("team-rename"),
+        threadId,
+        title: "Renamed team",
+      });
+      const shell = yield* projections.getThreadShell(threadId);
+      assert.equal(shell?.title, "Renamed team");
+      assert.deepStrictEqual(shell?.collaborationCreatedBy, alice);
+      assert.equal(shell?.teamDiscussion?.messageCount, 2);
+      assert.equal(shell?.teamDiscussion?.readBy[0]?.lastReadAt, now);
+      assert.equal(
+        (yield* projections.getThreadProjection(threadId)).sideThreads?.[0]?.messages.find(
+          (message) => message.author.subject === alice.subject,
+        )?.text,
+        "Alice",
+      );
+    }).pipe(Effect.provide(layerTest)),
 );

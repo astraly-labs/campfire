@@ -251,12 +251,12 @@ export interface RunMigrationsOptions {
 export const runMigrations = Effect.fn("runMigrations")(function* ({
   toMigrationInclusive,
 }: RunMigrationsOptions = {}) {
-  const sql = yield* SqlClient.SqlClient;
+  const historySql = yield* SqlClient.SqlClient;
   const ledgerExists =
-    yield* sql`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'effect_sql_migrations'`;
+    yield* historySql`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'effect_sql_migrations'`;
   if (ledgerExists.length > 0) {
     const upstreamHistory =
-      yield* sql`SELECT migration_id FROM effect_sql_migrations WHERE name = 'OrchestrationV2' AND migration_id < 59`;
+      yield* historySql`SELECT migration_id FROM effect_sql_migrations WHERE name = 'OrchestrationV2' AND migration_id < 59`;
     if (upstreamHistory.length > 0)
       return yield* new Migrator.MigrationError({
         kind: "BadState",
