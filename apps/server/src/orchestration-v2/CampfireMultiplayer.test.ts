@@ -16,6 +16,7 @@ import type {
   ProviderAdapterV2SessionRuntime,
   ProviderAdapterV2TurnInput,
 } from "@t3tools/provider-core/server/ProviderAdapter";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -32,7 +33,7 @@ const instanceId = ProviderInstanceId.make("codex");
 const modelSelection = { instanceId, model: "gpt-5.1-codex" };
 const unsupported = () => Effect.die("Unexpected provider operation in multiplayer soak");
 
-it.effect("runs five independent teammate turns without browsers and resumes 1000 durable events", () =>
+it.live("runs five independent teammate turns without browsers and resumes 1000 durable events", () =>
   Effect.gen(function* () {
     const starts = yield* Queue.unbounded<{ readonly turn: ProviderAdapterV2TurnInput; readonly providerSessionId: ProviderSessionId }>();
     const adapter: ProviderAdapterV2["Service"] = {
@@ -70,11 +71,11 @@ it.effect("runs five independent teammate turns without browsers and resumes 100
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const projections = yield* ProjectionStore.ProjectionStoreV2;
       const now = DateTime.formatIso(yield* DateTime.now);
-      const clients = Array.from({ length: 5 }, (_, index) => ({
+      const clients = yield* Effect.forEach(Array.from({ length: 5 }, (_, index) => index), (index) => Effect.gen(function* () { return {
         threadId: ThreadId.make(`thread:teammate:${index}`),
         user: { subject: `google:teammate:${index}`, displayName: `Teammate ${index}` },
-        worktreePath: `/workspace/teammate-${index}`,
-      }));
+        worktreePath: yield* checkpointWorkspace(`campfire-teammate-${index}`),
+      }; }));
       yield* Effect.forEach(clients, (client) => Effect.gen(function* () {
         yield* orchestrator.dispatch({
           type: "thread.create", commandId: CommandId.make(`create:${client.threadId}`), threadId: client.threadId,
@@ -123,5 +124,5 @@ it.effect("runs five independent teammate turns without browsers and resumes 100
         assert.equal(snapshot.projection.sideThreads?.[0]?.messages.length, 200);
       }), { concurrency: "unbounded" });
     }).pipe(Effect.provide(layer));
-  }), { timeout: 30_000 },
+  }).pipe(Effect.scoped), { timeout: 30_000 },
 );
