@@ -24,6 +24,7 @@ import type {
 import * as Schema from "effect/Schema";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
@@ -49,6 +50,7 @@ interface BriefingSession {
   readonly kind: "ready";
   readonly sourceThreadId: ThreadId;
   readonly scope: Scope.Closeable;
+  readonly closed: Deferred.Deferred<void>;
   readonly runtime: ProviderAdapterV2SessionRuntime;
   readonly providerThread: OrchestrationV2ProviderThread;
   readonly appThread: OrchestrationV2AppThread;
@@ -58,7 +60,12 @@ interface BriefingSession {
   activeTurnId: ProviderTurnId | null;
 }
 
-type BriefingState = { readonly kind: "opening" } | BriefingSession;
+interface OpeningSession {
+  readonly kind: "opening";
+  readonly scope: Scope.Closeable;
+  readonly closed: Deferred.Deferred<void>;
+}
+type BriefingState = OpeningSession | BriefingSession;
 
 function formatMessage(message: OrchestrationV2ConversationMessage): string {
   const author = message.author?.displayName ? ` · ${message.author.displayName}` : "";
@@ -134,7 +141,8 @@ export function makeContextAssistantManager(dependencies: ContextAssistantDepend
       const session = sessions.get(key);
       sessions.delete(key);
       if (!session) return Effect.succeed({ closed: false });
-      return (session.kind === "ready" ? Scope.close(session.scope, Exit.void) : Effect.void).pipe(
+      return Deferred.succeed(session.closed, undefined).pipe(
+        Effect.andThen(Scope.close(session.scope, Exit.void)),
         Effect.as({ closed: true }),
       );
     });
@@ -147,10 +155,10 @@ export function makeContextAssistantManager(dependencies: ContextAssistantDepend
 
   const createSession = Effect.fn("contextAssistant.createSession")(function* (
     key: string,
-    opening: BriefingState,
+    opening: OpeningSession,
     input: ContextAssistantAskInput,
   ) {
-    const scope = yield* Scope.make();
+    const scope = opening.scope;
     return yield* Effect.gen(function* () {
       const source = yield* dependencies.projections.getThreadProjection(input.sourceThreadId);
       const thread = source.thread;
@@ -212,6 +220,7 @@ export function makeContextAssistantManager(dependencies: ContextAssistantDepend
         kind: "ready",
         sourceThreadId: input.sourceThreadId,
         scope,
+        closed: opening.closed,
         runtime,
         providerThread,
         appThread,
@@ -231,6 +240,9 @@ export function makeContextAssistantManager(dependencies: ContextAssistantDepend
         }),
       };
     }).pipe(
+      Effect.raceFirst(Deferred.await(opening.closed).pipe(
+        Effect.andThen(Effect.fail(briefingError("The private briefing was closed."))),
+      )),
       Effect.mapError((cause) =>
         Schema.is(ContextAssistantError)(cause)
           ? cause
@@ -262,7 +274,9 @@ export function makeContextAssistantManager(dependencies: ContextAssistantDepend
       session = existing;
       session.busy = true;
     } else {
-      const opening: BriefingState = { kind: "opening" };
+      const opening: OpeningSession = {
+        kind: "opening", scope: Scope.makeUnsafe(), closed: Deferred.makeUnsafe<void>(),
+      };
       sessions.set(key, opening);
       const opened = yield* createSession(key, opening, input).pipe(
         Effect.onError(() =>
@@ -275,6 +289,21 @@ export function makeContextAssistantManager(dependencies: ContextAssistantDepend
       prompt = opened.prompt;
     }
     const currentSession = session;
+    const turnScope = yield* Scope.make();
+    let completed = false;
+    let finished = false;
+    const finish = Effect.suspend(() => {
+      if (finished) return Effect.void;
+      finished = true;
+      currentSession.busy = false;
+      currentSession.activeTurnId = null;
+      return Scope.close(turnScope, Exit.void).pipe(
+        Effect.andThen(completed || sessions.get(key) !== currentSession
+          ? Effect.void
+          : closeKey(key).pipe(Effect.asVoid)),
+      );
+    });
+    yield* Effect.addFinalizer(() => finish);
     const queue = yield* Queue.bounded<
       ProviderAdapterV2Event,
       ProviderAdapterV2Error | ContextAssistantError
@@ -282,7 +311,6 @@ export function makeContextAssistantManager(dependencies: ContextAssistantDepend
     const ordinal = ++session.ordinal;
     const uuid = yield* dependencies.crypto.randomUUIDv4.pipe(Effect.orDie);
     const runId = RunId.make(`briefing:${uuid}`);
-    let completed = false;
     const textByMessage = new Map<string, string>();
     const belongsToTurn = (event: ProviderAdapterV2Event) => {
       switch (event.type) {
@@ -309,13 +337,16 @@ export function makeContextAssistantManager(dependencies: ContextAssistantDepend
     const subscription = session.runtime.subscribeEvents
       ? yield* session.runtime.subscribeEvents
       : null;
-    if (subscription) yield* Effect.addFinalizer(() => subscription.close);
+    if (subscription) yield* Scope.addFinalizer(turnScope, subscription.close);
     yield* (subscription?.events ?? session.runtime.events).pipe(
       Stream.filter(belongsToTurn),
       Stream.runForEach((event) => Queue.offer(queue, event)),
       Effect.andThen(Queue.fail(queue, briefingError("The briefing provider disconnected."))),
+      Effect.raceFirst(Deferred.await(currentSession.closed).pipe(
+        Effect.andThen(Effect.fail(briefingError("The private briefing was closed."))),
+      )),
       Effect.catch((cause) => Queue.fail(queue, cause)),
-      Effect.forkScoped,
+      Effect.forkIn(turnScope),
     );
     yield* session.runtime
       .startTurn({
@@ -360,7 +391,7 @@ export function makeContextAssistantManager(dependencies: ContextAssistantDepend
             return delta ? { type: "assistant.delta", delta } : null;
           }
           case "turn.terminal":
-            completed = true;
+            completed = event.status === "completed";
             return event.status === "completed"
               ? { type: "assistant.completed" }
               : {
@@ -386,15 +417,7 @@ export function makeContextAssistantManager(dependencies: ContextAssistantDepend
           message: "The briefing provider disconnected.",
         } satisfies ContextAssistantStreamEvent),
       ),
-      Stream.ensuring(
-        Effect.suspend(() => {
-          currentSession.busy = false;
-          currentSession.activeTurnId = null;
-          return completed || sessions.get(key) !== currentSession
-            ? Effect.void
-            : closeKey(key).pipe(Effect.asVoid);
-        }),
-      ),
+      Stream.ensuring(finish),
     );
   });
   return { ask, close, closeAll };
