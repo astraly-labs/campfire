@@ -414,6 +414,14 @@
     "./pull-request-markdown": {
       "types": "./src/pullRequestMarkdown.ts",
       "default": "./src/pullRequestMarkdown.ts"
+    },
+    "./state/context-assistant": {
+      "types": "./src/state/contextAssistant.ts",
+      "default": "./src/state/contextAssistant.ts"
+    },
+    "./state/presence": {
+      "types": "./src/state/presence.ts",
+      "default": "./src/state/presence.ts"
     }
   },
   "scripts": {
