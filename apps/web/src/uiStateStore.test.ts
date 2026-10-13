@@ -203,6 +203,7 @@ describe("parsePersistedState", () => {
       },
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
       sidebarProjectScopeKey: null,
+      threadAffiliationOverrideByThreadKey: {},
       pullRequestMergeMethod: "merge",
       threadChangedFilesExpandedById: {
         "environment:thread-1": {
@@ -325,6 +326,7 @@ describe("uiStateStore persistence", () => {
       },
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
       sidebarProjectScopeKey: null,
+      threadAffiliationOverrideByThreadKey: {},
       threadChangedFilesExpansionVersion: 2,
       threadChangedFilesExpandedById: {
         "environment:thread-1": {
@@ -336,6 +338,19 @@ describe("uiStateStore persistence", () => {
     });
     expect(parsePersistedState(persisted)).toEqual({
       ...state,
+    });
+  });
+
+  it("restores manual thread ownership for each environment", () => {
+    persistState(makeUiState({ threadAffiliationOverrideByThreadKey: {
+      "env-one:thread-1": "mine",
+      "env-two:thread-1": "other",
+    } }));
+
+    const persisted = JSON.parse(localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}");
+    expect(parsePersistedState(persisted).threadAffiliationOverrideByThreadKey).toEqual({
+      "env-one:thread-1": "mine",
+      "env-two:thread-1": "other",
     });
   });
 

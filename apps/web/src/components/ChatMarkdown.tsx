@@ -215,23 +215,6 @@ import {
 import { resolveLinkTarget } from "../browser/browserLinkTarget";
 import { PullRequestLinkPreview } from "./pullRequest/PullRequestLinkPreview";
 
-export function githubPullRequestNumber(href: string): number | null {
-  try {
-    const url = new URL(href);
-    if (
-      (url.protocol !== "https:" && url.protocol !== "http:") ||
-      url.hostname.toLowerCase() !== "github.com"
-    ) {
-      return null;
-    }
-    const match = url.pathname.match(/^\/[^/]+\/[^/]+\/pull\/([1-9]\d*)(?:\/|$)/u);
-    const pullRequestNumber = match?.[1] ? Number(match[1]) : NaN;
-    return Number.isSafeInteger(pullRequestNumber) ? pullRequestNumber : null;
-  } catch {
-    return null;
-  }
-}
-
 interface ChatMarkdownProps {
   text: string;
   cwd: string | undefined;
@@ -3156,7 +3139,8 @@ const CHAT_MARKDOWN_COMPONENTS = {
           )}
         </a>
       );
-      const reviewNumber = href ? githubPullRequestNumber(href) : null;
+      const reviewLink = href ? parseChangeRequestUrl(href) : null;
+      const reviewNumber = reviewLink?.host === "github.com" ? reviewLink.number : null;
       const withReview = (content: ReactNode) => collaboration && reviewNumber !== null
         ? <span className="inline-flex max-w-full items-center gap-1 align-baseline">{content}<Button size="xs" variant="outline" aria-label={`Review pull request #${reviewNumber}`} onClick={() => collaboration.review(reviewNumber)}>Review</Button></span>
         : content;
