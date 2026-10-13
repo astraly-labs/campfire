@@ -1046,6 +1046,7 @@ const encodeSideThreads = Schema.encodeEffect(Schema.fromJsonString(Schema.Array
 const decodeSideThreadSummary = Schema.decodeUnknownEffect(
   Schema.fromJsonString(SideThreadShellSummary),
 );
+const encodeSideThreadSummary = Schema.encodeEffect(Schema.fromJsonString(SideThreadShellSummary));
 
 const encodeThreadPayload = Schema.encodeEffect(
   Schema.fromJsonString(OrchestrationV2AppThreadJsonSchema),
@@ -1865,8 +1866,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             const next = applySideThreadEvent(current, event);
             const payloadJson = yield* encodeSideThreads(next);
             const summary = sideThreadShellSummary(event.threadId, next);
+            const summaryJson =
+              summary === undefined ? null : yield* encodeSideThreadSummary(summary);
             yield* sql`INSERT INTO orchestration_v2_projection_side_threads (thread_id, payload_json, summary_json)
-              VALUES (${event.threadId}, ${payloadJson}, ${summary === undefined ? null : JSON.stringify(summary)})
+              VALUES (${event.threadId}, ${payloadJson}, ${summaryJson})
               ON CONFLICT(thread_id) DO UPDATE SET payload_json = excluded.payload_json, summary_json = excluded.summary_json`;
             break;
           }

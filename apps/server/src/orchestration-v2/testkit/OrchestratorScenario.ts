@@ -133,6 +133,12 @@ export class OrchestratorV2ScenarioStepError extends Schema.TaggedError<Orchestr
 
 function commandThreadIds(command: OrchestrationV2Command): ReadonlyArray<ThreadId> {
   switch (command.type) {
+    case "sidethread.create":
+    case "sidethread.message.post":
+    case "sidethread.message.react":
+    case "sidethread.message.edit":
+    case "sidethread.mark-read":
+    case "sidethread.archive":
     case "thread.create":
     case "thread.archive":
     case "thread.unarchive":

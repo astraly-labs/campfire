@@ -129,6 +129,13 @@ export function shouldPublishAgentAwarenessEvent(
     case "provider-turn.updated":
     case "turn-item.updated":
       return isTurnItemPayload(event.payload) && turnItemUpdateCanEndBackgroundWork(event.payload);
+    case "sidethread.created":
+    case "sidethread.message-posted":
+    case "sidethread.message-reacted":
+    case "sidethread.message-edited":
+    case "sidethread.marked-read":
+    case "sidethread.archived":
+    case "sidethread.imported":
     case "message.updated":
     case "plan.updated":
     case "checkpoint-scope.created":

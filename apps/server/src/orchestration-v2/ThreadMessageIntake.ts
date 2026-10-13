@@ -1,6 +1,10 @@
 import { remapComposerContextAttachments } from "@t3tools/shared/composerContextReferences";
 import { appendUserInputAttachmentPaths } from "../provider/userInputAttachments.ts";
-import type { ChatAttachment, OrchestrationV2Command } from "@t3tools/contracts";
+import type {
+  ChatAttachment,
+  ChatImageAttachment,
+  OrchestrationV2Command,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { resolveAttachmentPath } from "../attachmentStore.ts";
@@ -69,7 +73,9 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
       .dispatch({
         ...command,
         attachments: [
-          ...claimed.attachments.filter((attachment) => attachment.type === "image"),
+          ...claimed.attachments.filter(
+            (attachment): attachment is ChatImageAttachment => attachment.type === "image",
+          ),
           ...gifs,
         ],
       })

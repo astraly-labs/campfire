@@ -4279,7 +4279,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             contextHandoffId: restartHandoff.id,
           },
           createdBy: input.createdBy,
-          author: input.author ?? null,
           error: null,
           createdAt: now,
           updatedAt: now,
