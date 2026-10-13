@@ -499,7 +499,10 @@ const make = Effect.gen(function* () {
         ON thread.thread_id = legacy_import.thread_id
       INNER JOIN orchestration_v2_projection_threads AS projection
         ON projection.thread_id = legacy_import.thread_id
-      WHERE json_type(projection.payload_json, '$.pinnedAt') IS NULL
+      WHERE json_type(projection.payload_json, '$.collaborationCreatedBy') IS NULL
+         OR json_type(projection.payload_json, '$.kind') IS NULL
+         OR json_type(projection.payload_json, '$.reviewPullRequestNumber') IS NULL
+         OR json_type(projection.payload_json, '$.pinnedAt') IS NULL
          OR json_type(projection.payload_json, '$.pinOrderKey') IS NULL
          OR json_type(projection.payload_json, '$.snoozedUntil') IS NULL
          OR json_type(projection.payload_json, '$.snoozedAt') IS NULL
@@ -519,6 +522,9 @@ const make = Effect.gen(function* () {
       const legacyPullRequests = legacy.pullRequests ?? [];
       const repaired: OrchestrationV2AppThread = {
         ...current,
+        collaborationCreatedBy: current.collaborationCreatedBy === undefined ? legacy.collaborationCreatedBy ?? null : current.collaborationCreatedBy,
+        kind: current.kind ?? legacy.kind ?? "default",
+        reviewPullRequestNumber: current.reviewPullRequestNumber === undefined ? legacy.reviewPullRequestNumber ?? null : current.reviewPullRequestNumber,
         pinnedAt: current.pinnedAt === undefined ? legacy.pinnedAt : current.pinnedAt,
         autoSettleDisabledAt:
           current.autoSettleDisabledAt === undefined
@@ -553,10 +559,15 @@ const make = Effect.gen(function* () {
         activeOrderKey:
           current.activeOrderKey === undefined ? legacy.activeOrderKey : current.activeOrderKey,
       };
+      const legacySideThreads = canonicalizeSideThreads(repaired.id, yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Array(SideThread)))(row.side_threads_json));
       // Later schema additions can require another repair for the same thread.
       const repairId = yield* randomUuidV4;
       yield* eventSink.write({
         events: [
+          ...legacySideThreads.map((sideThread): OrchestrationV2DomainEvent => ({
+            id: EventId.make(`${IMPORT_EVENT_PREFIX}:side-thread:${sideThread.id}`), type: "sidethread.imported",
+            threadId: repaired.id, occurredAt: repaired.updatedAt, payload: { threadId: repaired.id, sideThread },
+          })),
           {
             id: EventId.make(
               `${IMPORT_EVENT_PREFIX}:thread:${row.thread_id}:metadata-repair:${repairId}`,
