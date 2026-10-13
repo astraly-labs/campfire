@@ -163,11 +163,12 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
                 ]),
             ),
         ),
-        Effect.catchTag("PlatformError", (error) =>
-          error.reason._tag === "NotFound"
-            ? Effect.succeed(new Map<string, CredentialRecord>())
-            : Effect.die(error),
-        ),
+        Effect.catchTags({
+          PlatformError: (error) =>
+            error.reason._tag === "NotFound"
+              ? Effect.succeed(new Map<string, CredentialRecord>())
+              : Effect.die(error),
+        }),
         Effect.orDie,
       )
     : new Map<string, CredentialRecord>();

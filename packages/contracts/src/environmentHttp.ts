@@ -107,6 +107,7 @@ export const EnvironmentOperationForbiddenReason = Schema.Literals([
 export type EnvironmentOperationForbiddenReason = typeof EnvironmentOperationForbiddenReason.Type;
 
 export const EnvironmentInternalErrorReason = Schema.Literals([
+  "command_overloaded",
   "bootstrap_validation_failed",
   "browser_session_issuance_failed",
   "browser_session_cookie_failed",
