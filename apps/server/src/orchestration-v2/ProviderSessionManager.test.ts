@@ -4734,76 +4734,74 @@ it.effect(
     }),
 );
 
-for (const { reason, stopFails } of [
+it.effect.each([
   { reason: "server_shutdown", stopFails: false },
   { reason: "manual_shutdown", stopFails: false },
   { reason: "manual_shutdown", stopFails: true },
-] as const) {
-  it.effect(
-    `external session ${reason} with stop failure=${stopFails} preserves the correct runtime and MCP ownership`,
-    () =>
-      Effect.gen(function* () {
-        const state = yield* Ref.make(emptyState);
-        const stopped = yield* Ref.make(0);
-        yield* Effect.gen(function* () {
-          const sink = yield* EventSink.EventSinkV2;
-          const ids = yield* IdAllocator.IdAllocatorV2;
-          const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
-          const projections = yield* ProjectionStore.ProjectionStoreV2;
-          const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
-          const credentials = yield* McpSessionRegistry.McpSessionRegistry;
-          const now = yield* DateTime.now;
-          const threadId = ThreadId.make(`hosted-${reason}`);
-          const providerSessionId = yield* ids.allocate.providerSession({
-            providerInstanceId: modelSelection.instanceId,
-            threadId,
-          });
-          yield* sink.write({
-            events: [yield* makeThreadCreatedEvent({ idAllocator: ids, threadId, now })],
-          });
-          yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
-          const credential = yield* mcpSessions.read(threadId);
-          assert.isDefined(credential);
-          const released = yield* manager.release({ providerSessionId, reason }).pipe(Effect.exit);
-          assert.equal(Exit.isFailure(released), stopFails);
-          const projection = yield* projections.getThreadProjection(threadId);
-          const persisted = projection.providerSessions.find(
-            (session) => session.id === providerSessionId,
-          );
-          const token = credential!.authorizationHeader.replace(/^Bearer\s+/, "");
-          const resolved = yield* credentials.resolve(token);
-          if (reason === "server_shutdown") {
-            assert.equal(yield* Ref.get(stopped), 0);
-            assert.notEqual(persisted?.status, "stopped");
-            assert.isDefined(resolved);
-          } else {
-            assert.equal(yield* Ref.get(stopped), 1);
-            assert.equal(persisted?.status, "stopped");
-            assert.isUndefined(resolved);
-          }
-        }).pipe(
-          Effect.provide(
-            layerTest({
-              state,
-              idleTimeoutMs: 60_000,
-              externalLifetime: {
-                stop: Ref.update(stopped, (count) => count + 1).pipe(
-                  Effect.andThen(
-                    stopFails
-                      ? Effect.fail(
-                          new ProviderAdapter.ProviderAdapterProtocolError({
-                            driver: ProviderDriverKind.make("codex"),
-                            detail: "Host disappeared while stopping.",
-                          }),
-                        )
-                      : Effect.void,
-                  ),
-                ),
-                replay: Effect.void,
-              },
-            }),
-          ),
+] as const)(
+  "external session $reason with stop failure=$stopFails preserves the correct runtime and MCP ownership",
+  ({ reason, stopFails }) =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const stopped = yield* Ref.make(0);
+      yield* Effect.gen(function* () {
+        const sink = yield* EventSink.EventSinkV2;
+        const ids = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const projections = yield* ProjectionStore.ProjectionStoreV2;
+        const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+        const credentials = yield* McpSessionRegistry.McpSessionRegistry;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make(`hosted-${reason}`);
+        const providerSessionId = yield* ids.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        yield* sink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator: ids, threadId, now })],
+        });
+        yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+        const credential = yield* mcpSessions.read(threadId);
+        assert.isDefined(credential);
+        const released = yield* manager.release({ providerSessionId, reason }).pipe(Effect.exit);
+        assert.equal(Exit.isFailure(released), stopFails);
+        const projection = yield* projections.getThreadProjection(threadId);
+        const persisted = projection.providerSessions.find(
+          (session) => session.id === providerSessionId,
         );
-      }),
-  );
-}
+        const token = credential!.authorizationHeader.replace(/^Bearer\s+/, "");
+        const resolved = yield* credentials.resolve(token);
+        if (reason === "server_shutdown") {
+          assert.equal(yield* Ref.get(stopped), 0);
+          assert.notEqual(persisted?.status, "stopped");
+          assert.isDefined(resolved);
+        } else {
+          assert.equal(yield* Ref.get(stopped), 1);
+          assert.equal(persisted?.status, "stopped");
+          assert.isUndefined(resolved);
+        }
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 60_000,
+            externalLifetime: {
+              stop: Ref.update(stopped, (count) => count + 1).pipe(
+                Effect.andThen(
+                  stopFails
+                    ? Effect.fail(
+                        new ProviderAdapter.ProviderAdapterProtocolError({
+                          driver: ProviderDriverKind.make("codex"),
+                          detail: "Host disappeared while stopping.",
+                        }),
+                      )
+                    : Effect.void,
+                ),
+              ),
+              replay: Effect.void,
+            },
+          }),
+        ),
+      );
+    }),
+);
