@@ -1,7 +1,7 @@
 // The Unix socket is the process boundary; native I/O stays in this module.
 // @effect-diagnostics nodeBuiltinImport:off globalTimers:off
-import * as Net from "node:net";
-import * as Timers from "node:timers";
+import * as NodeNet from "node:net";
+import * as NodeTimers from "node:timers";
 import {
   ProviderDriverKind,
   type ProviderInstanceId,
@@ -37,7 +37,7 @@ export interface HostedCodexAdapter {
     input: typeof Protocol.OpenSession.Type,
     runtime: typeof Protocol.EffectiveRuntime.Type | undefined,
     scope: Scope.Closeable,
-  ) => Promise<Adapter.ProviderAdapterV2SessionRuntime>;
+  ) => Effect.Effect<Adapter.ProviderAdapterV2SessionRuntime, Adapter.ProviderAdapterV2Error>;
   readonly close: () => Promise<void>;
 }
 export interface CodexProviderHostServerOptions {
@@ -65,7 +65,7 @@ interface HostedSession {
 }
 interface InstanceState {
   lease: number;
-  socket?: Net.Socket;
+  socket?: NodeNet.Socket;
   replay: boolean;
   adapter?: HostedCodexAdapter;
   configuring?: Promise<void>;
@@ -104,7 +104,7 @@ function sessionDescription(state: InstanceState, session: HostedSession): Sessi
     ].filter((method) => Reflect.get(session.runtime, method) !== undefined),
   };
 }
-function write(socket: Net.Socket | undefined, message: Protocol.ServerMessage): void {
+function write(socket: NodeNet.Socket | undefined, message: Protocol.ServerMessage): void {
   if (!socket || socket.destroyed) return;
   const frame = Protocol.encodeServer(message);
   if (socket.writableLength + Buffer.byteLength(frame) > Protocol.MAX_BUFFER_BYTES) {
@@ -115,7 +115,7 @@ function write(socket: Net.Socket | undefined, message: Protocol.ServerMessage):
 }
 export async function startCodexProviderHostServer(options: CodexProviderHostServerOptions) {
   const reachable = await new Promise<boolean>((resolve) => {
-    const socket = Net.createConnection(options.socketPath);
+    const socket = NodeNet.createConnection(options.socketPath);
     socket.once("connect", () => {
       socket.destroy();
       resolve(true);
@@ -128,7 +128,7 @@ export async function startCodexProviderHostServer(options: CodexProviderHostSer
   if (reachable) throw new Error(`A provider host already listens at ${options.socketPath}.`);
   await options.prepareSocket?.();
   const states = new Map<ProviderInstanceId, InstanceState>();
-  const sockets = new Set<Net.Socket>();
+  const sockets = new Set<NodeNet.Socket>();
   const maxBufferBytes = options.maxBufferBytes ?? Protocol.MAX_BUFFER_BYTES;
   const getState = (id: ProviderInstanceId): InstanceState => {
     let state = states.get(id);
@@ -231,7 +231,7 @@ export async function startCodexProviderHostServer(options: CodexProviderHostSer
     // Capture this batch now: frames acknowledged during the timer must receive
     // their own full grace period before a backend restart can lose the replay.
     const acknowledged = state.pendingAck;
-    state.ackTimer = Timers.setTimeout(() => {
+    state.ackTimer = NodeTimers.setTimeout(() => {
       state.committedAck = acknowledged;
       for (const [sequence, entry] of state.outbox)
         if (sequence <= acknowledged) {
@@ -290,7 +290,9 @@ export async function startCodexProviderHostServer(options: CodexProviderHostSer
             const scope = await Effect.runPromise(Scope.make());
             let runtime: Adapter.ProviderAdapterV2SessionRuntime;
             try {
-              runtime = await hosted.openSession(input, command.effectiveRuntime, scope);
+              runtime = await Effect.runPromise(
+                hosted.openSession(input, command.effectiveRuntime, scope),
+              );
               if (state.failed) throw protocolError(state.failed);
               if (input.lifetime === "ephemeral" && command.lease !== state.lease)
                 throw protocolError("The private Codex session owner detached during startup.");
@@ -519,7 +521,7 @@ export async function startCodexProviderHostServer(options: CodexProviderHostSer
       };
     }
   };
-  const server = Net.createServer((socket) => {
+  const server = NodeNet.createServer((socket) => {
     sockets.add(socket);
     socket.setNoDelay(true);
     socket.setEncoding("utf8");
@@ -559,7 +561,7 @@ export async function startCodexProviderHostServer(options: CodexProviderHostSer
             );
             continue;
           }
-          if (state.ackTimer) Timers.clearTimeout(state.ackTimer);
+          if (state.ackTimer) NodeTimers.clearTimeout(state.ackTimer);
           delete state.ackTimer;
           state.pendingAck = state.committedAck;
           state.socket?.end(
@@ -632,7 +634,7 @@ export async function startCodexProviderHostServer(options: CodexProviderHostSer
       if (state.socket !== socket) return;
       delete state.socket;
       state.replay = false;
-      if (state.ackTimer) Timers.clearTimeout(state.ackTimer);
+      if (state.ackTimer) NodeTimers.clearTimeout(state.ackTimer);
       delete state.ackTimer;
       state.pendingAck = state.committedAck;
     });
@@ -647,7 +649,7 @@ export async function startCodexProviderHostServer(options: CodexProviderHostSer
     close: async () => {
       for (const socket of sockets) socket.destroy();
       for (const state of states.values()) {
-        if (state.ackTimer) Timers.clearTimeout(state.ackTimer);
+        if (state.ackTimer) NodeTimers.clearTimeout(state.ackTimer);
         await state.configuring?.catch(() => {});
         await Promise.allSettled(state.openingSessions.values());
         await Promise.all(Array.from(state.sessions.keys(), (id) => stopSession(state, id)));

@@ -965,9 +965,14 @@ export const layerWithOptions = (
                       input.detail ?? `Provider session released: ${input.reason}.`,
                     );
                   }
-                  if (input.reason !== "server_shutdown" && entry.runtime.externalLifetime) {
-                    yield* entry.runtime.externalLifetime.stop;
-                  }
+                  const externalStop =
+                    input.reason !== "server_shutdown" && entry.runtime.externalLifetime
+                      ? yield* entry.runtime.externalLifetime.stop.pipe(
+                          Effect.timeout(RELEASE_SCOPE_CLOSE_TIMEOUT_MS),
+                          Effect.interruptible,
+                          Effect.exit,
+                        )
+                      : Exit.void;
                   const closeExit = yield* closeScopeWithin(entry.scope, {
                     providerSessionId: input.providerSessionId,
                     reason: input.reason,
@@ -989,6 +994,8 @@ export const layerWithOptions = (
                   if (Option.isSome(closeExit) && Exit.isFailure(closeExit.value)) {
                     return yield* Effect.failCause(closeExit.value.cause);
                   }
+                  if (Exit.isFailure(externalStop))
+                    return yield* Effect.failCause(externalStop.cause);
                 }).pipe(
                   withMetrics({
                     counter: providerSessionsTotal,

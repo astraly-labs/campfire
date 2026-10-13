@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off globalTimers:off
-import * as Net from "node:net";
-import * as Timers from "node:timers";
+import * as NodeNet from "node:net";
+import * as NodeTimers from "node:timers";
 import {
   ProviderDriverKind,
   type ProviderInstanceId,
@@ -21,6 +21,7 @@ import type { ProviderSetupError } from "@t3tools/contracts";
 import * as Protocol from "./Protocol.ts";
 
 const CODEX = ProviderDriverKind.make("codex");
+const isAdapterError = Schema.is(Adapter.ProviderAdapterV2Error);
 const error = (detail: string, payload?: unknown) =>
   new Adapter.ProviderAdapterProtocolError({
     driver: CODEX,
@@ -59,7 +60,7 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
   const descriptions = new Map<ProviderSessionId, SessionDescription>();
   const pending = new Map<string, PendingCommand>();
   let counter = 0;
-  let socket: Net.Socket | undefined;
+  let socket: NodeNet.Socket | undefined;
   let lease: number | undefined;
   let ready = false;
   let replay = false;
@@ -87,7 +88,7 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
   };
   const connect = () => {
     if (closed || terminalError) return;
-    const next = Net.createConnection(options.socketPath);
+    const next = NodeNet.createConnection(options.socketPath);
     socket = next;
     next.setNoDelay(true);
     next.setEncoding("utf8");
@@ -180,12 +181,12 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
       if (socket !== next) return;
       ready = false;
       if (closed || terminalError) return;
-      reconnect = Timers.setTimeout(connect, 250);
+      reconnect = NodeTimers.setTimeout(connect, 250);
     });
   };
   const close = Effect.sync(() => {
     closed = true;
-    if (reconnect) Timers.clearTimeout(reconnect);
+    if (reconnect) NodeTimers.clearTimeout(reconnect);
     socket?.destroy();
     const cause = error("Provider-host client detached.");
     for (const command of pending.values()) command.reject(cause);
@@ -197,9 +198,7 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
   yield* Effect.tryPromise({
     try: () => firstConnection,
     catch: (cause) =>
-      Schema.is(Adapter.ProviderAdapterV2Error)(cause)
-        ? cause
-        : error("Cannot connect to Codex provider host.", cause),
+      isAdapterError(cause) ? cause : error("Cannot connect to Codex provider host.", cause),
   }).pipe(
     Effect.timeout("10 seconds"),
     Effect.mapError((cause) =>
@@ -247,9 +246,7 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
           if (ready && lease !== undefined) send({ ...command, lease });
         }),
       catch: (cause) =>
-        Schema.is(Adapter.ProviderAdapterV2Error)(cause)
-          ? cause
-          : error("Provider-host command failed.", cause),
+        isAdapterError(cause) ? cause : error("Provider-host command failed.", cause),
     }).pipe(
       Effect.flatMap((value) =>
         Effect.try({
@@ -259,6 +256,14 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
       ),
     );
   yield* call("configure", Protocol.Configuration, Schema.Void, options.configuration);
+  const stopSession = (sessionId: ProviderSessionId) =>
+    call("closeSession", Schema.Void, Schema.Void, undefined, sessionId).pipe(
+      Effect.timeout("2 seconds"),
+      Effect.interruptible,
+      Effect.mapError((cause) =>
+        error("Could not confirm the hosted Codex session stopped.", cause),
+      ),
+    );
   const mcpForThread = (threadId: ThreadId | null) =>
     threadId === null
       ? Effect.succeed([])
@@ -326,9 +331,7 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
               );
         if (input.lifetime === "ephemeral")
           yield* Effect.addFinalizer(() =>
-            call("closeSession", Schema.Void, Schema.Void, undefined, input.providerSessionId).pipe(
-              Effect.catchCause(() => Effect.void),
-            ),
+            stopSession(input.providerSessionId).pipe(Effect.catchCause(() => Effect.void)),
           );
         const description = yield* call(
           "openSession",
@@ -389,7 +392,7 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
           providerSession: description.session,
           events: Stream.fromQueue(queue),
           externalLifetime: {
-            stop: call("closeSession", Schema.Void, Schema.Void, undefined, sessionId),
+            stop: stopSession(sessionId),
             replay: enableReplay,
           },
           canReuseContextUsage: options.canReuseContextUsage,

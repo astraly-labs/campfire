@@ -86,13 +86,11 @@ export const runCodexProviderHost = Effect.fn("runCodexProviderHost")(function* 
                   ),
                 ),
               openSession: (input, runtime, sessionScope) =>
-                runPromise(
-                  Effect.gen(function* () {
-                    const local =
-                      runtime === undefined ? adapter : yield* make(Effect.succeed(runtime));
-                    return yield* local.openSession(input);
-                  }).pipe(Effect.provideService(Scope.Scope, sessionScope)),
-                ),
+                Effect.gen(function* () {
+                  const local =
+                    runtime === undefined ? adapter : yield* make(Effect.succeed(runtime));
+                  return yield* local.openSession(input);
+                }).pipe(Effect.provideService(Scope.Scope, sessionScope), Effect.provide(context)),
               close: () => runPromise(Scope.close(scope, Exit.void)),
             };
           },

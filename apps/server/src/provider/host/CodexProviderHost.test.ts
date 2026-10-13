@@ -27,6 +27,7 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import { TestClock } from "effect/testing";
 import {
   CodexProviderCapabilitiesV2,
   canReuseCodexContextUsage,
@@ -174,9 +175,7 @@ const makeFixture = (maxBufferBytes?: number) =>
             adapter,
             setMcpSessions: async () => {},
             openSession: (input, _runtime, scope) =>
-              Effect.runPromise(
-                adapter.openSession(input).pipe(Effect.provideService(Scope.Scope, scope)),
-              ),
+              adapter.openSession(input).pipe(Effect.provideService(Scope.Scope, scope)),
             close: async () => {},
           }),
         }),
@@ -299,6 +298,23 @@ it.layer(Layer.mergeAll(NodeServices.layer, McpProviderSessions.layer))(
           yield* Scope.close(privateScope, Exit.void);
           expect(fixture.counts()).toEqual({ opens: 1, starts: 0, closes: 1 });
         }),
+    );
+    it.effect("releases a private scope when its provider host has disappeared", () =>
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture();
+        const ownerScope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(ownerScope, Exit.void));
+        const client = yield* fixture.connect(ownerScope);
+        const privateScope = yield* Scope.make();
+        yield* client
+          .openSession({ ...openInput, lifetime: "ephemeral" })
+          .pipe(Effect.provideService(Scope.Scope, privateScope));
+        yield* Effect.promise(() => fixture.host.close());
+        const close = yield* Scope.close(privateScope, Exit.void).pipe(Effect.forkScoped);
+        yield* TestClock.adjust("2 seconds");
+        yield* Fiber.join(close);
+        expect(fixture.counts().closes).toBe(1);
+      }),
     );
     it.effect("stops private sessions left behind when a new backend replaces their owner", () =>
       Effect.gen(function* () {
