@@ -2086,6 +2086,13 @@ const layerWsRpc = (
                         message: "Failed to launch thread",
                         cause,
                       }),
+                    ServerCommandOverloadedError: (cause) =>
+                      new OrchestrationV2ThreadLaunchError({
+                        commandId: input.commandId,
+                        projectId: input.projectId,
+                        message: cause.message,
+                        cause,
+                      }),
                     ThreadManagementProviderInstanceDisabledError: (cause) =>
                       new OrchestrationV2ThreadLaunchError({
                         commandId: input.commandId,
@@ -2748,7 +2755,7 @@ const layerWsRpc = (
                 new ProjectMutationError({
                   commandId: mutation.commandId,
                   message:
-                    cause._tag === "ProjectNotEmptyError"
+                    cause._tag === "ProjectNotEmptyError" || cause._tag === "ServerCommandOverloadedError"
                       ? cause.message
                       : "Failed to mutate project.",
                   cause,

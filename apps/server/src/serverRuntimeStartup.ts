@@ -24,6 +24,7 @@ import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 
 import * as ServerConfig from "./config.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
@@ -69,6 +70,19 @@ export class ServerRuntimeStartupError extends Schema.TaggedError<ServerRuntimeS
   }
 }
 
+export const COMMAND_ADMISSION_CAPACITY = 256;
+
+export class ServerCommandOverloadedError extends Schema.TaggedError<ServerCommandOverloadedError>()(
+  "ServerCommandOverloadedError",
+  {},
+) {
+  override get message(): string {
+    return "The server is handling too many commands. Please retry in a moment.";
+  }
+}
+
+type CommandGateError = ServerRuntimeStartupError | ServerCommandOverloadedError;
+
 export class ServerRuntimeStartup extends Context.Service<
   ServerRuntimeStartup,
   {
@@ -76,7 +90,7 @@ export class ServerRuntimeStartup extends Context.Service<
     readonly markHttpListening: Effect.Effect<void>;
     readonly enqueueCommand: <A, E>(
       effect: Effect.Effect<A, E>,
-    ) => Effect.Effect<A, E | ServerRuntimeStartupError>;
+    ) => Effect.Effect<A, E | CommandGateError>;
   }
 >()("t3/serverRuntimeStartup") {}
 
@@ -92,7 +106,7 @@ interface CommandGate {
   readonly failCommandReady: (error: ServerRuntimeStartupError) => Effect.Effect<void>;
   readonly enqueueCommand: <A, E>(
     effect: Effect.Effect<A, E>,
-  ) => Effect.Effect<A, E | ServerRuntimeStartupError>;
+  ) => Effect.Effect<A, E | CommandGateError>;
 }
 
 const settleQueuedCommand = <A, E>(deferred: Deferred.Deferred<A, E>, exit: Exit.Exit<A, E>) =>
@@ -103,6 +117,7 @@ const settleQueuedCommand = <A, E>(deferred: Deferred.Deferred<A, E>, exit: Exit
 export const makeCommandGate = Effect.gen(function* () {
   const commandReady = yield* Deferred.make<void, ServerRuntimeStartupError>();
   const commandQueue = yield* Queue.unbounded<QueuedCommand>();
+  const admission = yield* Semaphore.make(COMMAND_ADMISSION_CAPACITY);
   const commandReadinessState = yield* Ref.make<CommandReadinessState>("pending");
 
   const commandWorker = Effect.forever(
@@ -122,25 +137,32 @@ export const makeCommandGate = Effect.gen(function* () {
         yield* Deferred.fail(commandReady, error).pipe(Effect.orDie);
       }),
     enqueueCommand: <A, E>(effect: Effect.Effect<A, E>) =>
-      Effect.gen(function* () {
+      Effect.uninterruptibleMask((restore) => Effect.gen(function* () {
         const readinessState = yield* Ref.get(commandReadinessState);
-        if (readinessState === "ready") {
-          return yield* effect;
-        }
-        if (readinessState !== "pending") {
+        if (readinessState !== "pending" && readinessState !== "ready") {
           return yield* readinessState;
         }
-
-        const result = yield* Deferred.make<A, E | ServerRuntimeStartupError>();
-        yield* Queue.offer(commandQueue, {
-          run: Deferred.await(commandReady).pipe(
-            Effect.flatMap(() => effect),
-            Effect.exit,
-            Effect.flatMap((exit) => settleQueuedCommand(result, exit)),
-          ),
-        });
-        return yield* Deferred.await(result);
-      }),
+        if (!(yield* admission.takeIfAvailable(1))) {
+          return yield* new ServerCommandOverloadedError();
+        }
+        let queued = false;
+        return yield* Effect.gen(function* () {
+          if (readinessState === "ready") return yield* restore(effect);
+          const result = yield* Deferred.make<A, E | ServerRuntimeStartupError>();
+          yield* Queue.offer(commandQueue, {
+            run: Deferred.await(commandReady).pipe(
+              Effect.flatMap(() => effect),
+              Effect.exit,
+              Effect.flatMap((exit) => settleQueuedCommand(result, exit)),
+              Effect.ensuring(admission.release(1)),
+            ),
+          });
+          // Accepted startup work outlives its caller. Its worker owns the slot
+          // until execution ends, even if the requesting connection disappears.
+          queued = true;
+          return yield* restore(Deferred.await(result));
+        }).pipe(Effect.ensuring(Effect.suspend(() => queued ? Effect.void : admission.release(1))));
+      })),
   } satisfies CommandGate;
 });
 

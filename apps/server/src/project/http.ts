@@ -20,7 +20,10 @@ import { projectMutationOperation } from "./ProjectMutation.ts";
 import { withAuthenticatedCollaboration } from "../auth/collaboration.ts";
 
 export const failProjectMutation = Effect.fn("environment.projects.failMutation")(function* (
-  cause: ProjectService.ProjectServiceError | ServerRuntimeStartup.ServerRuntimeStartupError,
+  cause:
+    | ProjectService.ProjectServiceError
+    | ServerRuntimeStartup.ServerRuntimeStartupError
+    | ServerRuntimeStartup.ServerCommandOverloadedError,
 ) {
   if (
     cause._tag === "ProjectNotFoundError" ||
@@ -28,6 +31,9 @@ export const failProjectMutation = Effect.fn("environment.projects.failMutation"
     cause._tag === "ProjectNotEmptyError"
   ) {
     return yield* failEnvironmentInvalidRequest("invalid_command");
+  }
+  if (cause._tag === "ServerCommandOverloadedError") {
+    return yield* failEnvironmentInternal("command_overloaded", cause);
   }
   return yield* failEnvironmentInternal("project_mutation_failed", cause);
 });
