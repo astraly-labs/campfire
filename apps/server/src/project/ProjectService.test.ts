@@ -131,6 +131,10 @@ it.layer(layerTest)("ProjectService", (it) => {
       });
       assert.equal(cleared.defaultReviewModelSelection, null);
       assert.deepEqual(cleared.createdBy, author);
+      yield* service.delete({
+        commandId: CommandId.make("project:collaboration:delete"),
+        projectId,
+      });
     }),
   );
   it.effect("creates, updates, resolves, snapshots, and soft-deletes projects", () =>

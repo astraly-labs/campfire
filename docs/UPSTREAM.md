@@ -27,3 +27,31 @@ git rebase upstream/main
 Resolve conflicts in favor of upstream unless Campfire still requires the difference. Review the rebased commit series with `git range-diff`, run focused checks for every touched surface, and record the upstream SHA in the sync change and release notes.
 
 Updating the shared integration branch after a rebase rewrites its history. Announce the sync window, use `--force-with-lease` rather than `--force`, and require contributors to rebase open branches afterward. Package and deploy only after the rebased `staging` branch passes its release gates.
+
+## 2026-10-13: orchestration V2
+
+This sync starts from official T3 Code commit `98a6246d07624432a6e6d0ab4fb87bede90a49a6`.
+The previous staging tip was `4ee4f93c00ac6315589c98d1dbd4a8f245afca32`; its original
+commit history is retained in `codex/backup-staging-2026-10-13`. The old fork commits
+were consolidated before the port because upstream removed the V1 engine and client reducer.
+
+Campfire collaboration now uses V2 commands, events and projections. The upstream
+`createdBy` actor enum remains unchanged; `collaborationCreatedBy` carries the authenticated
+Google identity. Team discussions have their own projection, so provider updates do not copy
+the discussion history. The importer preserves existing messages, authors, reactions, read
+markers, archived discussions, project review defaults and review thread kinds.
+
+Campfire migration IDs 1–50 keep their original meaning. Upstream migrations after 44
+continue at 51–67, and migration 68 adds the collaboration projection. Do not renumber these
+to match a stock T3 database. Back up the database before the first V2 deployment; rolling
+back to V1 requires the matching pre-upgrade backup.
+
+The provider host uses protocol 2 and retains V2 runtimes across backend restarts. The old
+V1 host protocol is incompatible. For the first deployment, let existing turns finish,
+then replace the backend and provider host together. Private briefing runtimes are ephemeral
+and are excluded from durable recovery. A Git sync does not perform this deployment.
+
+The deterministic multiplayer smoke now runs the V2 worker/replay test. It uses a fake
+provider runtime with real SQLite and orchestration workers; it does not prove Google login,
+browser rendering, a live provider CLI or the required human promotion gate. Command admission
+is bounded at the existing external RPC/HTTP gate; direct MCP commands bypass that gate.

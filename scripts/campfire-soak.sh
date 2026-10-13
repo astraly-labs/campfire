@@ -60,10 +60,10 @@ fi
 
 cd "$campfire_repo_root/apps/server"
 while :; do
-  "$campfire_node" "$campfire_vp" test run src/server.test.ts \
-    -t 'bootstraps five independent worktree turns concurrently for five Google users|reconnects five clients across a 1000-event catch-up without loss or leakage|tracks authenticated websocket connection lifecycle'
-  "$campfire_node" "$campfire_vp" test run src/orchestration/Layers/ProviderCommandReactor.test.ts \
-    -t 'runs five independent Codex worktree turns with zero browser subscribers'
+  "$campfire_node" "$campfire_vp" test run \
+    src/orchestration-v2/CampfireMultiplayer.test.ts \
+    src/presence/Presence.test.ts \
+    src/auth/collaboration.test.ts
   campfire_runs=$((campfire_runs + 1))
 
   campfire_now=$(date +%s)

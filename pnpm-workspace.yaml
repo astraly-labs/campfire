@@ -81,6 +81,8 @@ catalog:
   remark-rehype: 11.1.2
   unified: 11.0.5
 
+minimumReleaseAge: 1440
+
 minimumReleaseAgeExclude:
   - tsc-rs
   - "@tsc-rs/*"
@@ -272,6 +274,7 @@ overrides:
   # settle on two patch releases of each major. Older majors stay as they are.
   "@types/ws@^8": "catalog:"
   "undici@^8": "catalog:"
+  "uuid@>=7.0.0 <11.1.1": 11.1.1
   "ws@^8": "catalog:"
   vite: "catalog:"
   vite-plus: "catalog:"
