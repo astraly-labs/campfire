@@ -337,6 +337,26 @@ describe("rightPanelStore", () => {
     expect(store.getUserActionRevision(refA)).toBe(revision);
   });
 
+  it("restores legacy HTML artifact tabs as active file previews", () => {
+    const absolutePath = "/workspace/report with spaces.html";
+    const migrated = migratePersistedRightPanelState({
+      byThreadKey: {
+        "env-1:thread-A": {
+          isOpen: true,
+          activeSurfaceId: `artifact:${absolutePath}`,
+          surfaces: [{ id: `artifact:${absolutePath}`, kind: "artifact", absolutePath }],
+        },
+      },
+    });
+
+    const state = selectThreadRightPanelState(migrated.byThreadKey, refA);
+    expect(state.isOpen).toBe(true);
+    expect(state.activeSurfaceId).toBe(`file:${absolutePath}`);
+    expect(state.surfaces).toEqual([
+      expect.objectContaining({ id: `file:${absolutePath}`, kind: "file", relativePath: absolutePath }),
+    ]);
+  });
+
   it("restores a saved maximized panel during migration", () => {
     const migrated = migratePersistedRightPanelState({
       byThreadKey: {

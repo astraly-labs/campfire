@@ -3861,6 +3861,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     },
     [
       activePendingProgress?.activeQuestion,
+      collaboration,
       expandComposerForEditorChange,
       onTypingGuardDraftChange,
       pendingUserInputs.length,

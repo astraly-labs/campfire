@@ -4,7 +4,10 @@ import {
   type OrchestrationV2Run,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
+  EventId,
   MessageId,
+  SideThreadId,
+  SideThreadMessageId,
   ProjectId,
   ProviderInstanceId,
   NodeId,
@@ -105,6 +108,62 @@ const emptyProjection = {
 } as OrchestrationV2ThreadProjection;
 
 describe("applyOrchestrationV2ProjectionEvent", () => {
+  it("replays imported team discussion and live replies without replacing agent history", () => {
+    const sideThreadId = SideThreadId.make(`thread:${threadId}`);
+    const author = { subject: "teammate", displayName: "Teammate" };
+    const originalMessageId = SideThreadMessageId.make("original-discussion-message");
+    const createdAt = DateTime.formatIso(now);
+    const imported = applyOrchestrationV2ProjectionEvent(emptyProjection, {
+      id: EventId.make("import-discussion"),
+      type: "sidethread.imported",
+      threadId,
+      occurredAt: now,
+      payload: {
+        threadId,
+        sideThread: {
+          id: sideThreadId,
+          createdBy: author,
+          createdAt,
+          updatedAt: createdAt,
+          archivedAt: null,
+          messages: [{ id: originalMessageId, author, text: "Before the upgrade", createdAt }],
+        },
+      },
+    });
+    expect(imported).not.toBeNull();
+    if (!imported) return;
+
+    const reply = {
+      id: EventId.make("live-discussion-reply"),
+      type: "sidethread.message-posted",
+      threadId,
+      occurredAt: now,
+      payload: {
+        threadId,
+        sideThreadId,
+        messageId: SideThreadMessageId.make("discussion-reply"),
+        author,
+        text: "After the upgrade",
+        replyToSideThreadMessageId: originalMessageId,
+        quotedMessageId: MessageId.make("agent-message"),
+        createdAt,
+      },
+    } satisfies OrchestrationV2DomainEvent;
+    const updated = applyOrchestrationV2ProjectionEvent(imported, reply);
+    expect(updated?.sideThreads?.[0]?.messages).toEqual([
+      expect.objectContaining({ id: originalMessageId, text: "Before the upgrade" }),
+      expect.objectContaining({
+        text: "After the upgrade",
+        author,
+        replyToSideThreadMessageId: originalMessageId,
+        quotedMessageId: MessageId.make("agent-message"),
+      }),
+    ]);
+    expect(updated?.messages).toBe(emptyProjection.messages);
+    expect(updated?.visibleTurnItems).toBe(emptyProjection.visibleTurnItems);
+    expect(applyOrchestrationV2ProjectionEvent(updated, reply)?.sideThreads?.[0]?.messages).toHaveLength(2);
+  });
+
   it("keeps live token usage when the terminal provider turn omits it", () => {
     const providerTurnId = ProviderTurnId.make("provider-turn-reducer");
     const running = {

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { MessageCircleIcon, LockKeyholeIcon } from "lucide-react";
-import { MessageId, ThreadId, type ModelSelection, type OrchestrationV2ThreadProjection, type ScopedThreadRef, type ServerProvider } from "@t3tools/contracts";
+import { MessageId, ThreadId, type ModelSelection, type OrchestrationV2ThreadProjection, type ServerProvider } from "@t3tools/contracts";
 import type { UnifiedSettings } from "@t3tools/contracts/settings";
 import type { EnvironmentProject, EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
