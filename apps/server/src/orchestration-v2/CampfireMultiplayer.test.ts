@@ -53,7 +53,7 @@ it.live("runs five independent teammate turns without browsers and resumes 1000 
           instanceId, driver: adapter.driver, providerSessionId: input.providerSessionId,
           providerSession: { id: input.providerSessionId, driver: adapter.driver, providerInstanceId: instanceId, status: "ready", cwd: input.runtimePolicy.cwd ?? "/workspace", model: input.modelSelection.model, capabilities: CodexProviderCapabilitiesV2, createdAt: now, updatedAt: now, lastError: null },
           events: Stream.never,
-          ensureThread: () => Effect.succeed(providerThread), resumeThread: unsupported,
+          ensureThread: (thread) => Effect.succeed({ ...providerThread, id: ProviderThreadId.make(`native:${thread.threadId}`), appThreadId: thread.threadId }), resumeThread: unsupported,
           startTurn: (turn) => Queue.offer(starts, { turn, providerSessionId: input.providerSessionId }).pipe(Effect.asVoid),
           steerTurn: unsupported, interruptTurn: () => Effect.void, respondToRuntimeRequest: unsupported,
           readThreadSnapshot: unsupported, rollbackThread: unsupported, forkThread: unsupported,
@@ -93,7 +93,9 @@ it.live("runs five independent teammate turns without browsers and resumes 1000 
       // Each receipt comes from the worker invoking a real session runtime. No
       // browser subscription exists while the five provider turns are starting.
       const started = yield* Effect.forEach(clients, () => Queue.take(starts));
-      assert.equal(new Set(started.map((item) => item.providerSessionId)).size, 5);
+      // Codex multiplexes native threads inside one session runtime. Isolation
+      // belongs to each turn and provider thread, not to an extra process.
+      assert.equal(new Set(started.map((item) => item.providerSessionId)).size, 1);
       assert.equal(new Set(started.map((item) => item.turn.providerThread.id)).size, 5);
       for (const client of clients) {
         const ownTurn = started.find((item) => item.turn.threadId === client.threadId);
