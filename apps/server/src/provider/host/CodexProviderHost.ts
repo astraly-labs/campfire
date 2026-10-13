@@ -226,6 +226,22 @@ export async function startCodexProviderHostServer(options: CodexProviderHostSer
       if (state.configuring === configuring) delete state.configuring;
     });
   };
+  const scheduleAckCommit = (state: InstanceState) => {
+    if (state.ackTimer || state.pendingAck <= state.committedAck) return;
+    // Capture this batch now: frames acknowledged during the timer must receive
+    // their own full grace period before a backend restart can lose the replay.
+    const acknowledged = state.pendingAck;
+    state.ackTimer = Timers.setTimeout(() => {
+      state.committedAck = acknowledged;
+      for (const [sequence, entry] of state.outbox)
+        if (sequence <= acknowledged) {
+          state.bytes -= entry.bytes;
+          state.outbox.delete(sequence);
+        }
+      delete state.ackTimer;
+      scheduleAckCommit(state);
+    }, options.ackCommitGraceMs ?? 30_000);
+  };
   const execute = async (
     instanceId: ProviderInstanceId,
     command: Command,
@@ -588,16 +604,7 @@ export async function startCodexProviderHostServer(options: CodexProviderHostSer
             return;
           }
           state.pendingAck = Math.max(state.pendingAck, message.sequence);
-          if (!state.ackTimer)
-            state.ackTimer = Timers.setTimeout(() => {
-              state.committedAck = state.pendingAck;
-              for (const [sequence, entry] of state.outbox)
-                if (sequence <= state.committedAck) {
-                  state.bytes -= entry.bytes;
-                  state.outbox.delete(sequence);
-                }
-              delete state.ackTimer;
-            }, options.ackCommitGraceMs ?? 30_000);
+          scheduleAckCommit(state);
           continue;
         }
         let result = state.commands.get(message.commandId);
