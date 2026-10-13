@@ -143,7 +143,7 @@ const makeHarness = Effect.fn(function* (openGate?: Deferred.Deferred<void>) {
       const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
       const started = yield* Queue.unbounded<ProviderAdapterV2TurnInput>();
       const control = { events, started, closeCount: 0, subscriptionCount: 0 };
-      yield* Effect.addFinalizer(() => Effect.sync(() => { control.closeCount += 1; }).pipe(Effect.andThen(Queue.end(events))));
+      yield* Effect.addFinalizer(() => Effect.sync(() => { control.closeCount += 1; }).pipe(Effect.andThen(Queue.shutdown(events))));
       yield* Queue.offer(opened, control);
       if (openGate) yield* Deferred.await(openGate);
       const now = sourceThread.createdAt;
@@ -155,7 +155,7 @@ const makeHarness = Effect.fn(function* (openGate?: Deferred.Deferred<void>) {
       };
       return {
         instanceId: adapter.instanceId, driver: adapter.driver, providerSessionId: input.providerSessionId,
-        providerSession: { id: input.providerSessionId, driver: adapter.driver, providerInstanceId: adapter.instanceId, status: "ready", cwd: input.runtimePolicy.cwd, model: input.modelSelection.model, capabilities: CodexProviderCapabilitiesV2, createdAt: now, updatedAt: now, lastError: null },
+        providerSession: { id: input.providerSessionId, driver: adapter.driver, providerInstanceId: adapter.instanceId, status: "ready", cwd: input.runtimePolicy.cwd ?? sourceProject.workspaceRoot, model: input.modelSelection.model, capabilities: CodexProviderCapabilitiesV2, createdAt: now, updatedAt: now, lastError: null },
         events: Stream.fromQueue(events),
         subscribeEvents: Effect.sync(() => {
           control.subscriptionCount += 1;
@@ -256,7 +256,8 @@ it.effect("releases the runtime when the consumer cancels before a terminal even
 
 it.effect("releases an accepted ask even when its response stream is never consumed", () => Effect.gen(function* () {
   const h = yield* makeHarness();
-  yield* h.manager.ask(privateInput, "alice").pipe(Effect.scoped);
+  const unusedResponse = yield* h.manager.ask(privateInput, "alice").pipe(Effect.scoped);
+  expect(unusedResponse).toBeDefined();
   const control = yield* Queue.take(h.opened);
   expect(control.closeCount).toBe(1);
   expect(control.subscriptionCount).toBe(0);
