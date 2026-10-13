@@ -1,7 +1,7 @@
-import * as NodeCrypto from "node:crypto";
-
 import * as Clock from "effect/Clock";
 import * as Data from "effect/Data";
+import * as Crypto from "effect/Crypto";
+import { Base64Url } from "effect/encoding";
 import * as Effect from "effect/Effect";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -105,14 +105,6 @@ export interface GoogleOidcFlow<R = never> {
   >;
 }
 
-function randomBase64Url(bytes = 32): string {
-  return NodeCrypto.randomBytes(bytes).toString("base64url");
-}
-
-function codeChallenge(verifier: string): string {
-  return NodeCrypto.createHash("sha256").update(verifier).digest("base64url");
-}
-
 function normalizeReturnTo(value: string | undefined): string | undefined {
   if (value === undefined || value.length === 0) {
     return "/";
@@ -131,8 +123,10 @@ function normalizeReturnTo(value: string | undefined): string | undefined {
 export function makeGoogleOidcFlow<R>(
   config: GoogleOidcConfig,
   tokenClient: GoogleOidcTokenClient<R>,
-): Effect.Effect<GoogleOidcFlow<R>> {
+): Effect.Effect<GoogleOidcFlow<R>, never, Crypto.Crypto> {
   return Effect.gen(function* () {
+    const crypto = yield* Crypto.Crypto;
+    const randomBase64Url = (bytes = 32) => crypto.randomBytes(bytes).pipe(Effect.map(Base64Url.encode), Effect.orDie);
     const pending = yield* Ref.make(new Map<string, PendingTransaction>());
 
     const begin: GoogleOidcFlow<R>["begin"] = Effect.fn("GoogleOidcFlow.begin")(
@@ -143,10 +137,10 @@ export function makeGoogleOidcFlow<R>(
         }
         const now = yield* Clock.currentTimeMillis;
         const transaction: PendingTransaction = {
-          state: randomBase64Url(),
-          nonce: randomBase64Url(),
-          codeVerifier: randomBase64Url(48),
-          binding: randomBase64Url(),
+          state: yield* randomBase64Url(),
+          nonce: yield* randomBase64Url(),
+          codeVerifier: yield* randomBase64Url(48),
+          binding: yield* randomBase64Url(),
           returnTo: normalizedReturnTo,
           expiresAtMs: now + TRANSACTION_TTL_MS,
         };
@@ -170,7 +164,7 @@ export function makeGoogleOidcFlow<R>(
           scope: "openid email profile",
           state: transaction.state,
           nonce: transaction.nonce,
-          code_challenge: codeChallenge(transaction.codeVerifier),
+          code_challenge: yield* crypto.digest("SHA-256", new TextEncoder().encode(transaction.codeVerifier)).pipe(Effect.map(Base64Url.encode), Effect.orDie),
           code_challenge_method: "S256",
           prompt: "select_account",
         }).toString();

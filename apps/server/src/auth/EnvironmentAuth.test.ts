@@ -10,6 +10,7 @@ import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
+import { Headers, HttpServerRequest } from "effect/http";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -708,14 +709,12 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
       );
       const authenticated = yield* serverAuth.authenticateHttpRequest({
         ...makeCookieRequest(sessions.cookieName, issued.sessionToken),
-        headers: { host: "localhost:3773", origin: "https://team.ts.net:10000" },
+        headers: Headers.fromInput({ host: "localhost:3773", origin: "https://team.ts.net:10000" }),
       });
       const ticket = yield* serverAuth.issueWebSocketTicket(authenticated);
-      const upgrade = (origin: string) => serverAuth.authenticateWebSocketUpgrade({
-        url: `/ws?wsTicket=${ticket.ticket}`,
-        cookies: {},
+      const upgrade = (origin: string) => serverAuth.authenticateWebSocketUpgrade(HttpServerRequest.fromWeb(new Request(`http://localhost:3773/ws?wsTicket=${ticket.ticket}`, {
         headers: { host: "localhost:3773", origin },
-      } as never);
+      })));
       expect((yield* Effect.flip(upgrade("https://attacker.example")))._tag).toBe(
         "ServerAuthInvalidCredentialError",
       );

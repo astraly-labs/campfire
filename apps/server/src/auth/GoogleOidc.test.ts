@@ -1,7 +1,8 @@
 import { it } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Ref from "effect/Ref";
-import { describe, expect } from "vite-plus/test";
+import { expect } from "vite-plus/test";
 
 import type { GoogleOidcConfig } from "../config.ts";
 import {
@@ -27,7 +28,7 @@ const alice: GoogleOidcIdentity = {
   displayName: "Alice Example",
 };
 
-describe("GoogleOidcFlow", () => {
+it.layer(NodeServices.layer)("GoogleOidcFlow", (it) => {
   it.effect("binds state, nonce, PKCE, browser cookie, and one-time completion", () =>
     Effect.gen(function* () {
       const exchangeInputs = yield* Ref.make<
