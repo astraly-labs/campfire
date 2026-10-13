@@ -164,6 +164,7 @@ const EnvServerConfig = Config.all({
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
+  providerHostSocketPath: Config.String("T3CODE_CODEX_HOST_SOCKET").pipe(Config.withDefault("")),
   googleOidcClientId: Config.String("T3CODE_GOOGLE_OIDC_CLIENT_ID").pipe(
     Config.option,
     Config.map(Option.getOrUndefined),
@@ -534,6 +535,9 @@ export const resolveServerConfig = (
       tailscaleServeEnabled,
       tailscaleServePort,
       ...(googleOidc ? { googleOidc } : {}),
+      ...(env.providerHostSocketPath.trim()
+        ? { providerHostSocketPath: env.providerHostSocketPath.trim() }
+        : {}),
     };
 
     return config;

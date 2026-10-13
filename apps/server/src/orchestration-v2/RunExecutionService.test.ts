@@ -4331,6 +4331,13 @@ function runBackgroundItemScenario(
       ReadonlyArray<{ readonly id: TurnItemId; readonly runId: RunId }>
     >;
     readonly onSubscribe?: Effect.Effect<void>;
+    readonly onStart?: Effect.Effect<void>;
+    readonly onCaptureBaseline?: Effect.Effect<void>;
+    readonly resumeExistingTurn?: boolean;
+    readonly runStatus?: OrchestrationV2Run["status"];
+    readonly resumeEvents?: (
+      ids: BackgroundScenarioIds,
+    ) => ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>;
   },
 ) {
   return Effect.gen(function* () {
@@ -4342,7 +4349,9 @@ function runBackgroundItemScenario(
       Layer.provide(
         Layer.mergeAll(
           McpAppModelContext.layerEmpty,
-          Layer.mock(CheckpointService.CheckpointServiceV2)({ captureBaseline: () => Effect.void }),
+          Layer.mock(CheckpointService.CheckpointServiceV2)({
+            captureBaseline: () => options?.onCaptureBaseline ?? Effect.void,
+          }),
           Layer.mock(EventSink.EventSinkV2)({
             write: () => Effect.succeed([]),
             writeWithEffects: (input) =>
@@ -4387,6 +4396,10 @@ function runBackgroundItemScenario(
       const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
       yield* runExecution.startRootRun({
         commandId: CommandId.make(`command:${key}`),
+        ...(options?.resumeExistingTurn === undefined
+          ? {}
+          : { resumeExistingTurn: options.resumeExistingTurn }),
+        ...(options?.resumeEvents === undefined ? {} : { resumeEvents: options.resumeEvents(ids) }),
         appThread: { id: ids.threadId } as OrchestrationV2AppThread,
         providerSessionId: ProviderSessionId.make(`session:${key}`),
         session: {
@@ -4402,12 +4415,13 @@ function runBackgroundItemScenario(
               close: Deferred.succeed(ingestionDone, undefined),
             };
           }),
-          startTurn: () => Effect.void,
+          startTurn: () => options?.onStart ?? Effect.void,
         } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime,
         run: {
           id: ids.runId,
           threadId: ids.threadId,
           ordinal: 1,
+          status: options?.runStatus ?? "running",
           providerInstanceId,
         } as OrchestrationV2Run,
         rootNode: { id: ids.rootNodeId } as OrchestrationV2ExecutionNode,
@@ -4456,6 +4470,57 @@ function runBackgroundItemScenario(
     return yield* Ref.get(observed);
   });
 }
+
+it.effect(
+  "reattaches and finalizes an existing turn without restarting it or replacing its baseline",
+  () =>
+    Effect.gen(function* () {
+      const starts = yield* Ref.make(0);
+      const baselines = yield* Ref.make(0);
+      const observed = yield* runBackgroundItemScenario(
+        "host-recovery",
+        (ids) => [rootTerminalEvent(ids, "completed")],
+        {
+          resumeExistingTurn: true,
+          onStart: Ref.update(starts, (count) => count + 1),
+          onCaptureBaseline: Ref.update(baselines, (count) => count + 1),
+        },
+      );
+      assert.deepEqual(observed, ["root-finalized"]);
+      assert.equal(yield* Ref.get(starts), 0);
+      assert.equal(yield* Ref.get(baselines), 0);
+    }),
+);
+
+it.effect("restores completed-run background work without refinalizing its root", () =>
+  Effect.gen(function* () {
+    const starts = yield* Ref.make(0);
+    const baselines = yield* Ref.make(0);
+    const secondItemId = TurnItemId.make("host-recovery-background:second");
+    const observed = yield* runBackgroundItemScenario(
+      "host-recovery-background",
+      (ids) => [
+        rootTerminalEvent(ids, "completed"),
+        backgroundTurnItemEvent(ids, "command_execution", "completed", 3),
+        backgroundTurnItemEvent(ids, "dynamic_tool", "completed", 4, secondItemId),
+      ],
+      {
+        resumeExistingTurn: true,
+        runStatus: "completed",
+        resumeEvents: (ids) => [
+          backgroundTurnItemEvent(ids, "command_execution", "running", 1),
+          backgroundTurnItemEvent(ids, "dynamic_tool", "running", 2, secondItemId),
+        ],
+        onStart: Ref.update(starts, (count) => count + 1),
+        onCaptureBaseline: Ref.update(baselines, (count) => count + 1),
+        keepEventStreamOpen: true,
+      },
+    );
+    assert.deepEqual(observed, ["turn_item:completed", "turn_item:completed"]);
+    assert.equal(yield* Ref.get(starts), 0);
+    assert.equal(yield* Ref.get(baselines), 0);
+  }),
+);
 
 it.effect("releases ingestion after idle subagent rows and items settle", () =>
   Effect.gen(function* () {

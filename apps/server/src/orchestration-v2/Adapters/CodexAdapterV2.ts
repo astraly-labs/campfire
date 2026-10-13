@@ -1,3 +1,4 @@
+import { makeRemoteCodexAdapter } from "../../provider/host/RemoteCodexAdapter.ts";
 import { revertCodexThread } from "../../provider/CodexThreadRevert.ts";
 import { historyResponseItems } from "@t3tools/provider-core/server/handoffBudget";
 import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
@@ -1579,7 +1580,7 @@ export type CodexAdapterV2DriverEnv =
   | Path.Path
   | ServerConfig;
 
-export const createCodexAdapterV2 = (
+export const createLocalCodexAdapterV2 = (
   { instanceId, environment, enabled, config }: ProviderAdapterDriverCreateInput<CodexSettings>,
   hooks: Pick<CodexAdapterV2Options, "onUsageLimits" | "resolveRuntime"> = {},
 ) =>
@@ -1624,6 +1625,37 @@ export const createCodexAdapterV2 = (
       continuationRequests,
       ...hooks,
     });
+  });
+
+export const createCodexAdapterV2 = (
+  input: ProviderAdapterDriverCreateInput<CodexSettings>,
+  hooks: Pick<CodexAdapterV2Options, "onUsageLimits" | "resolveRuntime"> = {},
+) =>
+  Effect.gen(function* () {
+    const config = yield* ServerConfig;
+    if (!config.providerHostSocketPath) return yield* createLocalCodexAdapterV2(input, hooks);
+    const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+    return yield* makeRemoteCodexAdapter({
+      socketPath: config.providerHostSocketPath,
+      instanceId: input.instanceId,
+      configuration: {
+        config: { ...input.config, enabled: input.enabled },
+        environment: input.environment,
+      },
+      ...hooks,
+      onContinuation: continuationRequests.offer,
+      canReuseContextUsage: canReuseCodexContextUsage,
+    }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ProviderAdapterDriverCreateError({
+            driver: CODEX_DRIVER_KIND,
+            instanceId: input.instanceId,
+            detail: "Could not connect to the configured Codex provider host.",
+            cause,
+          }),
+      ),
+    );
   });
 
 export const CodexAdapterV2Driver: ProviderAdapterDriver<CodexSettings, CodexAdapterV2DriverEnv> = {

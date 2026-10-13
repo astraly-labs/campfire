@@ -159,6 +159,10 @@ export interface ProviderSessionManagerV2Shape {
     readonly resumeFromSession?: OrchestrationV2ProviderSession;
     readonly initialNativeThreadId?: string;
     readonly initialProviderItemIdentityVersion?: 2;
+    readonly resumedTurns?: ReadonlyArray<{
+      readonly providerThreadId: ProviderThreadId;
+      readonly runOrdinal: number;
+    }>;
   }) => Effect.Effect<
     ProviderAdapter.ProviderAdapterV2SessionRuntime,
     ProviderSessionManagerV2Error
@@ -961,10 +965,14 @@ export const layerWithOptions = (
                       input.detail ?? `Provider session released: ${input.reason}.`,
                     );
                   }
+                  if (input.reason !== "server_shutdown" && entry.runtime.externalLifetime) {
+                    yield* entry.runtime.externalLifetime.stop;
+                  }
                   const closeExit = yield* closeScopeWithin(entry.scope, {
                     providerSessionId: input.providerSessionId,
                     reason: input.reason,
                   });
+                  if (input.reason === "server_shutdown" && entry.runtime.externalLifetime) return;
                   const records = {
                     entry,
                     reason: input.reason,
@@ -996,40 +1004,43 @@ export const layerWithOptions = (
             Option.match(entry, {
               onNone: () => Effect.void,
               onSome: (entry) =>
-                // Revoke every credential this session recorded, including for
-                // threads that detached without re-attaching: the provider
-                // process is gone, so nothing holds them anymore. Skip threads
-                // a live replacement session took over, since credential reuse
-                // means the replacement may hold this very credential.
-                Ref.get(sessions).pipe(
-                  Effect.flatMap((current) =>
-                    Effect.forEach(
-                      entry.mcpCredentialIdByThread,
-                      ([threadId, mcpCredentialId]) => {
-                        // Id-sensitive: a stale record for the same thread but
-                        // a DIFFERENT credential (left behind by an old session
-                        // the thread rotated away from) must not veto revoking
-                        // this session's own credential, or it leaks forever.
-                        // A reservation means an in-flight open is configuring
-                        // a provider process with this credential right now;
-                        // revoking it here would strand that process (eager
-                        // adapters cannot pick up a rotated token).
-                        const heldElsewhere =
-                          isMcpCredentialReserved(threadId, mcpCredentialId) ||
-                          Array.from(current.values()).some(
-                            (other) =>
-                              other !== entry &&
-                              (other.attachedThreadIds.has(threadId) ||
-                                other.mcpCredentialIdByThread.get(threadId) === mcpCredentialId),
-                          );
-                        return heldElsewhere
-                          ? Effect.void
-                          : clearMcpSession(threadId, mcpCredentialId);
-                      },
-                      { discard: true },
+                input.reason === "server_shutdown" && entry.runtime.externalLifetime
+                  ? Effect.void
+                  : // Revoke every credential this session recorded, including for
+                    // threads that detached without re-attaching: the provider
+                    // process is gone, so nothing holds them anymore. Skip threads
+                    // a live replacement session took over, since credential reuse
+                    // means the replacement may hold this very credential.
+                    Ref.get(sessions).pipe(
+                      Effect.flatMap((current) =>
+                        Effect.forEach(
+                          entry.mcpCredentialIdByThread,
+                          ([threadId, mcpCredentialId]) => {
+                            // Id-sensitive: a stale record for the same thread but
+                            // a DIFFERENT credential (left behind by an old session
+                            // the thread rotated away from) must not veto revoking
+                            // this session's own credential, or it leaks forever.
+                            // A reservation means an in-flight open is configuring
+                            // a provider process with this credential right now;
+                            // revoking it here would strand that process (eager
+                            // adapters cannot pick up a rotated token).
+                            const heldElsewhere =
+                              isMcpCredentialReserved(threadId, mcpCredentialId) ||
+                              Array.from(current.values()).some(
+                                (other) =>
+                                  other !== entry &&
+                                  (other.attachedThreadIds.has(threadId) ||
+                                    other.mcpCredentialIdByThread.get(threadId) ===
+                                      mcpCredentialId),
+                              );
+                            return heldElsewhere
+                              ? Effect.void
+                              : clearMcpSession(threadId, mcpCredentialId);
+                          },
+                          { discard: true },
+                        ),
+                      ),
                     ),
-                  ),
-                ),
             }),
         ).pipe(
           Effect.catchCause((cause) =>
@@ -2177,7 +2188,11 @@ export const layerWithOptions = (
                 requestEventPermit: yield* Semaphore.make(1),
                 scope: sessionScope,
                 idleGeneration: 0,
-                busyTurns: new Set(),
+                busyTurns: new Set(
+                  input.resumedTurns?.map((turn) =>
+                    busyTurnKey(turn.providerThreadId, turn.runOrdinal),
+                  ),
+                ),
                 lastActivityAtMs: now,
                 idleFiber: null,
                 pinnedSinceMs: null,

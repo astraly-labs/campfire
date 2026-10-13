@@ -36,6 +36,7 @@ import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationServic
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
+import * as HostedProviderRecovery from "./HostedProviderRecovery.ts";
 import * as ProviderRuntimeRecoveryService from "./ProviderRuntimeRecoveryService.ts";
 import * as ProviderSwitchService from "./ProviderSwitchService.ts";
 import * as ProviderTurnControlService from "./ProviderTurnControlService.ts";
@@ -313,7 +314,18 @@ const layerEffectExecutorProvided = EffectWorker.layerExecutor.pipe(
 const layerEffectWorkerProvided = EffectWorker.layer.pipe(
   Layer.provide(Layer.merge(layerStores, layerEffectExecutorProvided)),
 );
+const layerHostedProviderRecoveryProvided = HostedProviderRecovery.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      layerProviderAdapterRegistryProvided,
+      layerProviderSessionManagerProvided,
+      ProjectionStore.layer,
+      layerRunExecutionServiceProvided,
+    ),
+  ),
+);
 const layerProviderRuntimeRecoveryProvided = ProviderRuntimeRecoveryService.layer.pipe(
+  Layer.provide(layerHostedProviderRecoveryProvided),
   Layer.provide(
     Layer.mergeAll(
       layerEffectWorkerProvided,

@@ -17,6 +17,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
 import * as EffectOutbox from "./EffectOutbox.ts";
+import { HostedProviderRecovery, type HostedRecoveryState } from "./HostedProviderRecovery.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -179,7 +180,58 @@ function latestStartedRun(
   );
 }
 
+/** Remove only work owned by a runtime the external host positively identified. */
+export function withoutHostedRuntimeWork(
+  projection: ProjectionStore.ProjectionRuntimeRecoveryState,
+  hosted: HostedRecoveryState,
+): ProjectionStore.ProjectionRuntimeRecoveryState {
+  if (hosted.sessionIds.size === 0 && hosted.runIds.size === 0) return projection;
+  const liveThreads = new Set(
+    projection.providerThreads
+      .filter(
+        (thread) =>
+          thread.providerSessionId !== null && hosted.sessionIds.has(thread.providerSessionId),
+      )
+      .map((thread) => thread.id),
+  );
+  const isHosted = (record: {
+    readonly runId: OrchestrationV2ThreadProjection["runs"][number]["id"] | null;
+    readonly providerThreadId?: ProviderThreadId | null | undefined;
+  }) =>
+    record.runId !== null
+      ? hosted.runIds.has(record.runId)
+      : record.providerThreadId !== null &&
+        record.providerThreadId !== undefined &&
+        liveThreads.has(record.providerThreadId);
+  const liveNodes = new Set(projection.nodes.filter(isHosted).map((node) => node.id));
+  return {
+    ...projection,
+    runs: projection.runs.filter((run) => !hosted.runIds.has(run.id)),
+    attempts: projection.attempts.filter((attempt) => !hosted.runIds.has(attempt.runId)),
+    nodes: projection.nodes.filter((node) => !isHosted(node)),
+    subagents: projection.subagents.filter((agent) => !isHosted(agent)),
+    providerSessions: projection.providerSessions.filter(
+      (session) => !hosted.sessionIds.has(session.id),
+    ),
+    providerThreads: projection.providerThreads.filter((thread) => !liveThreads.has(thread.id)),
+    providerTurns: projection.providerTurns.filter(
+      (turn) => !liveThreads.has(turn.providerThreadId),
+    ),
+    runtimeRequests: projection.runtimeRequests.filter(
+      (request) =>
+        !liveNodes.has(request.nodeId) &&
+        !(
+          request.responseCapability.type === "live" &&
+          hosted.sessionIds.has(request.responseCapability.providerSessionId)
+        ),
+    ),
+    messages: projection.messages.filter((message) => !isHosted(message)),
+    turnItems: projection.turnItems.filter((item) => !isHosted(item)),
+  };
+}
+
 export const make = Effect.gen(function* () {
+  const hostedRecovery = yield* HostedProviderRecovery;
   const settings = yield* ServerSettings.ServerSettingsService;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const eventSink = yield* EventSink.EventSinkV2;
@@ -633,6 +685,13 @@ export const make = Effect.gen(function* () {
 
   const reconcile = (trigger: "startup" | "shutdown") =>
     Effect.gen(function* () {
+      const hostedThreads = yield* hostedRecovery
+        .preserve(trigger === "startup")
+        .pipe(
+          Effect.mapError(
+            (cause) => new ProviderRuntimeRecoveryError({ operation: "reconcile", cause }),
+          ),
+        );
       const continueAfterRestart = yield* settings.getSettings.pipe(
         Effect.orElseSucceed(() => null),
       );
@@ -662,7 +721,11 @@ export const make = Effect.gen(function* () {
           continueAfterRestart !== null &&
           resolveProjectSettings(continueAfterRestart, projection.thread.projectId).settings
             .continueThreadsAfterServerUpdate;
-        const result = yield* reconcileProjection(projection, trigger, enabled);
+        const result = yield* reconcileProjection(
+          withoutHostedRuntimeWork(projection, hostedThreads),
+          trigger,
+          enabled,
+        );
         terminalizedRuns += result.terminalizedRuns;
         stoppedSessions += result.stoppedSessions;
         closedRequests += result.closedRequests;
@@ -686,10 +749,12 @@ export const make = Effect.gen(function* () {
   // this commits; reconciliation reads fresh state after shutdown, and delivery
   // rejects any source run that actually completed.
   const prepareForShutdown = Effect.gen(function* () {
+    const hostedThreads = yield* hostedRecovery.preserve(false);
     const enabled = yield* settings.getSettings.pipe(Effect.orElseSucceed(() => null));
     if (!enabled) return;
     const threadIds = yield* projections.getRecoveryThreadIds("runtime");
     for (const threadId of threadIds) {
+      if (hostedThreads.threadIds.has(threadId)) continue;
       yield* Effect.gen(function* () {
         const projection = yield* projections.getRuntimeRecoveryProjection(threadId);
         if (

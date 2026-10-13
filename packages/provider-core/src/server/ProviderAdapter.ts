@@ -1,3 +1,4 @@
+import type { McpProviderSessionConfig } from "./mcpSession.ts";
 import type { OrchestrationV2HistoricalMessage } from "@t3tools/contracts";
 import {
   ChatAttachment,
@@ -381,6 +382,8 @@ export const ProviderAdapterV2Error = Schema.Union([
 export type ProviderAdapterV2Error = typeof ProviderAdapterV2Error.Type;
 
 export interface ProviderAdapterV2OpenSessionInput {
+  /** Private transient sessions must end when their owner detaches. */
+  readonly lifetime?: "ephemeral";
   readonly threadId: ThreadId;
   readonly providerSessionId: ProviderSessionId;
   readonly modelSelection: ModelSelection;
@@ -538,7 +541,19 @@ export type ProviderAdapterV2SubagentOutcome = {
   readonly result: OrchestrationV2Subagent["result"];
 };
 
+export interface ProviderAdapterV2HostedSession {
+  readonly input: ProviderAdapterV2OpenSessionInput;
+  readonly mcpSessions: ReadonlyArray<McpProviderSessionConfig>;
+  readonly session: OrchestrationV2ProviderSession;
+  readonly turns: ReadonlyArray<ProviderAdapterV2TurnInput>;
+}
+
 export interface ProviderAdapterV2SessionRuntime {
+  /** External runtime scopes detach on server shutdown; explicit release still stops them. */
+  readonly externalLifetime?: {
+    readonly stop: Effect.Effect<void, ProviderAdapterV2Error>;
+    readonly replay: Effect.Effect<void, ProviderAdapterV2Error>;
+  };
   readonly instanceId: ProviderInstanceId;
   readonly driver: ProviderDriverKind;
   readonly providerSessionId: ProviderSessionId;
@@ -657,6 +672,10 @@ export class ProviderAdapterV2 extends Context.Service<
   {
     readonly instanceId: ProviderInstanceId;
     readonly driver: ProviderDriverKind;
+    readonly hostedSessions?: Effect.Effect<
+      ReadonlyArray<ProviderAdapterV2HostedSession>,
+      ProviderAdapterV2Error
+    >;
     readonly getCapabilities: () => Effect.Effect<
       OrchestrationV2ProviderCapabilities,
       ProviderAdapterV2Error

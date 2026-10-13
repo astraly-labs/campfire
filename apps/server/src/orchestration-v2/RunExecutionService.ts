@@ -520,6 +520,10 @@ export type RunExecutionServiceV2Error = typeof RunExecutionServiceV2Error.Type;
  * SERVICE DEFINITION
  */
 export interface RunExecutionServiceV2StartRootRunInput {
+  /** Reattach ingestion to a still-running external runtime without sending another turn. */
+  readonly resumeExistingTurn?: boolean;
+  /** Durable lifecycle snapshots seed background tracking before buffered events replay. */
+  readonly resumeEvents?: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>;
   readonly commandId: CommandId;
   readonly appThread: OrchestrationV2AppThread;
   readonly providerSessionId: ProviderSessionId;
@@ -861,21 +865,22 @@ export const layer: Layer.Layer<
                     .responseStreamingMode,
               ),
             );
-            yield* checkpointService
-              .captureBaseline({
-                scope: input.checkpointScope,
-                ordinalWithinScope: Math.max(0, input.run.ordinal - 1),
-              })
-              .pipe(
-                Effect.catchCause((cause) =>
-                  Cause.hasInterruptsOnly(cause)
-                    ? Effect.failCause(cause)
-                    : Effect.logWarning(
-                        "orchestration V2 checkpoint baseline capture failed; starting provider without a baseline",
-                        { runId: input.run.id },
-                      ),
-                ),
-              );
+            if (!input.resumeExistingTurn)
+              yield* checkpointService
+                .captureBaseline({
+                  scope: input.checkpointScope,
+                  ordinalWithinScope: Math.max(0, input.run.ordinal - 1),
+                })
+                .pipe(
+                  Effect.catchCause((cause) =>
+                    Cause.hasInterruptsOnly(cause)
+                      ? Effect.failCause(cause)
+                      : Effect.logWarning(
+                          "orchestration V2 checkpoint baseline capture failed; starting provider without a baseline",
+                          { runId: input.run.id },
+                        ),
+                  ),
+                );
             if (
               input.shouldStartProviderTurn !== undefined &&
               !(yield* input.shouldStartProviderTurn())
@@ -960,8 +965,10 @@ export const layer: Layer.Layer<
           const inheritedBackgroundTurnItemsById = new Map(
             inheritedBackgroundTurnItems.map((item) => [item.id, item.runId]),
           );
-          const eventRouting = yield* Ref.make<ProviderEventRoutingState>(
-            makeProviderEventRoutingState({
+          const restoredCompletedRoot =
+            input.resumeExistingTurn === true && input.run.status === "completed";
+          const eventRouting = yield* Ref.make<ProviderEventRoutingState>({
+            ...makeProviderEventRoutingState({
               identity: routeIdentity,
               inheritedBackgroundTurnItems,
               providerTurnId: input.attempt.providerTurnId,
@@ -972,9 +979,10 @@ export const layer: Layer.Layer<
                 ? {}
                 : { relatedProviderThreadIds: input.relatedProviderThreadIds }),
             }),
-          );
-          const rootTerminalSeen = yield* Ref.make(false);
-          const rootRunFinalized = yield* Ref.make(false);
+            rootTurnEnded: restoredCompletedRoot,
+          });
+          const rootTerminalSeen = yield* Ref.make(restoredCompletedRoot);
+          const rootRunFinalized = yield* Ref.make(restoredCompletedRoot);
           const providerThreadOwnerLost = yield* Ref.make(false);
           const activeChildProviderTurns = yield* Ref.make<ReadonlySet<ProviderTurnId>>(new Set());
           const activeChildSubagents = yield* Ref.make<ReadonlySet<NodeId>>(new Set());
@@ -1167,6 +1175,12 @@ export const layer: Layer.Layer<
                 }
               }
             });
+          for (const event of input.resumeEvents ?? []) {
+            const accepted = yield* Ref.modify(eventRouting, (state) =>
+              routeProviderEvent(event, routeIdentity, state),
+            );
+            if (accepted) yield* trackChildLifecycle(event, true);
+          }
           const shouldStopProviderEventIngestion = Effect.gen(function* () {
             if (!(yield* Ref.get(rootTerminalSeen))) {
               return false;
@@ -1381,6 +1395,8 @@ export const layer: Layer.Layer<
             Effect.ensuring(eventSubscription.close),
             Effect.forkDetach,
           );
+
+          if (input.resumeExistingTurn) return;
 
           // A failed read fails the start below, so the run is recorded as
           // failed instead of staying active with no provider turn.
