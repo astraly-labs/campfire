@@ -165,24 +165,43 @@ campfire_restore="$campfire_fixture/restore"
 [ -f "$campfire_restore/worktrees/thread-a/proof.txt" ] || fail "worktree backup missing"
 
 campfire_maintenance_home="$campfire_fixture/maintenance-home"
-campfire_maintenance_active="$campfire_maintenance_home/worktrees/project/active"
+campfire_maintenance_running="$campfire_maintenance_home/worktrees/project/running"
+campfire_maintenance_live="$campfire_maintenance_home/worktrees/project/live"
 campfire_maintenance_idle="$campfire_maintenance_home/worktrees/project/idle"
 campfire_maintenance_source="$campfire_fixture/maintenance-source"
 campfire_maintenance_orphan="$campfire_maintenance_home/worktrees/project/orphan"
 campfire_maintenance_dirty="$campfire_maintenance_home/worktrees/project/dirty"
+campfire_maintenance_hung_head="$campfire_maintenance_home/worktrees/project/hung-head"
+campfire_maintenance_hung_status="$campfire_maintenance_home/worktrees/project/hung-status"
 campfire_maintenance_bin="$campfire_fixture/maintenance-bin"
 mkdir -p \
   "$campfire_maintenance_home/userdata" \
-  "$campfire_maintenance_active/target" \
+  "$campfire_maintenance_running/target" \
+  "$campfire_maintenance_live/target" \
   "$campfire_maintenance_idle/target" \
   "$campfire_maintenance_bin"
-echo active >"$campfire_maintenance_active/target/proof.txt"
+echo running >"$campfire_maintenance_running/target/proof.txt"
+echo live >"$campfire_maintenance_live/target/proof.txt"
 echo idle >"$campfire_maintenance_idle/target/proof.txt"
 cat >"$campfire_maintenance_bin/cargo" <<'EOF'
 #!/bin/sh
 exit 1
 EOF
 chmod 700 "$campfire_maintenance_bin/cargo"
+# A git that wedges in two worktrees, like the one that stalled a staging pass for hours.
+# The HEAD read also ignores TERM, as a git stuck in an uninterruptible read would.
+campfire_real_git=$(command -v git)
+export CAMPFIRE_TEST_REAL_GIT="$campfire_real_git"
+cat >"$campfire_maintenance_bin/git" <<'EOF'
+#!/bin/sh
+case "${2:-}:${3:-}" in
+  */hung-head:symbolic-ref) trap '' TERM; sleep 10; exit 0 ;;
+  */hung-status:status) exec sleep 10 ;;
+esac
+exec "$CAMPFIRE_TEST_REAL_GIT" "$@"
+EOF
+chmod 700 "$campfire_maintenance_bin/git"
+# The V1 database is frozen after the V2 import and no longer sees live work.
 sqlite3 "$campfire_maintenance_home/userdata/state.sqlite" <<EOF
 CREATE TABLE projection_threads (
   thread_id TEXT PRIMARY KEY,
@@ -200,11 +219,53 @@ CREATE TABLE provider_session_runtime (
   status TEXT NOT NULL
 );
 INSERT INTO projection_threads VALUES
-  ('active', '$campfire_maintenance_active', '2026-01-01T00:00:00.000Z', NULL),
+  ('running', '$campfire_maintenance_running', '2026-01-01T00:00:00.000Z', NULL),
+  ('live', '$campfire_maintenance_live', '2026-01-01T00:00:00.000Z', NULL),
   ('idle', '$campfire_maintenance_idle', '2026-01-01T00:00:00.000Z', NULL);
 INSERT INTO projection_turns VALUES
-  (1, 'active', 'running'),
-  (2, 'idle', 'completed');
+  (1, 'running', 'completed'),
+  (2, 'live', 'completed'),
+  (3, 'idle', 'completed');
+EOF
+sqlite3 "$campfire_maintenance_home/userdata/statev2.sqlite" <<EOF
+CREATE TABLE orchestration_v2_projection_threads (
+  thread_id TEXT PRIMARY KEY,
+  updated_at TEXT NOT NULL,
+  deleted_at TEXT,
+  payload_json TEXT NOT NULL
+);
+CREATE TABLE orchestration_v2_projection_runs (
+  run_id TEXT PRIMARY KEY,
+  thread_id TEXT NOT NULL,
+  status TEXT NOT NULL,
+  payload_json TEXT NOT NULL
+);
+CREATE TABLE orchestration_v2_projection_provider_sessions (
+  provider_session_id TEXT PRIMARY KEY,
+  status TEXT NOT NULL
+);
+CREATE TABLE orchestration_v2_projection_provider_session_bindings (
+  provider_session_id TEXT NOT NULL,
+  thread_id TEXT NOT NULL,
+  PRIMARY KEY (provider_session_id, thread_id)
+);
+INSERT INTO orchestration_v2_projection_threads VALUES
+  ('running', '2026-01-01T00:00:00.000Z', NULL,
+    json_object('worktreePath', '$campfire_maintenance_running')),
+  ('live', '2026-01-01T00:00:00.000Z', NULL,
+    json_object('worktreePath', '$campfire_maintenance_live')),
+  ('idle', '2026-01-01T00:00:00.000Z', NULL,
+    json_object('worktreePath', '$campfire_maintenance_idle'));
+INSERT INTO orchestration_v2_projection_runs VALUES
+  ('run-running', 'running', 'running', '{}'),
+  ('run-live', 'live', 'completed', '{}'),
+  ('run-idle', 'idle', 'completed', '{}');
+INSERT INTO orchestration_v2_projection_provider_sessions VALUES
+  ('session-live', 'ready'),
+  ('session-idle', 'stopped');
+INSERT INTO orchestration_v2_projection_provider_session_bindings VALUES
+  ('session-live', 'live'),
+  ('session-idle', 'idle');
 EOF
 git init -q "$campfire_maintenance_source"
 git -C "$campfire_maintenance_source" config user.name fixture
@@ -214,22 +275,32 @@ git -C "$campfire_maintenance_source" add proof.txt
 git -C "$campfire_maintenance_source" commit -qm fixture
 git -C "$campfire_maintenance_source" worktree add -qb orphan "$campfire_maintenance_orphan"
 git -C "$campfire_maintenance_source" worktree add -qb dirty "$campfire_maintenance_dirty"
+git -C "$campfire_maintenance_source" worktree add -qb hung-head "$campfire_maintenance_hung_head"
+git -C "$campfire_maintenance_source" worktree add -qb hung-status "$campfire_maintenance_hung_status"
 echo dirty >"$campfire_maintenance_dirty/untracked.txt"
 
-PATH="$campfire_maintenance_bin:$PATH" \
+PATH="$campfire_maintenance_bin:$PATH" CAMPFIRE_WORKTREE_GIT_TIMEOUT_SECONDS=1 \
   "$campfire_repo_root/ops/macos/campfire-worktree-maintenance.sh" \
-  "$campfire_maintenance_home" 0 --dry-run >/dev/null
-[ -f "$campfire_maintenance_active/target/proof.txt" ] || fail "dry-run cleaned active target"
+  "$campfire_maintenance_home" 0 --dry-run >/dev/null 2>&1
+[ -f "$campfire_maintenance_running/target/proof.txt" ] || fail "dry-run cleaned running target"
 [ -f "$campfire_maintenance_idle/target/proof.txt" ] || fail "dry-run cleaned idle target"
 [ -d "$campfire_maintenance_orphan" ] || fail "dry-run removed orphan worktree"
 
-PATH="$campfire_maintenance_bin:$PATH" \
+campfire_maintenance_started=$(date +%s)
+PATH="$campfire_maintenance_bin:$PATH" CAMPFIRE_WORKTREE_GIT_TIMEOUT_SECONDS=1 \
   "$campfire_repo_root/ops/macos/campfire-worktree-maintenance.sh" \
-  "$campfire_maintenance_home" 0 >/dev/null
-[ -f "$campfire_maintenance_active/target/proof.txt" ] || fail "active target was cleaned"
+  "$campfire_maintenance_home" 0 >"$campfire_fixture/maintenance.stdout" 2>&1
+[ $(($(date +%s) - campfire_maintenance_started)) -lt 8 ] ||
+  fail "maintenance waited on a wedged git past its timeout"
+[ -f "$campfire_maintenance_running/target/proof.txt" ] || fail "target of a running turn was cleaned"
+[ -f "$campfire_maintenance_live/target/proof.txt" ] || fail "target of a live provider session was cleaned"
 [ ! -e "$campfire_maintenance_idle/target" ] || fail "idle target was not cleaned"
 [ ! -e "$campfire_maintenance_orphan" ] || fail "clean orphan worktree was not removed"
 [ -d "$campfire_maintenance_dirty" ] || fail "dirty orphan worktree was removed"
+[ -d "$campfire_maintenance_hung_head" ] || fail "worktree with a wedged HEAD read was removed"
+[ -d "$campfire_maintenance_hung_status" ] || fail "worktree with a wedged status was removed"
+grep -q '"skippedUnresponsive":2' "$campfire_fixture/maintenance.stdout" ||
+  fail "summary does not count the two wedged worktrees"
 
 expect_failure sh "$campfire_repo_root/scripts/campfire-soak.sh" 0
 plutil -lint "$campfire_repo_root/ops/macos/com.campfire.server.plist.example" >/dev/null
