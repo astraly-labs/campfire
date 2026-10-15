@@ -1,9 +1,11 @@
-import { ArrowLeftIcon, ChartNoAxesColumnIcon, SettingsIcon } from "lucide-react";
+import { ArrowLeftIcon, ChartNoAxesColumnIcon, InboxIcon, SettingsIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { memo, useCallback } from "react";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
+import { countUnreadTeamInboxItems } from "../../inbox/teamInbox";
+import { useTeamInboxItems } from "../../inbox/useTeamInboxItems";
 import { cn } from "../../lib/utils";
 import { usePullRequestsSupported } from "../../state/environments";
 import { T3Wordmark } from "../T3Wordmark";
@@ -147,24 +149,59 @@ function SidebarUtilityItem({
   icon,
   label,
   onClick,
+  ariaLabel = label,
+  isActive = false,
+  badge,
 }: {
   icon: ReactNode;
   label: string;
   onClick: () => void;
+  ariaLabel?: string;
+  isActive?: boolean;
+  badge?: ReactNode;
 }) {
   return (
     <SidebarMenuItem className="shrink-0">
       <Tooltip>
         <TooltipTrigger
           render={
-            <SidebarMenuButton aria-label={label} onClick={onClick} size="icon">
+            <SidebarMenuButton
+              aria-label={ariaLabel}
+              isActive={isActive}
+              onClick={onClick}
+              size="icon"
+            >
               {icon}
             </SidebarMenuButton>
           }
         />
         <TooltipPopup side="top">{label}</TooltipPopup>
       </Tooltip>
+      {badge ? (
+        // Callers put the badge's meaning in ariaLabel, so assistive tech skips the badge.
+        <span aria-hidden="true" className="pointer-events-none absolute -top-1 left-1/2">
+          {badge}
+        </span>
+      ) : null}
     </SidebarMenuItem>
+  );
+}
+
+// Its own component so thread-shell updates re-render this item, not the whole utility row.
+function SidebarInboxItem({ onClick }: { onClick: () => void }) {
+  const isActive = useLocation({ select: (location) => location.pathname === "/inbox" });
+  const unreadCount = countUnreadTeamInboxItems(useTeamInboxItems());
+  return (
+    <SidebarUtilityItem
+      icon={<InboxIcon />}
+      label="Inbox"
+      ariaLabel={unreadCount > 0 ? `Inbox, ${unreadCount} unread` : "Inbox"}
+      isActive={isActive}
+      badge={
+        unreadCount > 0 ? <Badge size="sm">{unreadCount > 99 ? "99+" : unreadCount}</Badge> : null
+      }
+      onClick={onClick}
+    />
   );
 }
 
@@ -192,6 +229,10 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
     closeMobileSidebar();
     void navigate({ to: "/settings" });
   }, [closeMobileSidebar, navigate]);
+  const handleInboxClick = useCallback(() => {
+    closeMobileSidebar();
+    void navigate({ to: "/inbox" });
+  }, [closeMobileSidebar, navigate]);
 
   const handleUsageClick = useCallback(() => {
     if (isMobile) {
@@ -216,6 +257,7 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
         </SidebarMenuItem>
       ) : (
         <>
+          <SidebarInboxItem onClick={handleInboxClick} />
           <SidebarUtilityItem
             icon={<SettingsIcon />}
             label="Settings"

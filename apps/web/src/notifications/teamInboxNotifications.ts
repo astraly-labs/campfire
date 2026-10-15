@@ -1,12 +1,10 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { useNavigate } from "@tanstack/react-router";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useRef } from "react";
 
-import { useGoogleTeam } from "../collaboration/googleTeam";
-import { deriveTeamInboxItems, type TeamInboxItem } from "../inbox/teamInbox";
+import type { TeamInboxItem } from "../inbox/teamInbox";
+import { useTeamInboxItems } from "../inbox/useTeamInboxItems";
 import { useSideThreadUiStore } from "../sidethread/sideThreadUiStore";
-import { useThreadShells } from "../state/entities";
-import { usePrimaryEnvironmentId } from "../state/environments";
 import { buildThreadRouteParams } from "../threadRoutes";
 
 function notificationsSupported(): boolean {
@@ -46,19 +44,8 @@ function appIsBackgrounded(): boolean {
 
 export function useTeamInboxNotifications() {
   const navigate = useNavigate();
-  const environmentId = usePrimaryEnvironmentId();
-  const team = useGoogleTeam(environmentId);
-  const threads = useThreadShells();
   const requestOpen = useSideThreadUiStore((state) => state.requestOpen);
-  const items = useMemo(
-    () =>
-      deriveTeamInboxItems({
-        threads,
-        environmentId,
-        currentSubject: team.current?.subject ?? null,
-      }),
-    [environmentId, team.current?.subject, threads],
-  );
+  const items = useTeamInboxItems();
   const previousKeysRef = useRef<Set<string> | null>(null);
 
   useEffect(() => {

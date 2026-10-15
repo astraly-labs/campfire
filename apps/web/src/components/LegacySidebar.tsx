@@ -3,7 +3,6 @@ import {
   CollaborationThreadOwner,
   ReviewThreadBadge,
 } from "../collaboration/SidebarCollaboration";
-import { TeamInboxNav } from "./sidebar/TeamInboxNav";
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
 import { resolveThreadCurrentPullRequestLink } from "@t3tools/shared/threadPullRequests";
 import { Spinner } from "~/components/ui/spinner";
@@ -3862,7 +3861,6 @@ export default function LegacySidebar() {
         <SidebarThreadDetailPrewarmer key={scopedThreadKey(threadRef)} threadRef={threadRef} />
       ))}
       <SidebarChromeHeader isElectron={isElectron} />
-      <TeamInboxNav />
       {collaborationControls}
 
       <SidebarProjectsContent

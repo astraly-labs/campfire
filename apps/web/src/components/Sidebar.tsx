@@ -3,7 +3,6 @@ import {
   CollaborationThreadOwner,
   ReviewThreadBadge,
 } from "../collaboration/SidebarCollaboration";
-import { TeamInboxNav } from "./sidebar/TeamInboxNav";
 import { type EnvironmentId, type ScopedProjectRef } from "@t3tools/contracts";
 import { ThreadHoverCard, ThreadHoverCardPopup } from "./ThreadHoverCard";
 import { CollapsibleSectionHeader } from "./ui/collapsible-section-header";
@@ -5068,7 +5067,6 @@ export default function Sidebar() {
     <>
       <ThreadContextDragGhost />
       <SidebarChromeHeader isElectron={isElectron} />
-      <TeamInboxNav />
       {collaborationControls}
       <SidebarContent
         className="min-h-full"

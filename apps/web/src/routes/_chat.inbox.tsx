@@ -1,17 +1,14 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { AtSignIcon, BellIcon, CheckCheckIcon, InboxIcon, MessageCircleIcon } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
 import { CollaborationAvatar } from "../collaboration/CollaborationAvatar";
-import { useGoogleTeam } from "../collaboration/googleTeam";
 import { Button } from "../components/ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../components/ui/empty";
 import { SidebarInset, SidebarTrigger } from "../components/ui/sidebar";
-import { deriveTeamInboxItems } from "../inbox/teamInbox";
+import { useTeamInboxItems } from "../inbox/useTeamInboxItems";
 import { useSideThreadUiStore } from "../sidethread/sideThreadUiStore";
-import { useThreadShells } from "../state/entities";
-import { usePrimaryEnvironmentId } from "../state/environments";
 import { threadEnvironment } from "../state/threads";
 import { useAtomCommand } from "../state/use-atom-command";
 import { buildThreadRouteParams } from "../threadRoutes";
@@ -23,9 +20,7 @@ import {
 
 function TeamInboxRouteView() {
   const navigate = useNavigate();
-  const environmentId = usePrimaryEnvironmentId();
-  const team = useGoogleTeam(environmentId);
-  const threads = useThreadShells();
+  const items = useTeamInboxItems();
   const requestOpen = useSideThreadUiStore((state) => state.requestOpen);
   const markRead = useAtomCommand(threadEnvironment.markSideThreadRead, {
     reportDefect: false,
@@ -34,15 +29,6 @@ function TeamInboxRouteView() {
   const [markingAll, setMarkingAll] = useState(false);
   const [notificationPermission, setNotificationPermission] = useState(() =>
     teamNotificationPermission(),
-  );
-  const items = useMemo(
-    () =>
-      deriveTeamInboxItems({
-        threads,
-        environmentId,
-        currentSubject: team.current?.subject ?? null,
-      }),
-    [environmentId, team.current?.subject, threads],
   );
   const unreadItems = items.filter((item) => item.unread);
 
