@@ -33,9 +33,26 @@ Official references:
    security updates. Do not run this service from a personal admin account.
 2. Install Tailscale, join the intended tailnet, enable MagicDNS/HTTPS, and restrict access to this
    Mac in the tailnet policy to the five team identities/devices.
-3. Install Node `24.13.1` or newer within major 24 and pnpm through Corepack. On Homebrew macOS,
-   `brew install node@24` provides the pinned executable at
-   `/opt/homebrew/opt/node@24/bin/node` without replacing the interactive shell's Node.
+3. Install the official Node `24.14.1` tarball and use its bundled Corepack for pnpm. Node 24.15
+   and later crash the server on macOS. Their bundled `fetch` calls `socket.setTypeOfService()` on
+   every request, macOS answers `EINVAL` when the peer already reset the socket, and Node throws.
+   The preflight rejects any Node that has that method. Do not run the service on Homebrew
+   `node@24`, which upgrades into the crashing releases. Revisit the pin once a Node release
+   tolerates that failure.
+
+   ```bash
+   V=24.14.1; N="node-v$V-darwin-arm64"
+   RT=/Users/campfire/services/campfire/runtimes
+   mkdir -p "$RT" && cd "$(mktemp -d)"
+   curl -fLO "https://nodejs.org/dist/v$V/$N.tar.gz"
+   curl -fLO "https://nodejs.org/dist/v$V/SHASUMS256.txt"
+   grep " $N.tar.gz\$" SHASUMS256.txt | shasum -a 256 -c -
+   tar -xzf "$N.tar.gz" -C "$RT"
+   ```
+
+   `CAMPFIRE_NODE` is then
+   `/Users/campfire/services/campfire/runtimes/node-v24.14.1-darwin-arm64/bin/node`.
+
 4. Keep releases immutable:
 
    ```text
@@ -63,6 +80,7 @@ Official references:
 
    ```bash
    mkdir -p /Users/campfire/services/campfire/releases
+   CAMPFIRE_NODE=/Users/campfire/services/campfire/runtimes/node-v24.14.1-darwin-arm64/bin/node \
    ./ops/macos/campfire-package-release.sh \
      /absolute/path/to/campfire \
      /Users/campfire/services/campfire/releases \
@@ -96,7 +114,7 @@ Create `/Users/campfire/.config/campfire/server.env`, owned by `campfire` and mo
 
 ```bash
 CAMPFIRE_RELEASE='/Users/campfire/services/campfire/current'
-CAMPFIRE_NODE='/opt/homebrew/opt/node@24/bin/node'
+CAMPFIRE_NODE='/Users/campfire/services/campfire/runtimes/node-v24.14.1-darwin-arm64/bin/node'
 CAMPFIRE_DEPLOYMENT='production'
 CAMPFIRE_PRODUCTION_HOME='/Users/campfire/Library/Application Support/Campfire'
 T3CODE_HOME='/Users/campfire/Library/Application Support/Campfire'
@@ -114,8 +132,8 @@ T3CODE_OTLP_SERVICE_NAME='campfire-mac-mini'
 
 Never put this file, its backup, or the client secret in Git, Telegram, traces, or shell history.
 Before loading it, Campfire requires a non-symlink file owned by the service user with mode `0600`,
-a built release, Node 24, an exact Tailnet callback whose port matches Serve, one to six unique
-allowlisted emails, and non-overlapping code/data directories:
+a built release, Node 24 without `net.Socket#setTypeOfService`, an exact Tailnet callback whose
+port matches Serve, one to six unique allowlisted emails, and non-overlapping code/data directories:
 
 ```bash
 ./ops/macos/campfire-preflight.sh /Users/campfire/.config/campfire/server.env

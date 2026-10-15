@@ -66,6 +66,13 @@ if [ "$campfire_node_major" -ne 24 ] || [ "$campfire_node_minor" -lt 13 ] ||
   { [ "$campfire_node_minor" -eq 13 ] && [ "$campfire_node_patch" -lt 1 ]; }; then
   fail "Node 24.13.1 or newer within major 24 is required (found $campfire_node_version)"
 fi
+# Node's bundled undici calls socket.setTypeOfService() on every HTTP/1.1 request once
+# net provides it (24.15+). macOS answers EINVAL on a socket the peer already reset, Node
+# throws outside Windows, and the uncaught error kills the server. Lift this once Node
+# tolerates that failure.
+campfire_node_tos=$("$CAMPFIRE_NODE" -p 'typeof require("node:net").Socket.prototype.setTypeOfService')
+[ "$campfire_node_tos" = "undefined" ] ||
+  fail "Node $campfire_node_version has net.Socket#setTypeOfService, which crashes the server on macOS; use the pinned Node 24.14.1 runtime from the runbook"
 
 case "$T3CODE_PORT:$T3CODE_TAILSCALE_SERVE_PORT" in
   *[!0-9:]*|:*|*:|*:*:*) fail "backend and Serve ports must be integers" ;;

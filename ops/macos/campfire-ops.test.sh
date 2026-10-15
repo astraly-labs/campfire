@@ -22,25 +22,29 @@ expect_failure() {
 
 campfire_real_node=$(command -v node)
 export CAMPFIRE_TEST_REAL_NODE="$campfire_real_node"
+write_fake_node() {
+  campfire_fake_path=$1
+  campfire_fake_version=$2
+  campfire_fake_tos=$3
+  cat >"$campfire_fake_path" <<EOF
+#!/bin/sh
+if [ "\${1:-}" = "-p" ]; then
+  case "\${2:-}" in
+    *setTypeOfService*) echo $campfire_fake_tos ;;
+    *) echo $campfire_fake_version ;;
+  esac
+  exit 0
+fi
+exec "\$CAMPFIRE_TEST_REAL_NODE" "\$@"
+EOF
+  chmod 700 "$campfire_fake_path"
+}
 campfire_fake_node24="$campfire_fixture/node24"
+campfire_fake_node24_tos="$campfire_fixture/node24-tos"
 campfire_fake_node25="$campfire_fixture/node25"
-cat >"$campfire_fake_node24" <<'EOF'
-#!/bin/sh
-if [ "${1:-}" = "-p" ]; then
-  echo 24.18.0
-  exit 0
-fi
-exec "$CAMPFIRE_TEST_REAL_NODE" "$@"
-EOF
-cat >"$campfire_fake_node25" <<'EOF'
-#!/bin/sh
-if [ "${1:-}" = "-p" ]; then
-  echo 25.8.2
-  exit 0
-fi
-exec "$CAMPFIRE_TEST_REAL_NODE" "$@"
-EOF
-chmod 700 "$campfire_fake_node24" "$campfire_fake_node25"
+write_fake_node "$campfire_fake_node24" 24.14.1 undefined
+write_fake_node "$campfire_fake_node24_tos" 24.18.0 function
+write_fake_node "$campfire_fake_node25" 25.8.2 undefined
 
 campfire_service_root="$campfire_fixture/service"
 campfire_release_a="$campfire_service_root/releases/a"
@@ -90,6 +94,13 @@ write_env production "$campfire_fake_node25" "$campfire_production_home" \
   "$campfire_production_home" 3773 443 \
   'https://fixture.tail000000.ts.net/auth/google/callback'
 expect_failure "$campfire_repo_root/ops/macos/campfire-preflight.sh" "$campfire_env_file"
+
+write_env production "$campfire_fake_node24_tos" "$campfire_production_home" \
+  "$campfire_production_home" 3773 443 \
+  'https://fixture.tail000000.ts.net/auth/google/callback'
+expect_failure "$campfire_repo_root/ops/macos/campfire-preflight.sh" "$campfire_env_file"
+grep -q "setTypeOfService" "$campfire_fixture/unexpected.stderr" ||
+  fail "preflight rejected Node 24.18.0 for a reason other than setTypeOfService"
 
 write_env staging "$campfire_fake_node24" "$campfire_production_home" \
   "$campfire_production_home" 3774 10000 \
