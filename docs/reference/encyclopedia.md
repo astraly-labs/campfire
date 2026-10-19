@@ -111,6 +111,14 @@ The agent interaction style for a thread. In [the contracts][1], the main values
 
 Controls how assistant text reaches the thread timeline. In [the contracts][1], `streaming` updates incrementally and `buffered` delivers a completed result. See [ProviderService.ts][14].
 
+#### Turn author
+
+The Google-signed-in user who sent the message that starts a turn. The provider reactor puts the author (name, email, and the author's own memory) on `ProviderSendTurnInput.author`. Each adapter adds it in front of the prompt with `providerTurnText` in `apps/server/src/provider/turnAuthorContext.ts`. Turns from CLI or pairing sessions have no author. See [user-memory.md](../user/user-memory.md).
+
+#### User memory
+
+One markdown note per signed-in user, in the `user_memory` table. The agent reads and replaces it with the `memory_read` and `memory_update` MCP tools, only for the current turn's author. See [user-memory.md](../user/user-memory.md).
+
 #### Snapshot
 
 A point-in-time view of state. The word is used in multiple layers, including orchestration, provider, and checkpointing. See [ProjectionSnapshotQuery.ts][10], [ProviderAdapter.ts][15], and [CheckpointStore.ts][19].

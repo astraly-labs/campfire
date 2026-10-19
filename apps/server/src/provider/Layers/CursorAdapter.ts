@@ -41,6 +41,7 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/schema";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
+import { providerTurnText } from "../turnAuthorContext.ts";
 import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import {
@@ -961,8 +962,9 @@ export function makeCursorAdapter(
           }
 
           const promptParts: Array<EffectAcpSchema.ContentBlock> = [];
-          if (input.input?.trim()) {
-            promptParts.push({ type: "text", text: input.input.trim() });
+          const text = providerTurnText(input);
+          if (text) {
+            promptParts.push({ type: "text", text });
           }
           if (input.attachments && input.attachments.length > 0) {
             for (const attachment of input.attachments) {

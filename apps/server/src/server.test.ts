@@ -90,6 +90,7 @@ import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngi
 import { OrchestrationListenerCallbackError } from "./orchestration/Errors.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite.ts";
+import * as UserMemory from "./persistence/UserMemory.ts";
 import { PersistenceSqlError } from "./persistence/Errors.ts";
 import * as ProviderRegistry from "./provider/Services/ProviderRegistry.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "./provider/providerMaintenance.ts";
@@ -564,10 +565,17 @@ const buildAppUnderTest = (options?: {
       ),
     );
 
-    const servedRoutesLayer = HttpRouter.serve(makeRoutesLayer, {
-      disableListenLog: true,
-      disableLogger: true,
-    }).pipe(
+    const userMemoryLayer = Layer.mock(UserMemory.UserMemoryRepository)({
+      get: () => Effect.succeed(Option.none()),
+      set: () => Effect.void,
+    });
+    const servedRoutesLayer = HttpRouter.serve(
+      makeRoutesLayer.pipe(Layer.provide(userMemoryLayer)),
+      {
+        disableListenLog: true,
+        disableLogger: true,
+      },
+    ).pipe(
       Layer.provide(
         Layer.mock(Keybindings.Keybindings)({
           loadConfigState: Effect.succeed({

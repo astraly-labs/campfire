@@ -52,6 +52,8 @@ import Migration0036 from "./Migrations/036_CanonicalizeProjectionSideThreads.ts
 import Migration0037 from "./Migrations/037_ProjectionProjectsDefaultReviewModelSelection.ts";
 import Migration0038 from "./Migrations/038_ProjectionThreadsSnoozed.ts";
 import Migration0039 from "./Migrations/039_ProjectionThreadsReviewKind.ts";
+import Migration0040 from "./Migrations/040_AuthSessionEmail.ts";
+import Migration0041 from "./Migrations/041_UserMemory.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -103,6 +105,8 @@ export const migrationEntries = [
   [37, "ProjectionProjectsDefaultReviewModelSelection", Migration0037],
   [38, "ProjectionThreadsSnoozed", Migration0038],
   [39, "ProjectionThreadsReviewKind", Migration0039],
+  [40, "AuthSessionEmail", Migration0040],
+  [41, "UserMemory", Migration0041],
 ] as const;
 
 export const makeMigrationLoader = (throughId?: number) =>

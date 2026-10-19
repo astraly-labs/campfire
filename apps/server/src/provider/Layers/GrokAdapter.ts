@@ -33,6 +33,7 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/schema";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
+import { providerTurnText } from "../turnAuthorContext.ts";
 import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import {
@@ -950,7 +951,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                   mapAcpToAdapterError(PROVIDER, input.threadId, "session/set_model", cause),
               });
 
-              const text = input.input?.trim();
+              const text = providerTurnText(input);
               const imagePromptParts = yield* Effect.forEach(
                 input.attachments ?? [],
                 (attachment) =>

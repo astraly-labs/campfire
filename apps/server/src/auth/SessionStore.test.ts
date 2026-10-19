@@ -84,6 +84,23 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
       expect(verified.expiresAt?.toString()).toBe(issued.expiresAt.toString());
     }).pipe(Effect.provide(makeSessionStoreLayer())),
   );
+  it.effect("keeps the signed-in email on session and websocket verification", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const withEmail = yield* sessions.issue({
+        subject: "google:alice",
+        email: "alice@example.com",
+      });
+      const withoutEmail = yield* sessions.issue({ subject: "cli" });
+      const websocket = yield* sessions.issueWebSocketToken(withEmail.sessionId);
+
+      expect((yield* sessions.verify(withEmail.token)).email).toBe("alice@example.com");
+      expect((yield* sessions.verifyWebSocketToken(websocket.token)).email).toBe(
+        "alice@example.com",
+      );
+      expect((yield* sessions.verify(withoutEmail.token)).email).toBeUndefined();
+    }).pipe(Effect.provide(makeSessionStoreLayer())),
+  );
   it.effect("rejects malformed session tokens", () =>
     Effect.gen(function* () {
       const sessions = yield* SessionStore.SessionStore;

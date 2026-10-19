@@ -68,6 +68,7 @@ export interface AuthenticatedSession {
   readonly proofKeyThumbprint?: string;
   readonly expiresAt?: DateTime.DateTime;
   readonly displayName?: string;
+  readonly email?: string;
 }
 
 const serverAuthInternalErrorContext = {
@@ -428,6 +429,7 @@ export class EnvironmentAuth extends Context.Service<
       identity: {
         readonly subject: string;
         readonly displayName: string;
+        readonly email?: string;
       },
       requestMetadata: AuthClientMetadata,
     ) => Effect.Effect<
@@ -614,6 +616,7 @@ export const make = Effect.gen(function* () {
         method: session.method,
         scopes: session.scopes,
         ...(session.client.label ? { displayName: session.client.label } : {}),
+        ...(session.email ? { email: session.email } : {}),
         ...(session.proofKeyThumbprint ? { proofKeyThumbprint: session.proofKeyThumbprint } : {}),
         ...(session.expiresAt ? { expiresAt: session.expiresAt } : {}),
       })),
@@ -736,6 +739,7 @@ export const make = Effect.gen(function* () {
           ...requestMetadata,
           label: identity.displayName,
         },
+        ...(identity.email ? { email: identity.email } : {}),
       })
       .pipe(
         Effect.mapError((cause) => new ServerAuthAuthenticatedSessionIssueError({ cause })),
@@ -1023,6 +1027,7 @@ export const make = Effect.gen(function* () {
               method: session.method,
               scopes: session.scopes,
               ...(session.client.label ? { displayName: session.client.label } : {}),
+              ...(session.email ? { email: session.email } : {}),
               ...(session.expiresAt ? { expiresAt: session.expiresAt } : {}),
             })),
             mapSessionVerificationErrors,

@@ -68,6 +68,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
+import { providerTurnText } from "../turnAuthorContext.ts";
 import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
@@ -900,7 +901,7 @@ function buildPromptText(
   const caps = getClaudeModelCapabilities(claudeModel);
 
   const promptEffort = resolvePromptInjectedEffort(caps, rawEffort);
-  return applyClaudePromptEffortPrefix(input.input?.trim() ?? "", promptEffort);
+  return applyClaudePromptEffortPrefix(providerTurnText(input), promptEffort);
 }
 
 function buildUserMessage(input: {

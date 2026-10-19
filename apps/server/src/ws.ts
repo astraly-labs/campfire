@@ -464,6 +464,7 @@ const makeWsRpcLayer = (
         subject: currentSession.subject,
         displayName: currentSession.displayName ?? currentSession.subject,
         sessionId: currentSession.sessionId,
+        ...(currentSession.email ? { email: currentSession.email } : {}),
       } satisfies OrchestrationEventActor;
       const presenceUser = {
         subject: authenticatedActor.subject,

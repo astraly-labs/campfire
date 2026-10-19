@@ -38,6 +38,7 @@ import { ProviderAdapterRequestError } from "../../provider/Errors.ts";
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import * as UserMemory from "../../persistence/UserMemory.ts";
 import {
   ProviderService,
   type ProviderServiceShape,
@@ -435,6 +436,8 @@ describe("ProviderCommandReactor", () => {
       engine,
       dispatch: (command: Parameters<typeof engine.dispatch>[0]) =>
         harnessRuntime.runPromise(engine.dispatch(command)),
+      dispatchAs: (...args: Parameters<typeof engine.dispatch>) =>
+        harnessRuntime.runPromise(engine.dispatch(...args)),
       readModel: () => Effect.runPromise(snapshotQuery.getSnapshot()),
       startSession,
       sendTurn,
@@ -450,6 +453,12 @@ describe("ProviderCommandReactor", () => {
       stateDir,
       startReactor,
       drain,
+      setUserMemory: (subject: string, content: string) =>
+        harnessRuntime.runPromise(
+          UserMemory.make.pipe(
+            Effect.flatMap((repository) => repository.set({ subject, content })),
+          ),
+        ),
     };
   }
 
@@ -482,6 +491,59 @@ describe("ProviderCommandReactor", () => {
       idempotencyKey: "command:cmd-pending-before-reactor-start",
       input: "continue after restart",
     });
+  });
+
+  it("sends each turn's own author and only that author's memory", async () => {
+    const harness = await createHarness();
+    await harness.setUserMemory("google:alice", "Prefers French replies.");
+    const turnStart = (id: string, text: string) =>
+      ({
+        type: "thread.turn.start",
+        commandId: CommandId.make(`cmd-${id}`),
+        threadId: ThreadId.make("thread-1"),
+        message: { messageId: asMessageId(id), role: "user", text, attachments: [] },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }) as const;
+
+    const sentTurns = (count: number) =>
+      waitFor(() => harness.sendTurn.mock.calls.length === count);
+
+    await harness.dispatch(turnStart("message-cli", "from cli"));
+    await sentTurns(1);
+    await harness.dispatchAs(turnStart("message-alice", "hello"), {
+      kind: "client",
+      subject: "google:alice",
+      displayName: "Alice",
+      email: "alice@example.com",
+    });
+    await sentTurns(2);
+    await harness.dispatchAs(turnStart("message-bob", "hi"), {
+      kind: "client",
+      subject: "google:bob",
+      displayName: "Bob",
+    });
+    await sentTurns(3);
+
+    expect(harness.sendTurn.mock.calls.map((call) => call[0])).toMatchObject([
+      { input: "from cli" },
+      {
+        input: "hello",
+        author: {
+          subject: "google:alice",
+          displayName: "Alice",
+          email: "alice@example.com",
+          memory: "Prefers French replies.",
+        },
+      },
+      { input: "hi", author: { subject: "google:bob", displayName: "Bob" } },
+    ]);
+    const [cliTurn, , bobTurn] = harness.sendTurn.mock.calls.map(
+      (call) => call[0] as { readonly author?: { readonly memory?: string } },
+    );
+    expect(bobTurn?.author?.memory).toBeUndefined();
+    expect(cliTurn?.author).toBeUndefined();
   });
 
   it("reacts to thread.turn.start by ensuring session and sending provider turn", async () => {

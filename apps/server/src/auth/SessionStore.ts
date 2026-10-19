@@ -49,6 +49,7 @@ export interface VerifiedSession {
   readonly subject: string;
   readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
   readonly proofKeyThumbprint?: string;
+  readonly email?: string;
 }
 
 export type SessionCredentialChange =
@@ -366,6 +367,7 @@ export class SessionStore extends Context.Service<
       readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
       readonly client?: AuthClientMetadata;
       readonly proofKeyThumbprint?: string;
+      readonly email?: string;
     }) => Effect.Effect<IssuedSession, SessionCredentialInternalError>;
     readonly verify: (token: string) => Effect.Effect<VerifiedSession, SessionCredentialError>;
     readonly issueWebSocketToken: (
@@ -624,6 +626,7 @@ export const make = Effect.gen(function* () {
             os: client.os ?? null,
             browser: client.browser ?? null,
           },
+          email: input?.email ?? null,
           issuedAt,
           expiresAt,
         })
@@ -712,6 +715,7 @@ export const make = Effect.gen(function* () {
         subject: claims.sub,
         scopes: claims.scopes,
         ...(claims.jkt ? { proofKeyThumbprint: claims.jkt } : {}),
+        ...(row.value.email ? { email: row.value.email } : {}),
       } satisfies VerifiedSession;
     },
   );
@@ -817,6 +821,7 @@ export const make = Effect.gen(function* () {
       expiresAt: row.value.expiresAt,
       subject: row.value.subject,
       scopes: row.value.scopes,
+      ...(row.value.email ? { email: row.value.email } : {}),
     } satisfies VerifiedSession;
   });
 

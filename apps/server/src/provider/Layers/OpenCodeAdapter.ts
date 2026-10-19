@@ -27,6 +27,7 @@ import type { OpencodeClient, Part, PermissionRequest, QuestionRequest } from "@
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
+import { providerTurnText } from "../turnAuthorContext.ts";
 import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
@@ -1437,7 +1438,7 @@ export function makeOpenCodeAdapter(
         });
       }
 
-      const text = input.input?.trim();
+      const text = providerTurnText(input);
       const fileParts = toOpenCodeFileParts({
         attachments: input.attachments,
         resolveAttachmentPath: (attachment) =>

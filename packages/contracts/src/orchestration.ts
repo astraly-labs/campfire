@@ -1133,6 +1133,7 @@ export const OrchestrationEventActor = Schema.Struct({
   displayName: Schema.optional(TrimmedNonEmptyString),
   sessionId: Schema.optional(AuthSessionId),
   networkLogin: Schema.optional(TrimmedNonEmptyString),
+  email: Schema.optional(TrimmedNonEmptyString),
 });
 export type OrchestrationEventActor = typeof OrchestrationEventActor.Type;
 

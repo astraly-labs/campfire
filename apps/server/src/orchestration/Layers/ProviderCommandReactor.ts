@@ -1,10 +1,13 @@
 import {
   type ChatAttachment,
+  type CollaborationUser,
   CommandId,
   EventId,
   type ModelSelection,
   type OrchestrationEvent,
+  type OrchestrationEventActor,
   ProviderDriverKind,
+  type ProviderTurnAuthor,
   type ProjectId,
   type OrchestrationSession,
   ThreadId,
@@ -34,6 +37,7 @@ import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
 import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
 import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
+import * as UserMemory from "../../persistence/UserMemory.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import {
@@ -202,6 +206,7 @@ const make = Effect.gen(function* () {
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
   const textGeneration = yield* TextGeneration;
   const serverSettingsService = yield* ServerSettingsService;
+  const userMemory = yield* UserMemory.UserMemoryRepository;
   const serverCommandId = (tag: string) =>
     crypto.randomUUIDv4.pipe(Effect.map((uuid) => CommandId.make(`server:${tag}:${uuid}`)));
   const serverEventId = () => crypto.randomUUIDv4.pipe(Effect.map(EventId.make));
@@ -622,6 +627,33 @@ const make = Effect.gen(function* () {
     return startedSession.threadId;
   });
 
+  // Projections only set `author` for Google-authenticated users. The email
+  // comes from the dispatching actor, so it is only known when the author
+  // dispatched the turn themselves.
+  const resolveTurnAuthor = Effect.fnUntraced(function* (
+    author: CollaborationUser | null | undefined,
+    actor: OrchestrationEventActor | undefined,
+  ) {
+    if (!author) {
+      return undefined;
+    }
+    const email = actor?.subject === author.subject ? actor.email : undefined;
+    const memory = yield* userMemory.get(author.subject).pipe(
+      Effect.map(Option.getOrUndefined),
+      Effect.catch((cause) =>
+        Effect.logWarning("failed to load user memory for turn author", { cause }).pipe(
+          Effect.as(undefined),
+        ),
+      ),
+    );
+    return {
+      subject: author.subject,
+      displayName: author.displayName,
+      ...(email ? { email } : {}),
+      ...(memory ? { memory } : {}),
+    } satisfies ProviderTurnAuthor;
+  });
+
   const buildSendTurnRequestForThread = Effect.fnUntraced(function* (input: {
     readonly threadId: ThreadId;
     readonly idempotencyKey: string;
@@ -629,6 +661,7 @@ const make = Effect.gen(function* () {
     readonly attachments?: ReadonlyArray<ChatAttachment>;
     readonly modelSelection?: ModelSelection;
     readonly interactionMode?: "default" | "plan";
+    readonly author?: ProviderTurnAuthor;
     readonly createdAt: string;
   }) {
     const thread = yield* resolveThread(input.threadId);
@@ -681,6 +714,7 @@ const make = Effect.gen(function* () {
       ...(normalizedAttachments.length > 0 ? { attachments: normalizedAttachments } : {}),
       ...(modelForTurn !== undefined ? { modelSelection: modelForTurn } : {}),
       ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
+      ...(input.author !== undefined ? { author: input.author } : {}),
     };
   });
 
@@ -883,6 +917,7 @@ const make = Effect.gen(function* () {
         ),
       );
 
+    const author = yield* resolveTurnAuthor(message.author, event.metadata.actor);
     const sendTurnRequest = yield* buildSendTurnRequestForThread({
       threadId: event.payload.threadId,
       idempotencyKey: key,
@@ -892,6 +927,7 @@ const make = Effect.gen(function* () {
         ? { modelSelection: event.payload.modelSelection }
         : {}),
       interactionMode: event.payload.interactionMode,
+      ...(author !== undefined ? { author } : {}),
       createdAt: event.payload.createdAt,
     }).pipe(
       Effect.map(Option.some),
@@ -1175,4 +1211,5 @@ const make = Effect.gen(function* () {
 
 export const ProviderCommandReactorLive = Layer.effect(ProviderCommandReactor, make).pipe(
   Layer.provide(ProjectionTurnRepositoryLive),
+  Layer.provide(UserMemory.layer),
 );

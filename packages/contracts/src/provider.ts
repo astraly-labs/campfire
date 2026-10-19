@@ -64,6 +64,21 @@ export const ProviderSessionStartInput = Schema.Struct({
 });
 export type ProviderSessionStartInput = typeof ProviderSessionStartInput.Type;
 
+/** Max characters of stored memory for one user. */
+export const USER_MEMORY_MAX_CHARS = 4_000;
+
+/**
+ * Authenticated human who sent the turn. Adapters prepend it, and the author's
+ * own memory, to the prompt so the agent knows who it talks to on each turn.
+ */
+export const ProviderTurnAuthor = Schema.Struct({
+  subject: TrimmedNonEmptyString,
+  displayName: TrimmedNonEmptyString,
+  email: Schema.optional(TrimmedNonEmptyString),
+  memory: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(USER_MEMORY_MAX_CHARS))),
+});
+export type ProviderTurnAuthor = typeof ProviderTurnAuthor.Type;
+
 export const ProviderSendTurnInput = Schema.Struct({
   threadId: ThreadId,
   idempotencyKey: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(512))),
@@ -75,6 +90,7 @@ export const ProviderSendTurnInput = Schema.Struct({
   ),
   modelSelection: Schema.optional(ModelSelection),
   interactionMode: Schema.optional(ProviderInteractionMode),
+  author: Schema.optional(ProviderTurnAuthor),
 });
 export type ProviderSendTurnInput = typeof ProviderSendTurnInput.Type;
 
