@@ -37,8 +37,13 @@ import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderTurnStart from "./ProviderTurnStartService.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
+import * as TurnAuthorService from "./TurnAuthorService.ts";
 
 const isDomainEvent = Schema.is(OrchestrationV2DomainEvent);
+// These turns have no signed-in author, so the provider text is the message text.
+const layerPassThroughAuthors = Layer.mock(TurnAuthorService.TurnAuthorService)({
+  providerText: ({ text }) => Effect.succeed(text),
+});
 
 it("does not commit running state when inherited background routing cannot be read", async () => {
   const threadId = ThreadId.make("thread_provider_turn_start_projection_failure");
@@ -131,6 +136,7 @@ it("does not commit running state when inherited background routing cannot be re
         }),
         Layer.mock(RunExecutionService.RunExecutionServiceV2)({ startRootRun }),
         Layer.mock(RuntimePolicy.RuntimePolicyV2)({}),
+        layerPassThroughAuthors,
       ),
     ),
   );
@@ -527,6 +533,7 @@ function makeLocalCommandHarness(input: {
         Layer.mock(RuntimePolicy.RuntimePolicyV2)({
           resolve: () => Effect.succeed({} as never),
         }),
+        layerPassThroughAuthors,
       ),
     ),
   );

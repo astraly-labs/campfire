@@ -495,6 +495,7 @@ export class EnvironmentAuth extends Context.Service<
       identity: {
         readonly subject: string;
         readonly displayName: string;
+        readonly email: string;
       },
       requestMetadata: AuthClientMetadata,
     ) => Effect.Effect<
@@ -1001,6 +1002,7 @@ export const make = Effect.gen(function* () {
           ...requestMetadata,
           label: identity.displayName,
         },
+        email: identity.email,
       })
       .pipe(
         Effect.mapError((cause) => new ServerAuthAuthenticatedSessionIssueError({ cause })),

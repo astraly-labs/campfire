@@ -7,6 +7,7 @@ import {
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -14,6 +15,7 @@ import { Headers, HttpServerRequest } from "effect/http";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as AuthSessions from "../persistence/AuthSessions.ts";
 import * as PersistenceErrors from "../persistence/Errors.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as PairingGrantStore from "./PairingGrantStore.ts";
@@ -367,13 +369,18 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
     Effect.gen(function* () {
       const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
       const sessions = yield* SessionStore.SessionStore;
+      const authSessions = yield* AuthSessions.AuthSessionRepository;
       const issued = yield* serverAuth.issueTrustedBrowserSession(
         {
           subject: "google:alice-stable-subject",
           displayName: "Alice Example",
+          email: "alice@example.com",
         },
         requestMetadata,
       );
+      expect(
+        yield* authSessions.getLatestEmailBySubject("google:alice-stable-subject"),
+      ).toStrictEqual(Option.some("alice@example.com"));
       const verified = yield* serverAuth.authenticateHttpRequest(
         makeCookieRequest(sessions.cookieName, issued.sessionToken),
       );
@@ -389,6 +396,9 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
         displayName: "Alice Example",
       });
       expect(yield* serverAuth.revokeSession(verified.sessionId)).toBe(true);
+      expect(
+        yield* authSessions.getLatestEmailBySubject("google:alice-stable-subject"),
+      ).toStrictEqual(Option.none());
 
       const revoked = yield* serverAuth
         .authenticateHttpRequest(makeCookieRequest(sessions.cookieName, issued.sessionToken))
@@ -704,7 +714,7 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
       const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
       const sessions = yield* SessionStore.SessionStore;
       const issued = yield* serverAuth.issueTrustedBrowserSession(
-        { subject: "google:alice", displayName: "Alice" },
+        { subject: "google:alice", displayName: "Alice", email: "alice@example.com" },
         requestMetadata,
       );
       const authenticated = yield* serverAuth.authenticateHttpRequest({

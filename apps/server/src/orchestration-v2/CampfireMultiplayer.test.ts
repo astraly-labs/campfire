@@ -1,11 +1,15 @@
 import { assert, it } from "@effect/vitest";
 import {
+  AuthSessionId,
+  type CollaborationUser,
   CommandId,
   MessageId,
+  type OrchestrationV2Command,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderThreadId,
+  ProviderTurnId,
   SideThreadId,
   SideThreadMessageId,
   ThreadId,
@@ -13,6 +17,7 @@ import {
 } from "@t3tools/contracts";
 import type {
   ProviderAdapterV2,
+  ProviderAdapterV2Event,
   ProviderAdapterV2SessionRuntime,
   ProviderAdapterV2TurnInput,
 } from "@t3tools/provider-core/server/ProviderAdapter";
@@ -20,14 +25,21 @@ import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
+import * as AuthSessions from "../persistence/AuthSessions.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as UserMemory from "../persistence/UserMemory.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
+import * as TurnAuthorService from "./TurnAuthorService.ts";
+
+type MessageDispatch = Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>;
 
 const instanceId = ProviderInstanceId.make("codex");
 const modelSelection = { instanceId, model: "gpt-5.1-codex" };
@@ -246,6 +258,243 @@ it.live(
               assert.equal(snapshot.projection.sideThreads?.[0]?.messages.length, 200);
             }),
           { concurrency: "unbounded" },
+        );
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped),
+  { timeout: 30_000 },
+);
+
+const alice = { subject: "google:alice", displayName: "Alice" };
+const bob = { subject: "google:bob", displayName: "Bob" };
+
+it.live(
+  "tells the provider who sent each turn and steer, with only that sender's memory",
+  () =>
+    Effect.gen(function* () {
+      const sharedThreadId = ThreadId.make("thread:authors:shared");
+      const liveThreadId = ThreadId.make("thread:authors:live");
+      const starts = yield* Queue.unbounded<ProviderAdapterV2TurnInput>();
+      const steers = yield* Queue.unbounded<string>();
+      const driver = ProviderDriverKind.make("codex");
+      const adapter: ProviderAdapterV2["Service"] = {
+        instanceId,
+        driver,
+        getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
+        planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
+        openSession: (input) =>
+          Effect.gen(function* () {
+            const events = yield* PubSub.unbounded<ProviderAdapterV2Event>();
+            const now = yield* DateTime.now;
+            return {
+              instanceId,
+              driver,
+              providerSessionId: input.providerSessionId,
+              providerSession: {
+                id: input.providerSessionId,
+                driver,
+                providerInstanceId: instanceId,
+                status: "ready",
+                cwd: input.runtimePolicy.cwd ?? "/workspace",
+                model: input.modelSelection.model,
+                capabilities: CodexProviderCapabilitiesV2,
+                createdAt: now,
+                updatedAt: now,
+                lastError: null,
+              },
+              events: Stream.fromPubSub(events),
+              ensureThread: (thread) =>
+                Effect.succeed({
+                  id: ProviderThreadId.make(`native:${thread.threadId}`),
+                  driver,
+                  providerInstanceId: instanceId,
+                  providerSessionId: input.providerSessionId,
+                  appThreadId: thread.threadId,
+                  ownerNodeId: null,
+                  nativeThreadRef: null,
+                  nativeConversationHeadRef: null,
+                  status: "idle" as const,
+                  firstRunOrdinal: null,
+                  lastRunOrdinal: null,
+                  handoffIds: [],
+                  forkedFrom: null,
+                  createdAt: now,
+                  updatedAt: now,
+                }),
+              resumeThread: unsupported,
+              startTurn: (turn) =>
+                Effect.gen(function* () {
+                  yield* Queue.offer(starts, turn);
+                  const at = yield* DateTime.now;
+                  const providerTurnId = ProviderTurnId.make(`provider-turn:${turn.runId}`);
+                  // Shared-thread turns finish so the next queued one starts.
+                  const status = turn.threadId === sharedThreadId ? "completed" : "running";
+                  yield* PubSub.publish(events, {
+                    type: "provider_turn.updated",
+                    driver,
+                    providerTurn: {
+                      id: providerTurnId,
+                      providerThreadId: turn.providerThread.id,
+                      nodeId: turn.rootNodeId,
+                      runAttemptId: turn.attemptId,
+                      nativeTurnRef: { driver, nativeId: providerTurnId, strength: "strong" },
+                      ordinal: turn.runOrdinal,
+                      status,
+                      startedAt: at,
+                      completedAt: status === "completed" ? at : null,
+                    },
+                  });
+                  if (status === "completed") {
+                    yield* PubSub.publish(events, {
+                      type: "turn.terminal",
+                      driver,
+                      providerThreadId: turn.providerThread.id,
+                      providerTurnId,
+                      runOrdinal: turn.runOrdinal,
+                      status: "completed",
+                      failure: null,
+                      threadDisposition: "reusable",
+                    });
+                  }
+                }),
+              steerTurn: (steer) => Queue.offer(steers, steer.message.text).pipe(Effect.asVoid),
+              interruptTurn: () => Effect.void,
+              respondToRuntimeRequest: unsupported,
+              readThreadSnapshot: unsupported,
+              rollbackThread: unsupported,
+              forkThread: unsupported,
+            } satisfies ProviderAdapterV2SessionRuntime;
+          }),
+      };
+      const database = SqlitePersistence.layerMemory;
+      const layer = Layer.mergeAll(
+        Layer.mergeAll(
+          AuthSessions.layer,
+          UserMemory.layer,
+          TurnAuthorService.layer.pipe(Layer.provide(ProjectionStore.layer)),
+        ).pipe(Layer.provide(database)),
+        ProviderReplayHarness.layerWithRegistry(
+          { name: "campfire-turn-authors" },
+          ProviderAdapterRegistry.layerFromAdapters([adapter]),
+          { databaseLayer: database },
+        ),
+      );
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const turnAuthors = yield* TurnAuthorService.TurnAuthorService;
+        const memories = yield* UserMemory.UserMemoryRepository;
+        const now = yield* DateTime.now;
+        yield* memories.set({ subject: alice.subject, content: "Prefers French replies." });
+        yield* (yield* AuthSessions.AuthSessionRepository).create({
+          sessionId: AuthSessionId.make("session:alice"),
+          subject: alice.subject,
+          scopes: [],
+          method: "browser-session-cookie",
+          client: {
+            label: alice.displayName,
+            ipAddress: null,
+            userAgent: null,
+            deviceType: "desktop",
+            os: null,
+            browser: null,
+          },
+          email: "alice@example.com",
+          issuedAt: now,
+          expiresAt: DateTime.add(now, { days: 1 }),
+        });
+        const createThread = (threadId: ThreadId) =>
+          Effect.gen(function* () {
+            yield* orchestrator.dispatch({
+              type: "thread.create",
+              commandId: CommandId.make(`create:${threadId}`),
+              threadId,
+              projectId: ProjectId.make("project:authors"),
+              title: threadId,
+              modelSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: threadId,
+              worktreePath: yield* checkpointWorkspace(threadId.replaceAll(":", "-")),
+              createdBy: "user",
+              creationSource: "web",
+            });
+          });
+        const send = (
+          threadId: ThreadId,
+          id: string,
+          text: string,
+          user: CollaborationUser | null,
+          dispatchMode: MessageDispatch["dispatchMode"],
+        ) =>
+          orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make(`send:${id}`),
+            threadId,
+            messageId: MessageId.make(`message:${id}`),
+            text,
+            attachments: [],
+            dispatchMode,
+            createdBy: "user",
+            creationSource: "web",
+            ...(user === null ? {} : { collaborationUser: user }),
+          });
+        const queued = { type: "queue_after_active" } as const;
+
+        yield* createThread(sharedThreadId);
+        yield* send(sharedThreadId, "cli", "Run the tests.", null, { type: "start_immediately" });
+        yield* send(sharedThreadId, "alice", "Fix the build.", alice, queued);
+        yield* send(sharedThreadId, "bob", "Review it.", bob, queued);
+        yield* send(sharedThreadId, "alice-command", "/goal ship it", alice, queued);
+        const sharedTexts = yield* Effect.forEach([1, 2, 3, 4], () =>
+          Queue.take(starts).pipe(Effect.map((turn) => turn.message.text)),
+        );
+        assert.deepStrictEqual(sharedTexts, [
+          "Run the tests.",
+          [
+            "[Message from: Alice (alice@example.com)]",
+            "[User memory for Alice:",
+            "Prefers French replies.",
+            "]",
+            "",
+            "Fix the build.",
+          ].join("\n"),
+          "[Message from: Bob]\n\nReview it.",
+          "/goal ship it",
+        ]);
+
+        yield* createThread(liveThreadId);
+        yield* send(liveThreadId, "alice-live", "Start the migration.", alice, {
+          type: "start_immediately",
+        });
+        const live = yield* Queue.take(starts);
+        // A message queued behind the live run does not own the current turn.
+        yield* send(liveThreadId, "bob-queued", "Then update the docs.", bob, queued);
+        assert.deepStrictEqual(yield* turnAuthors.readMemory(liveThreadId), {
+          author: { displayName: "Alice" },
+          memory: "Prefers French replies.",
+        });
+        // Steering needs the live provider turn projected.
+        yield* orchestrator
+          .streamStoredEventsFrom({
+            threadId: liveThreadId,
+            afterSequence: 0,
+            eventType: "provider-turn.updated",
+          })
+          .pipe(Stream.runHead);
+        yield* send(liveThreadId, "bob-steer", "Skip the seed step.", bob, {
+          type: "steer_active",
+          targetRunId: live.runId,
+        });
+        assert.strictEqual(yield* Queue.take(steers), "[Message from: Bob]\n\nSkip the seed step.");
+        assert.deepStrictEqual(
+          yield* turnAuthors.replaceMemory({
+            threadId: liveThreadId,
+            content: "Reviews pull requests in the morning.",
+          }),
+          { author: { displayName: "Bob" }, memory: "Reviews pull requests in the morning." },
+        );
+        assert.deepStrictEqual(
+          yield* memories.get(alice.subject),
+          Option.some("Prefers French replies."),
         );
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped),

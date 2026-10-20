@@ -75,6 +75,8 @@ import Migration0059 from "./Migrations/059_McpAppModelContext.ts";
 import Migration0060 from "./Migrations/060_ThreadSnapshotWindowIndexes.ts";
 import Migration0061 from "./Migrations/061_PullRequestReviewGuides.ts";
 import Migration0068 from "./Migrations/068_CampfireV2Collaboration.ts";
+import Migration0069 from "./Migrations/069_AuthSessionEmail.ts";
+import Migration0070 from "./Migrations/070_UserMemory.ts";
 
 import Campfire0044 from "./Migrations/044_ProjectionThreadSideThreads.ts";
 import Campfire0045 from "./Migrations/045_ProjectionCollaborationIdentity.ts";
@@ -173,6 +175,8 @@ export const migrationEntries = [
   [66, "ThreadSnapshotWindowIndexes", Migration0060],
   [67, "PullRequestReviewGuides", Migration0061],
   [68, "CampfireV2Collaboration", Migration0068],
+  [69, "AuthSessionEmail", Migration0069],
+  [70, "UserMemory", Migration0070],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
