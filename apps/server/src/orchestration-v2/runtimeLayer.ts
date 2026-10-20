@@ -49,6 +49,7 @@ import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ThreadLaunchService from "./ThreadLaunchService.ts";
 import * as ThreadLifecycleService from "./ThreadLifecycleService.ts";
 import * as ThreadForkService from "./ThreadForkService.ts";
+import * as TurnAuthorService from "./TurnAuthorService.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
@@ -153,6 +154,10 @@ const layerRunExecutionServiceProvided = RunExecutionService.layer.pipe(
   ),
 );
 
+const layerTurnAuthorServiceProvided = TurnAuthorService.layer.pipe(
+  Layer.provide(ProjectionStore.layer),
+);
+
 const layerProviderTurnStartServiceProvided = ProviderTurnStartService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
@@ -164,12 +169,19 @@ const layerProviderTurnStartServiceProvided = ProviderTurnStartService.layer.pip
       layerProviderAuthServiceProvided,
       layerRunExecutionServiceProvided,
       layerRuntimePolicyProvided,
+      layerTurnAuthorServiceProvided,
     ),
   ),
 );
 
 const layerProviderTurnControlServiceProvided = ProviderTurnControlService.layer.pipe(
-  Layer.provide(Layer.merge(ProjectionStore.layer, layerProviderSessionManagerProvided)),
+  Layer.provide(
+    Layer.mergeAll(
+      ProjectionStore.layer,
+      layerProviderSessionManagerProvided,
+      layerTurnAuthorServiceProvided,
+    ),
+  ),
 );
 const layerRuntimeRequestServiceProvided = RuntimeRequestService.layer.pipe(
   Layer.provide(Layer.merge(ProjectionStore.layer, layerProviderSessionManagerProvided)),
@@ -358,6 +370,8 @@ export const layer = Layer.mergeAll(
   layerProviderRuntimeRecoveryProvided,
   layerProjectionMaintenanceProvided,
   layerLegacyV1ThreadImporterProvided,
+  // The memory MCP tools resolve the calling thread's author through it too.
+  layerTurnAuthorServiceProvided,
 );
 
 export const layerProduction = Layer.mergeAll(

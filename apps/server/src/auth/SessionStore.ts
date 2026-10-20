@@ -378,6 +378,8 @@ export class SessionStore extends Context.Service<
       readonly client?: AuthClientMetadata;
       readonly proofKeyThumbprint?: string;
       readonly runtimeModeCeiling?: RuntimeMode;
+      /** The verified email of a Google sign-in. */
+      readonly email?: string;
       /**
        * Atomically revoke active sessions with the same subject and method
        * before storing this session.
@@ -710,6 +712,7 @@ export const make = Effect.gen(function* () {
           os: client.os ?? null,
           browser: client.browser ?? null,
         },
+        ...(input?.email === undefined ? {} : { email: input.email }),
         issuedAt,
         expiresAt,
       } satisfies AuthSessions.CreateAuthSessionInput;

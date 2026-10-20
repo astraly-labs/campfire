@@ -50,6 +50,7 @@ export const CreateAuthSessionInput = Schema.Struct({
   scopes: AuthEnvironmentScopes,
   method: ServerAuthSessionMethod,
   client: AuthSessionClientMetadataRecord,
+  email: Schema.optionalKey(Schema.String),
   issuedAt: Schema.DateTimeUtcFromString,
   expiresAt: Schema.DateTimeUtcFromString,
 });
@@ -114,6 +115,10 @@ export class AuthSessionRepository extends Context.Service<
     readonly getById: (
       input: GetAuthSessionByIdInput,
     ) => Effect.Effect<Option.Option<AuthSessionRecord>, AuthSessionRepositoryError>;
+    /** The email of the subject's newest unrevoked session that recorded one. */
+    readonly getLatestEmailBySubject: (
+      subject: string,
+    ) => Effect.Effect<Option.Option<string>, AuthSessionRepositoryError>;
     readonly listActive: (
       input: ListActiveAuthSessionsInput,
     ) => Effect.Effect<ReadonlyArray<AuthSessionRecord>, AuthSessionRepositoryError>;
@@ -224,6 +229,7 @@ export const make = Effect.gen(function* () {
           client_device_type,
           client_os,
           client_browser,
+          email,
           issued_at,
           expires_at,
           revoked_at
@@ -239,6 +245,7 @@ export const make = Effect.gen(function* () {
           ${input.client.deviceType},
           ${input.client.os},
           ${input.client.browser},
+          ${input.email ?? null},
           ${input.issuedAt},
           ${input.expiresAt},
           NULL
@@ -271,6 +278,21 @@ export const make = Effect.gen(function* () {
           revoked_at AS "revokedAt"
         FROM auth_sessions
         WHERE session_id = ${sessionId}
+      `,
+  });
+
+  const findLatestEmailBySubject = SqlSchema.findOneOption({
+    Request: Schema.String,
+    Result: Schema.Struct({ email: Schema.String }),
+    execute: (subject) =>
+      sql`
+        SELECT email
+        FROM auth_sessions
+        WHERE subject = ${subject}
+          AND email IS NOT NULL
+          AND revoked_at IS NULL
+        ORDER BY issued_at DESC, session_id DESC
+        LIMIT 1
       `,
   });
 
@@ -443,6 +465,19 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  const getLatestEmailBySubject: AuthSessionRepository["Service"]["getLatestEmailBySubject"] = (
+    subject,
+  ) =>
+    findLatestEmailBySubject(subject).pipe(
+      Effect.map(Option.map((row) => row.email)),
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "AuthSessionRepository.getLatestEmailBySubject:query",
+          "AuthSessionRepository.getLatestEmailBySubject:decodeRow",
+        ),
+      ),
+    );
+
   const listActive: AuthSessionRepository["Service"]["listActive"] = (input) =>
     listActiveSessionRows(input).pipe(
       Effect.mapError(
@@ -518,6 +553,7 @@ export const make = Effect.gen(function* () {
     createReplacingActive,
     createIfAbsent,
     getById,
+    getLatestEmailBySubject,
     listActive,
     revoke,
     revokeAllExcept,

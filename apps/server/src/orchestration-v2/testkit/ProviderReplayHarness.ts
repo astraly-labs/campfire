@@ -50,6 +50,7 @@ import * as RunExecutionService from "../RunExecutionService.ts";
 import * as RunFinalizationService from "../RunFinalizationService.ts";
 import * as ThreadTitleRegenerationService from "../ThreadTitleRegenerationService.ts";
 import * as RuntimePolicy from "../RuntimePolicy.ts";
+import * as TurnAuthorService from "../TurnAuthorService.ts";
 import * as TurnItemPositionStore from "../TurnItemPositionStore.ts";
 import * as RuntimeRequestService from "../RuntimeRequestService.ts";
 import * as ThreadCommandExecutor from "../ThreadCommandExecutor.ts";
@@ -383,6 +384,9 @@ export function layerWithRegistry<Error>(
       ),
     ),
   );
+  const layerTurnAuthorServiceProvided = TurnAuthorService.layer.pipe(
+    Layer.provide(Layer.merge(layerStores, layerDatabase)),
+  );
   const layerProviderTurnStartServiceProvided = ProviderTurnStartService.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -396,11 +400,18 @@ export function layerWithRegistry<Error>(
         }),
         layerRunExecutionServiceProvided,
         layerRuntime,
+        layerTurnAuthorServiceProvided,
       ),
     ),
   );
   const layerProviderTurnControlServiceProvided = ProviderTurnControlService.layer.pipe(
-    Layer.provide(Layer.merge(layerStores, layerProviderSessionManagerProvided)),
+    Layer.provide(
+      Layer.mergeAll(
+        layerStores,
+        layerProviderSessionManagerProvided,
+        layerTurnAuthorServiceProvided,
+      ),
+    ),
   );
   const layerRuntimeRequestServiceProvided = RuntimeRequestService.layer.pipe(
     Layer.provide(Layer.merge(layerStores, layerProviderSessionManagerProvided)),

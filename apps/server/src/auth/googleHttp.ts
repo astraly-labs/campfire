@@ -123,6 +123,7 @@ const googleOidcCallbackRouteLayer = HttpRouter.add(
               {
                 subject: identity.subject,
                 displayName: identity.displayName,
+                email: identity.email,
               },
               deriveAuthClientMetadata({ request }),
             )

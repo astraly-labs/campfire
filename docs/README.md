@@ -19,6 +19,7 @@
 - [Usage and limits](./user/usage.md)
 - [Product usage data](./user/telemetry.md)
 - [Remote access](./user/remote-access.md)
+- [Message authors and user memory](./user/user-memory.md)
 - [Outside agents (MCP)](./user/outside-agents.md)
 - [Running in the background](./user/background-service.md)
 - [Updating T3 Code](./user/updating.md)
