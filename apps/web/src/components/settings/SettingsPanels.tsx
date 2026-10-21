@@ -1,6 +1,7 @@
 import { SettingsGroup } from "./SettingsGroup";
 import { useScopedSettingsWriteAllowed } from "./useScopedSettings";
 import { Spinner } from "~/components/ui/spinner";
+import { AccountSettings } from "./AccountSettings";
 import { NotificationSettings } from "./NotificationSettings";
 import { PRIVACY_POLICY_URL } from "../../legalLinks";
 import { ArchiveIcon, ArchiveX, CheckIcon, ChevronRightIcon, SettingsIcon } from "lucide-react";
@@ -2266,6 +2267,7 @@ export function GeneralSettingsPanel() {
 
   return (
     <SettingsPageContainer>
+      <AccountSettings />
       <ProjectDefaultsSettings category="general" />
       <SettingsSection id="organization" title="Organization">
         <SettingsRow

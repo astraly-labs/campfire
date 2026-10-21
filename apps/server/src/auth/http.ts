@@ -369,6 +369,44 @@ export const layer = HttpApiBuilder.group(
         ),
       )
       .handle(
+        "signOut",
+        Effect.fn("environment.auth.signOut")(
+          function* (args) {
+            yield* annotateEnvironmentRequest(args.endpoint.name);
+            const request = yield* HttpServerRequest.HttpServerRequest;
+            // Cookie sessions only, so a bearer client cannot be signed out through
+            // here, and only from the app's own origin.
+            const signedOut = yield* serverAuth.authenticateBrowserSession(request).pipe(
+              Effect.flatMap((session) => serverAuth.revokeSession(session.sessionId)),
+              Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, () =>
+                Effect.succeed(false),
+              ),
+            );
+            const cookieOptions = { httpOnly: true, path: "/", sameSite: "lax" } as const;
+            const expired = yield* Effect.fromResult(
+              Cookies.expireCookie(Cookies.empty, sessions.cookieName, cookieOptions),
+            ).pipe(
+              Effect.flatMap((cookies) =>
+                sessions.legacyCookieName === undefined
+                  ? Effect.succeed(cookies)
+                  : Effect.fromResult(
+                      Cookies.expireCookie(cookies, sessions.legacyCookieName, cookieOptions),
+                    ),
+              ),
+              Effect.catch(() => failEnvironmentInternal("browser_session_cookie_failed")),
+            );
+            yield* HttpEffect.appendPreResponseHandler((_request, response) =>
+              Effect.succeed(HttpServerResponse.mergeCookies(response, expired)),
+            );
+            yield* appendCredentialResponseHeaders;
+            return { signedOut };
+          },
+          Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+            failEnvironmentInternal("client_session_revoke_failed", error),
+          ),
+        ),
+      )
+      .handle(
         "token",
         Effect.fn("environment.auth.token")(
           function* (args) {

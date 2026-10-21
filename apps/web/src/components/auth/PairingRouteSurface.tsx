@@ -42,6 +42,9 @@ export function PairingRouteSurface({
   const [errorMessage, setErrorMessage] = useState(initialErrorMessage ?? "");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const autoSubmitAttemptedRef = useRef(false);
+  // A pairing link still works on a Google-gated environment: its token in the URL
+  // is submitted below. Only the manual token form gives way to Google sign-in.
+  const googleSignIn = auth.bootstrapMethods.includes("google-oidc");
 
   const submitCredential = useCallback(
     async (nextCredential: string) => {
@@ -90,53 +93,73 @@ export function PairingRouteSurface({
     <StandalonePage tone="pairing">
       <StandalonePageHeader
         eyebrow={APP_DISPLAY_NAME}
-        title="Pair with this environment"
+        title={googleSignIn ? "Sign in to Campfire" : "Pair with this environment"}
         description={describeAuthGate(auth.bootstrapMethods)}
       />
 
-      <form className="mt-6 space-y-4" onSubmit={(event) => void handleSubmit(event)}>
-        <div className="space-y-2">
-          <label className="text-sm font-medium" htmlFor="pairing-token">
-            Pairing token
-          </label>
-          <Input
-            id="pairing-token"
-            autoCapitalize="none"
-            autoComplete="off"
-            autoCorrect="off"
-            disabled={isSubmitting}
-            nativeInput
-            onChange={(event) => setCredential(event.currentTarget.value)}
-            placeholder="Paste a one-time token or pairing secret"
-            spellCheck={false}
-            value={credential}
-          />
-        </div>
-
-        {errorMessage ? (
-          <Alert variant="error">
-            <AlertDescription>{errorMessage}</AlertDescription>
-          </Alert>
-        ) : null}
-
-        <div className="flex flex-wrap gap-2">
-          <Button disabled={isSubmitting} size="sm" type="submit">
-            {isSubmitting ? "Pairing..." : "Continue"}
-          </Button>
+      {googleSignIn ? (
+        <div className="mt-6 space-y-4">
+          {errorMessage ? (
+            <Alert variant="error">
+              <AlertDescription>{errorMessage}</AlertDescription>
+            </Alert>
+          ) : null}
           <Button
             disabled={isSubmitting}
-            onClick={() => window.location.reload()}
+            onClick={() => window.location.assign("/auth/google/login?returnTo=%2F")}
             size="sm"
-            variant="outline"
+            type="button"
           >
-            Reload app
+            Continue with Google
           </Button>
         </div>
-      </form>
+      ) : (
+        <form className="mt-6 space-y-4" onSubmit={(event) => void handleSubmit(event)}>
+          <div className="space-y-2">
+            <label className="text-sm font-medium" htmlFor="pairing-token">
+              Pairing token
+            </label>
+            <Input
+              id="pairing-token"
+              autoCapitalize="none"
+              autoComplete="off"
+              autoCorrect="off"
+              disabled={isSubmitting}
+              nativeInput
+              onChange={(event) => setCredential(event.currentTarget.value)}
+              placeholder="Paste a one-time token or pairing secret"
+              spellCheck={false}
+              value={credential}
+            />
+          </div>
 
-      <div className="mt-6 rounded-lg border border-border/70 bg-background/55 px-3 py-3 text-xs leading-relaxed text-muted-foreground">
-        {describeSupportedMethods(auth.bootstrapMethods)}
-      </div>
+          {errorMessage ? (
+            <Alert variant="error">
+              <AlertDescription>{errorMessage}</AlertDescription>
+            </Alert>
+          ) : null}
+
+          <div className="flex flex-wrap gap-2">
+            <Button disabled={isSubmitting} size="sm" type="submit">
+              {isSubmitting ? "Pairing..." : "Continue"}
+            </Button>
+            <Button
+              disabled={isSubmitting}
+              onClick={() => window.location.reload()}
+              size="sm"
+              variant="outline"
+            >
+              Reload app
+            </Button>
+          </div>
+        </form>
+      )}
+
+      {googleSignIn ? null : (
+        <div className="mt-6 rounded-lg border border-border/70 bg-background/55 px-3 py-3 text-xs leading-relaxed text-muted-foreground">
+          {describeSupportedMethods(auth.bootstrapMethods)}
+        </div>
+      )}
     </StandalonePage>
   );
 }
@@ -272,6 +295,9 @@ function errorMessageFromUnknown(error: unknown): string {
 }
 
 function describeAuthGate(bootstrapMethods: ReadonlyArray<string>): string {
+  if (bootstrapMethods.includes("google-oidc")) {
+    return "Sign in with the Google account your team allowed for this environment.";
+  }
   if (bootstrapMethods.includes("desktop-bootstrap")) {
     return "This environment expects a trusted pairing credential before the app can connect.";
   }

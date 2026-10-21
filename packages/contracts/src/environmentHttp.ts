@@ -470,6 +470,14 @@ class EnvironmentAuthHttpApi extends HttpApiGroup.make("auth")
     }),
   )
   .add(
+    // Revokes this browser's cookie session and expires the cookie. A request
+    // without a live browser session still clears the cookie and reports false.
+    HttpApiEndpoint.post("signOut", "/api/auth/sign-out", {
+      success: Schema.Struct({ signedOut: Schema.Boolean }),
+      error: [EnvironmentInternalError],
+    }),
+  )
+  .add(
     HttpApiEndpoint.post("token", "/oauth/token", {
       headers: OptionalDpopProofHeaders,
       payload: AuthTokenExchangeRequest,
