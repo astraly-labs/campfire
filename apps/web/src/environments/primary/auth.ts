@@ -32,6 +32,7 @@ const PrimaryEnvironmentRequestOperation = Schema.Literals([
   "list-client-sessions",
   "revoke-client-session",
   "revoke-other-client-sessions",
+  "sign-out",
 ]);
 type PrimaryEnvironmentRequestOperation = typeof PrimaryEnvironmentRequestOperation.Type;
 
@@ -351,6 +352,19 @@ export async function submitServerAuthCredential(credential: string): Promise<vo
   bootstrapPromise = null;
   explicitPairingRequested = false;
   stripPairingTokenFromUrl();
+}
+
+/** Ends this browser's session on the server; the next load asks to sign in again. */
+export async function signOutOfPrimaryEnvironment(): Promise<void> {
+  try {
+    await runPrimaryHttp(
+      PrimaryEnvironmentHttpClient.pipe(Effect.flatMap((client) => client.auth.signOut())),
+    );
+  } catch (error) {
+    throw PrimaryEnvironmentRequestError.fromCause({ operation: "sign-out", cause: error });
+  }
+  resolvedAuthenticatedGateState = null;
+  bootstrapPromise = null;
 }
 
 export async function createServerPairingCredential(input?: {

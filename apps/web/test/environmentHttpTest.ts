@@ -99,6 +99,7 @@ export async function installEnvironmentHttpTest(scenario: EnvironmentHttpTestSc
                 );
               }),
             )
+            .handle("signOut", () => unexpectedEndpoint("auth.signOut"))
             .handle("token", () => unexpectedEndpoint("auth.token"))
             .handle("webSocketTicket", () => unexpectedEndpoint("auth.webSocketTicket"))
             .handle(

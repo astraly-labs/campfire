@@ -168,6 +168,78 @@ it.effect("sets the selected browser session cookies through the HTTP route", ()
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
+it.effect("signs a browser session out and expires its cookie", () =>
+  Effect.gen(function* () {
+    const crypto = yield* Crypto.Crypto;
+    const unusedSecretStore = ServerSecretStore.ServerSecretStore.of({
+      get: () => Effect.succeedNone,
+      set: () => Effect.void,
+      create: () => Effect.void,
+      getOrCreateRandom: () => Effect.die("Not used by these routes."),
+      remove: () => Effect.void,
+    });
+    const requestContext = Context.make(Crypto.Crypto, crypto).pipe(
+      Context.add(ServerSecretStore.ServerSecretStore, unusedSecretStore),
+    );
+    return yield* Effect.acquireUseRelease(
+      Effect.sync(() => HttpRouter.toWebHandler(layerRoutes, { disableLogger: true })),
+      (environment) =>
+        Effect.tryPromise(async () => {
+          const cookieOf = (response: Response, prefix: string) =>
+            response.headers
+              .getSetCookie()
+              .find((cookie) => cookie.startsWith(prefix))
+              ?.split(";", 1)[0] ?? "";
+          const devResponse = await environment.handler(
+            postJson("/api/auth/browser-session", { credential: DEV_TOKEN }),
+            requestContext,
+          );
+          const pairingResponse = await environment.handler(
+            postJson(
+              "/api/auth/pairing-token",
+              { scopes: ["orchestration:read"] },
+              { cookie: cookieOf(devResponse, "t3_dev_session_") },
+            ),
+            requestContext,
+          );
+          const pairing = (await pairingResponse.json()) as { credential: string };
+          const sessionResponse = await environment.handler(
+            postJson("/api/auth/browser-session", { credential: pairing.credential }),
+            requestContext,
+          );
+          const sessionCookie = cookieOf(sessionResponse, "t3_session_");
+          expect(sessionCookie).not.toBe("");
+
+          const signOutResponse = await environment.handler(
+            postJson("/api/auth/sign-out", {}, { cookie: sessionCookie }),
+            requestContext,
+          );
+          expect(signOutResponse.status).toBe(200);
+          expect(await signOutResponse.json()).toEqual({ signedOut: true });
+          expect(signOutResponse.headers.getSetCookie()).toContainEqual(
+            expect.stringMatching(/^t3_session_[^=]*=;.*Max-Age=0/),
+          );
+
+          const afterSignOut = await environment.handler(
+            new Request("http://127.0.0.1/api/auth/session", {
+              headers: { cookie: sessionCookie },
+            }),
+            requestContext,
+          );
+          expect(await afterSignOut.json()).toMatchObject({ authenticated: false });
+
+          const repeated = await environment.handler(
+            postJson("/api/auth/sign-out", {}, { cookie: sessionCookie }),
+            requestContext,
+          );
+          expect(repeated.status).toBe(200);
+          expect(await repeated.json()).toEqual({ signedOut: false });
+        }),
+      (environment) => Effect.promise(() => environment.dispose()),
+    );
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
 it.effect("exports only verified T3 Connect requests", () =>
   Effect.gen(function* () {
     const productSpans: Array<string> = [];
