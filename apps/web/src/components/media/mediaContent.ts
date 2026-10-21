@@ -6,8 +6,8 @@ export function resolveProtocolRelativeMediaUrl(src: string): string {
   return `${protocol}${src}`;
 }
 
-/** Reads media only for an explicit save/copy action; remote hosts must allow browser CORS. */
-async function readMediaBlob(src: string): Promise<Blob> {
+/** Reads bytes only for an explicit save/copy action; remote hosts must allow browser CORS. */
+async function readBlob(src: string): Promise<Blob> {
   let response: Response;
   try {
     response = await fetch(src);
@@ -18,16 +18,19 @@ async function readMediaBlob(src: string): Promise<Blob> {
     );
   }
   if (!response.ok) throw new Error(`The file could not be fetched (HTTP ${response.status}).`);
-  const blob = await response.blob();
+  return response.blob();
+}
+
+async function readMediaBlob(src: string): Promise<Blob> {
+  const blob = await readBlob(src);
   if (blob.type.split(";", 1)[0] === "text/html") {
     throw new Error("This link returned a web page instead of media. Open the original URL.");
   }
   return blob;
 }
 
-/** Downloads the original bytes with their original filename, without changing playback URLs. */
-export async function downloadMedia(src: string, name: string): Promise<void> {
-  const url = URL.createObjectURL(await readMediaBlob(src));
+function saveBlob(blob: Blob, name: string) {
+  const url = URL.createObjectURL(blob);
   try {
     const anchor = document.createElement("a");
     anchor.href = url;
@@ -36,6 +39,16 @@ export async function downloadMedia(src: string, name: string): Promise<void> {
   } finally {
     setTimeout(() => URL.revokeObjectURL(url), 30_000);
   }
+}
+
+/** Downloads the original bytes with their original filename, without changing playback URLs. */
+export async function downloadMedia(src: string, name: string): Promise<void> {
+  saveBlob(await readMediaBlob(src), name);
+}
+
+/** Downloads a file's exact bytes, whatever its type; an HTML file is saved, never rendered. */
+export async function downloadFile(src: string, name: string): Promise<void> {
+  saveBlob(await readBlob(src), name);
 }
 
 /** Converts browser-decodable images, including SVG, into the clipboard's portable PNG format. */
