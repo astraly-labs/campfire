@@ -37,7 +37,8 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
-import { FolderTree, Globe2, WrapTextIcon } from "lucide-react";
+import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
+import { DownloadIcon, FolderTree, Globe2, WrapTextIcon } from "lucide-react";
 import { Code2, Eye, Table2 } from "lucide";
 import * as Schema from "effect/Schema";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -47,6 +48,7 @@ import { useAssetUrlRefresh, useAssetUrlState } from "~/assets/assetUrls";
 import { OpenInPicker } from "~/components/chat/OpenInPicker";
 import { MediaVideoPlayer } from "~/components/media/MediaVideoPlayer";
 import { MediaActions, type MediaActionSource } from "~/components/media/MediaActions";
+import { downloadFile } from "~/components/media/mediaContent";
 import { MorphIcon } from "~/components/MorphIcon";
 import { useRemoteOpenState } from "~/remoteOpen";
 import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
@@ -57,7 +59,7 @@ import { resolveDiffThemeName } from "~/lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
 import { cn } from "~/lib/utils";
 import type { ChatFileAttachment } from "~/types";
-import { isAbsolutePath } from "@t3tools/shared/path";
+import { fileBasename, isAbsolutePath } from "@t3tools/shared/path";
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
@@ -1232,6 +1234,53 @@ export default function FilePreviewPanel({
     threadRef,
   ]);
 
+  const canDownload =
+    canReadFiles &&
+    previewPath !== null &&
+    attachment === undefined &&
+    absolutePath !== null &&
+    environmentHttpBaseUrl !== null;
+  const handleDownload = useCallback(() => {
+    if (!canDownload || absolutePath === null || environmentHttpBaseUrl === null) return;
+    void (async () => {
+      const insideWorkspace = mediaFileReference(absolutePath, cwd).relativePath !== undefined;
+      const result = await createAssetUrl({
+        environmentId,
+        input: {
+          resource: workspaceAssetResource({
+            kind: insideWorkspace ? "workspace-file" : "media-file",
+            threadRef,
+            draft,
+            workspaceRoot: cwd,
+            absolutePath,
+          }),
+        },
+      });
+      if (isAtomCommandInterrupted(result)) return;
+      if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+      const url = resolveAssetUrl(environmentHttpBaseUrl, result.value.relativeUrl);
+      if (url === null) throw new Error("The environment returned an invalid file URL.");
+      await downloadFile(url, fileBasename(absolutePath));
+    })().catch((error: unknown) => {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Unable to download file",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        }),
+      );
+    });
+  }, [
+    absolutePath,
+    canDownload,
+    createAssetUrl,
+    cwd,
+    draft,
+    environmentHttpBaseUrl,
+    environmentId,
+    threadRef,
+  ]);
+
   if (attachment === undefined && !canReadFiles) {
     if (fileAccess.isPending) {
       return (
@@ -1313,6 +1362,11 @@ export default function FilePreviewPanel({
           {canOpenInBrowser ? (
             <FileSurfaceAction label="Open file in preview browser" onPress={handleOpenInBrowser}>
               <Globe2 className="size-3.5" />
+            </FileSurfaceAction>
+          ) : null}
+          {canDownload ? (
+            <FileSurfaceAction label="Download file" onPress={handleDownload}>
+              <DownloadIcon className="size-3.5" />
             </FileSurfaceAction>
           ) : null}
           {!isHostFile && previewPath !== null ? (
