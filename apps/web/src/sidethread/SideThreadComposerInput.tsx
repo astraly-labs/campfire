@@ -24,6 +24,7 @@ import {
   type SideThreadSuggestionItem,
   type SideThreadTrigger,
 } from "./sideThreadComposerTriggers";
+import { imageFiles } from "./sideThreadImages";
 
 const MENU_COPY = {
   mention: { listLabel: "Teammates", emptyState: "No matching teammates." },
@@ -42,6 +43,8 @@ export function SideThreadComposerInput(props: {
   readonly team: ReadonlyArray<CollaborationUser>;
   readonly currentSubject: string | null;
   readonly onThreadLinkPicked: (link: PickedThreadLink) => void;
+  /** Receives pasted images; without it an image paste falls through to the browser. */
+  readonly onPasteImages: ((files: ReadonlyArray<File>) => void) | undefined;
 }) {
   const { value, onValueChange, onSubmit, environmentId, threadId, team, currentSubject } = props;
   const listId = useId();
@@ -173,6 +176,12 @@ export function SideThreadComposerInput(props: {
         }}
         onBlur={() => setFocused(false)}
         onKeyDown={onKeyDown}
+        onPaste={(event) => {
+          const images = imageFiles(event.clipboardData.files);
+          if (images.length === 0 || !props.onPasteImages) return;
+          event.preventDefault();
+          props.onPasteImages(images);
+        }}
         aria-controls={activeTrigger && items.length > 0 ? listId : undefined}
         aria-activedescendant={
           activeTrigger && activeItemId

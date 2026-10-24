@@ -1,7 +1,6 @@
 import {
-  PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   SideThreadMessageId,
-  ThreadId,
+  type ThreadId,
   type EnvironmentId,
   type MessageId,
   type OrchestrationV2ThreadProjection,
@@ -54,29 +53,10 @@ import {
   mentionedTeammates,
   type PickedThreadLink,
 } from "./sideThreadComposerTriggers";
+import { readImage, withAddedAttachments } from "./sideThreadImages";
 import { sideThreadMessageTimestamp } from "./sideThreadTimestamp";
 
 const QUICK_REACTIONS = ["👍", "❤️", "👀", "🎉"] as const;
-
-function readImage(file: File): Promise<SideThreadPostAttachment> {
-  return new Promise((resolve, reject) => {
-    if (!file.type.startsWith("image/") || file.size > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
-      reject(new Error("Choose an image smaller than 10 MB."));
-      return;
-    }
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error("Could not read this image."));
-    reader.onload = () =>
-      resolve({
-        type: "image",
-        name: file.name,
-        mimeType: file.type,
-        sizeBytes: file.size,
-        dataUrl: String(reader.result),
-      });
-    reader.readAsDataURL(file);
-  });
-}
 
 function MessageTime(props: {
   readonly message: SideThreadMessage;
@@ -250,6 +230,12 @@ export function SideThreadDrawer(props: {
     sideThreadId,
     threadId,
   ]);
+
+  const addImages = (files: ReadonlyArray<File>) => {
+    void Promise.all(files.map(readImage))
+      .then((images) => setAttachments((current) => withAddedAttachments(current, images)))
+      .catch((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause)));
+  };
 
   const clearComposer = () => {
     setDraft("");
@@ -533,6 +519,7 @@ export function SideThreadDrawer(props: {
                 threadId={threadId}
                 team={team}
                 currentSubject={currentSubject}
+                onPasteImages={editingId === null ? addImages : undefined}
                 onThreadLinkPicked={(link) =>
                   setThreadLinks((current) => [
                     ...current.filter((entry) => entry.threadId !== link.threadId),
@@ -559,14 +546,7 @@ export function SideThreadDrawer(props: {
                         multiple
                         className="hidden"
                         onChange={(event) => {
-                          const files = [...(event.target.files ?? [])];
-                          void Promise.all(files.map(readImage))
-                            .then((images) =>
-                              setAttachments((current) => [...current, ...images].slice(0, 8)),
-                            )
-                            .catch((cause: unknown) =>
-                              setError(cause instanceof Error ? cause.message : String(cause)),
-                            );
+                          addImages([...(event.target.files ?? [])]);
                           event.target.value = "";
                         }}
                       />
