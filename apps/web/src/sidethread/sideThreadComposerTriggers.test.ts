@@ -4,10 +4,20 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   detectSideThreadTrigger,
   linkedThreadForText,
+  matchMentionItems,
   matchThreadLinkItems,
+  mentionedTeammates,
   suggestionToken,
   type ThreadLinkCandidate,
 } from "./sideThreadComposerTriggers";
+
+const team = [
+  { subject: "google:me", displayName: "Me Myself" },
+  { subject: "google:jane", displayName: "Jane Doe" },
+  { subject: "google:janet", displayName: "Jane Doering" },
+  { subject: "google:bob", displayName: "Bob Stone" },
+  { subject: "google:zoe", displayName: "Zoë Ångström" },
+];
 
 describe("detectSideThreadTrigger", () => {
   it("opens teammate mentions on @ and thread links on #, with the query up to the caret", () => {
@@ -43,6 +53,50 @@ describe("detectSideThreadTrigger", () => {
     expect(detectSideThreadTrigger("@jane ", 6)).toBeNull();
     expect(detectSideThreadTrigger("$skill", 6)).toBeNull();
     expect(detectSideThreadTrigger("/model", 6)).toBeNull();
+  });
+});
+
+describe("matchMentionItems", () => {
+  it("offers every teammate but the current user", () => {
+    expect(
+      matchMentionItems({ team, currentSubject: "google:me", query: "" }).map((item) => item.label),
+    ).toEqual(["Jane Doe", "Jane Doering", "Bob Stone", "Zoë Ångström"]);
+  });
+
+  it("filters by handle or display name, ignoring case", () => {
+    const labels = (query: string) =>
+      matchMentionItems({ team, currentSubject: null, query }).map((item) => item.label);
+    expect(labels("jane.doer")).toEqual(["Jane Doering"]);
+    expect(labels("STONE")).toEqual(["Bob Stone"]);
+    // The handle is zoe.angstrom; the accented name only matches the display name.
+    expect(labels("zoë")).toEqual(["Zoë Ångström"]);
+  });
+
+  it("inserts the handle that send-time mention parsing recognizes", () => {
+    const [jane] = matchMentionItems({ team, currentSubject: null, query: "jane" });
+    const token = jane ? suggestionToken(jane) : "";
+    expect(token).toBe("@jane.doe ");
+    expect(mentionedTeammates(`hey ${token}look`, team)).toEqual([
+      { subject: "google:jane", displayName: "Jane Doe" },
+    ]);
+  });
+});
+
+describe("mentionedTeammates", () => {
+  it("notifies exact handles only, not teammates whose handle is a prefix", () => {
+    expect(
+      mentionedTeammates("@jane.doering can you check?", team).map((user) => user.subject),
+    ).toEqual(["google:janet"]);
+  });
+
+  it("accepts a handle at the end of a sentence and ignores case", () => {
+    expect(mentionedTeammates("Thanks @Bob.Stone.", team).map((user) => user.subject)).toEqual([
+      "google:bob",
+    ]);
+  });
+
+  it("ignores email addresses and unknown handles", () => {
+    expect(mentionedTeammates("mail bob@stone.dev or @nobody", team)).toEqual([]);
   });
 });
 

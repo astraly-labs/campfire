@@ -5,7 +5,6 @@ import {
   type EnvironmentId,
   type MessageId,
   type OrchestrationV2ThreadProjection,
-  type SideThreadAuthor,
   type SideThreadMessage,
   type SideThreadPostAttachment,
 } from "@t3tools/contracts";
@@ -46,27 +45,18 @@ import { useThreadShells } from "../state/entities";
 import { threadEnvironment } from "../state/threads";
 import { useAtomCommand } from "../state/use-atom-command";
 import { buildThreadRouteParams } from "../threadRoutes";
-import { mentionHandleForGoogleUser } from "./takeALook";
 import { GifAttachmentInline } from "./GifAttachmentInline";
 import { GifPicker } from "./GifPicker";
 import { giphyAttachment } from "./giphyClient";
 import { SideThreadComposerInput } from "./SideThreadComposerInput";
-import { linkedThreadForText, type PickedThreadLink } from "./sideThreadComposerTriggers";
+import {
+  linkedThreadForText,
+  mentionedTeammates,
+  type PickedThreadLink,
+} from "./sideThreadComposerTriggers";
 import { sideThreadMessageTimestamp } from "./sideThreadTimestamp";
 
 const QUICK_REACTIONS = ["👍", "❤️", "👀", "🎉"] as const;
-
-function mentionsInText(
-  text: string,
-  team: ReadonlyArray<GoogleTeamMember>,
-): ReadonlyArray<SideThreadAuthor> {
-  const normalized = text.toLocaleLowerCase();
-  return team
-    .filter((member) =>
-      normalized.includes(`@${mentionHandleForGoogleUser(member).toLocaleLowerCase()}`),
-    )
-    .map(({ subject, displayName }) => ({ subject, displayName }));
-}
 
 function readImage(file: File): Promise<SideThreadPostAttachment> {
   return new Promise((resolve, reject) => {
@@ -294,7 +284,7 @@ export function SideThreadDrawer(props: {
     if (!text && attachments.length === 0) return;
     setSending(true);
     setError(null);
-    const mentions = mentionsInText(text, team);
+    const mentions = mentionedTeammates(text, team);
     const linkedThreadId = linkedThreadForText(text, threadLinks);
     const result = await post({
       environmentId,
@@ -541,6 +531,8 @@ export function SideThreadDrawer(props: {
                 suggestionsEnabled={editingId === null}
                 environmentId={environmentId}
                 threadId={threadId}
+                team={team}
+                currentSubject={currentSubject}
                 onThreadLinkPicked={(link) =>
                   setThreadLinks((current) => [
                     ...current.filter((entry) => entry.threadId !== link.threadId),
@@ -548,27 +540,6 @@ export function SideThreadDrawer(props: {
                   ])
                 }
               />
-              {!editingId && team.length > 0 ? (
-                <div className="flex flex-wrap gap-1">
-                  {team
-                    .filter((member) => member.subject !== currentSubject)
-                    .map((member) => (
-                      <button
-                        key={member.subject}
-                        type="button"
-                        className="rounded-full bg-muted px-2 py-0.5 text-3xs text-muted-foreground hover:text-foreground"
-                        onClick={() =>
-                          setDraft(
-                            (current) =>
-                              `${current}${current && !current.endsWith(" ") ? " " : ""}@${mentionHandleForGoogleUser(member)} `,
-                          )
-                        }
-                      >
-                        @{mentionHandleForGoogleUser(member)}
-                      </button>
-                    ))}
-                </div>
-              ) : null}
               {attachments.length > 0 ? (
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
                   <CheckIcon className="size-3" /> {attachments.length} attachment(s)
