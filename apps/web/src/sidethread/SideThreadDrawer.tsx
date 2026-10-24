@@ -139,7 +139,6 @@ export function SideThreadDrawer(props: {
   const [replyToId, setReplyToId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<ReadonlyArray<SideThreadPostAttachment>>([]);
-  const [gifUrl, setGifUrl] = useState("");
   const [gifPickerOpen, setGifPickerOpen] = useState(false);
   const [linkedThreadId, setLinkedThreadId] = useState("");
 
@@ -220,7 +219,6 @@ export function SideThreadDrawer(props: {
     setReplyToId(null);
     setEditingId(null);
     setAttachments([]);
-    setGifUrl("");
     setGifPickerOpen(false);
     setLinkedThreadId("");
   };
@@ -246,17 +244,7 @@ export function SideThreadDrawer(props: {
       return;
     }
 
-    const gifAttachment: SideThreadPostAttachment | null = gifUrl.trim()
-      ? {
-          type: "gif",
-          url: gifUrl.trim(),
-          previewUrl: gifUrl.trim(),
-          width: 0,
-          height: 0,
-        }
-      : null;
-    const outgoingAttachments = gifAttachment ? [...attachments, gifAttachment] : attachments;
-    if (!text && outgoingAttachments.length === 0) return;
+    if (!text && attachments.length === 0) return;
     setSending(true);
     setError(null);
     const mentions = mentionsInText(text, team);
@@ -272,7 +260,7 @@ export function SideThreadDrawer(props: {
         ...(replyToId !== null
           ? { replyToSideThreadMessageId: SideThreadMessageId.make(replyToId) }
           : {}),
-        ...(outgoingAttachments.length > 0 ? { attachments: outgoingAttachments } : {}),
+        ...(attachments.length > 0 ? { attachments } : {}),
         ...(linkedThreadId
           ? {
               linkedRef: { kind: "agent-thread" as const, threadId: ThreadId.make(linkedThreadId) },
@@ -526,13 +514,7 @@ export function SideThreadDrawer(props: {
                 </div>
               ) : null}
               {!editingId ? (
-                <div className="grid gap-2 sm:grid-cols-2">
-                  <input
-                    value={gifUrl}
-                    onChange={(event) => setGifUrl(event.target.value)}
-                    placeholder="Paste a GIF URL"
-                    className="h-8 rounded-md border bg-background px-2 text-xs"
-                  />
+                <div className="grid gap-2">
                   <select
                     value={linkedThreadId}
                     onChange={(event) => setLinkedThreadId(event.target.value)}
@@ -606,7 +588,6 @@ export function SideThreadDrawer(props: {
                             ...current.filter((attachment) => attachment.type !== "gif"),
                             giphyAttachment(gif),
                           ]);
-                          setGifUrl("");
                           setGifPickerOpen(false);
                         }}
                       />
@@ -622,7 +603,7 @@ export function SideThreadDrawer(props: {
                   disabled={
                     sideThread === null ||
                     sending ||
-                    (draft.trim().length === 0 && attachments.length === 0 && !gifUrl.trim())
+                    (draft.trim().length === 0 && attachments.length === 0)
                   }
                   onClick={() => void send()}
                 >

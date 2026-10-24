@@ -60,7 +60,7 @@ export function GifPicker(props: {
       <div className="min-h-24 flex-1 overflow-y-auto p-2">
         {!isGiphyConfigured() ? (
           <p className="text-xs leading-relaxed text-muted-foreground">
-            Add VITE_GIPHY_API_KEY to enable search. You can still paste a direct GIF URL below.
+            Add VITE_GIPHY_API_KEY to enable GIF search.
           </p>
         ) : loading && results.length === 0 ? (
           <p className="text-xs text-muted-foreground">Loading…</p>
