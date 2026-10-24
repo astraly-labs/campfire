@@ -6,8 +6,10 @@ import {
   type MessageId,
   type OrchestrationV2ThreadProjection,
   type SideThreadAuthor,
+  type SideThreadMessage,
   type SideThreadPostAttachment,
 } from "@t3tools/contracts";
+import type { TimestampFormat } from "@t3tools/contracts/settings";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { sideThreadIdForThread } from "@t3tools/shared/sideThread";
 import {
@@ -36,6 +38,7 @@ import {
   SheetTitle,
 } from "../components/ui/sheet";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../components/ui/tooltip";
+import { useClientSettings } from "../hooks/useSettings";
 import { notifyPresenceTyping } from "../presence/presence";
 import { useThreadShells } from "../state/entities";
 import { threadEnvironment } from "../state/threads";
@@ -44,6 +47,7 @@ import { mentionHandleForGoogleUser } from "./takeALook";
 import { GifAttachmentInline } from "./GifAttachmentInline";
 import { GifPicker } from "./GifPicker";
 import { giphyAttachment } from "./giphyClient";
+import { sideThreadMessageTimestamp } from "./sideThreadTimestamp";
 
 const QUICK_REACTIONS = ["👍", "❤️", "👀", "🎉"] as const;
 
@@ -79,6 +83,24 @@ function readImage(file: File): Promise<SideThreadPostAttachment> {
   });
 }
 
+function MessageTime(props: {
+  readonly message: SideThreadMessage;
+  readonly timestampFormat: TimestampFormat;
+  readonly className: string;
+}) {
+  const { label, title } = sideThreadMessageTimestamp(props.message, props.timestampFormat);
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={<time dateTime={props.message.createdAt} className={props.className} />}
+      >
+        {label}
+      </TooltipTrigger>
+      <TooltipPopup>{title}</TooltipPopup>
+    </Tooltip>
+  );
+}
+
 export function SideThreadDrawer(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
@@ -111,6 +133,7 @@ export function SideThreadDrawer(props: {
     [thread.messages],
   );
   const allThreads = useThreadShells();
+  const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
   const create = useAtomCommand(threadEnvironment.createSideThread, {
     reportDefect: false,
     reportFailure: false,
@@ -308,10 +331,6 @@ export function SideThreadDrawer(props: {
                   sideThread.messages[index - 1]?.author.subject === message.author.subject;
                 const continuesNext =
                   sideThread.messages[index + 1]?.author.subject === message.author.subject;
-                const timestamp = new Date(message.createdAt).toLocaleTimeString([], {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                });
                 return (
                   <div
                     key={message.id}
@@ -327,16 +346,18 @@ export function SideThreadDrawer(props: {
                           labelPrefix="Sent by"
                         />
                         <span className="text-xs font-medium">{message.author.displayName}</span>
-                        <time className="ml-auto text-3xs text-muted-foreground">
-                          {timestamp}
-                          {message.editedAt ? " · edited" : ""}
-                        </time>
+                        <MessageTime
+                          message={message}
+                          timestampFormat={timestampFormat}
+                          className="ml-auto text-3xs text-muted-foreground"
+                        />
                       </div>
                     ) : (
-                      <time className="float-right ml-2 text-3xs text-muted-foreground">
-                        {timestamp}
-                        {message.editedAt ? " · edited" : ""}
-                      </time>
+                      <MessageTime
+                        message={message}
+                        timestampFormat={timestampFormat}
+                        className="float-right ml-2 text-3xs text-muted-foreground"
+                      />
                     )}
                     {reply ? (
                       <div className="mb-2 truncate rounded-md border-l-2 border-primary/50 bg-background/55 px-2 py-1 text-2xs text-muted-foreground">
