@@ -8,7 +8,7 @@ import {
   type SideThreadPostAttachment,
 } from "@t3tools/contracts";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { sideThreadIdForThread } from "@t3tools/shared/sideThread";
 import { useNavigate } from "@tanstack/react-router";
@@ -29,6 +29,7 @@ import { useAssetUrls } from "~/assets/assetUrls";
 import { randomUUID } from "~/lib/utils";
 import type { GoogleTeamMember } from "../collaboration/googleTeam";
 import { CollaborationAvatar } from "../collaboration/CollaborationAvatar";
+import { useTimelineMessageRevealStore } from "../components/chat/timelineMessageReveal";
 import { Button } from "../components/ui/button";
 import {
   Sheet,
@@ -151,6 +152,13 @@ export function SideThreadDrawer(props: {
       ),
     [allThreads, environmentId],
   );
+  // The drawer's backdrop covers the whole timeline, so it closes before the timeline scrolls.
+  const revealQuotedMessage = (messageId: MessageId) => {
+    onClose();
+    useTimelineMessageRevealStore
+      .getState()
+      .reveal(scopedThreadKey(scopeThreadRef(environmentId, threadId)), messageId);
+  };
   const openThread = (linkedThreadId: ThreadId) => {
     onClose();
     void navigate({
@@ -365,9 +373,13 @@ export function SideThreadDrawer(props: {
                       </div>
                     ) : null}
                     {quoted ? (
-                      <div className="mb-2 line-clamp-2 rounded-md border-info bg-background/55 px-2 py-1 text-2xs text-muted-foreground">
-                        Agent thread: {quoted.text}
-                      </div>
+                      <button
+                        type="button"
+                        className="mb-2 block w-full rounded-md border-info bg-background/55 px-2 py-1 text-left text-2xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                        onClick={() => revealQuotedMessage(quoted.id)}
+                      >
+                        <span className="line-clamp-2">Agent thread: {quoted.text}</span>
+                      </button>
                     ) : null}
                     {message.text ? (
                       <p className="whitespace-pre-wrap text-sm">{message.text}</p>
