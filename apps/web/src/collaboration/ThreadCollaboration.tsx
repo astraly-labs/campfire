@@ -201,7 +201,7 @@ export function ThreadCollaborationProvider(props: {
         />
       ) : null}
       <Sheet open={briefingOpen} onOpenChange={setBriefingOpen}>
-        <SheetPopup side="right" className="sm:max-w-2xl">
+        <SheetPopup side="right" className="mt-(--workspace-topbar-height) sm:max-w-2xl">
           <SheetHeader>
             <SheetTitle>Private briefing</SheetTitle>
             <SheetDescription>

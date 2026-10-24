@@ -287,7 +287,9 @@ export function SideThreadDrawer(props: {
 
   return (
     <Sheet open={open} onOpenChange={(nextOpen) => !nextOpen && onClose()}>
-      <SheetPopup side="right" className="sm:max-w-[460px]">
+      {/* The workspace titlebar controls float above sheets (z-50 over --z-sheet), so a
+          full-height drawer would hide its own close button under them. */}
+      <SheetPopup side="right" className="mt-(--workspace-topbar-height) sm:max-w-[460px]">
         <div className="border-b">
           <SheetHeader>
             <div className="flex items-center gap-2 pr-8">
