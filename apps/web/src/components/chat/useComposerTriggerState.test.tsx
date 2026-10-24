@@ -2,13 +2,13 @@ import { act, StrictMode, useLayoutEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { detectComposerTrigger } from "../../composer-logic";
+import { type ComposerTrigger, detectComposerTrigger } from "../../composer-logic";
 import { useComposerTriggerState } from "./useComposerTriggerState";
 
 const command = "pnpm install -g @openai/codex@latest";
 const initialPrompt = "pnpm install -g @openai";
 let root: Root;
-let composer: ReturnType<typeof useComposerTriggerState>;
+let composer: ReturnType<typeof useComposerTriggerState<ComposerTrigger>>;
 
 function ComposerProbe() {
   const state = useComposerTriggerState(() =>

@@ -85,6 +85,7 @@ import {
   composerStateAtPromptEnd,
   detectComposerTrigger,
   expandCollapsedComposerCursor,
+  extendReplacementRangeForTrailingSpace,
   formatAssistantCitationForComposer,
   replaceTextRange,
 } from "../../composer-logic";
@@ -282,7 +283,7 @@ import {
   ComposerControlSeparator,
   ComposerSelectControl,
 } from "./ComposerControl";
-import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
+import { nudgeComposerMenuItemId, resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
 import { buildPullRequestReferenceContext } from "../pullRequest/pullRequestDetail.logic";
 import {
   matchesPullRequestQuery,
@@ -1145,17 +1146,6 @@ import { serverEnvironment } from "../../state/server";
 import type { ReviewCommentContext } from "../../reviewCommentContext";
 
 const WORKSPACE_SNAPSHOT_RETRY_COOLDOWN_MS = 10_000;
-
-const extendReplacementRangeForTrailingSpace = (
-  text: string,
-  rangeEnd: number,
-  replacement: string,
-): number => {
-  if (!replacement.endsWith(" ")) {
-    return rangeEnd;
-  }
-  return text[rangeEnd] === " " ? rangeEnd + 1 : rangeEnd;
-};
 
 function useRestingComposerControlsLayout(host: HTMLDivElement | null, useControlsAsHost = false) {
   const [controls, setControls] = useState<HTMLDivElement | null>(null);
@@ -4201,16 +4191,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const nudgeComposerMenuHighlight = useCallback(
     (key: "ArrowDown" | "ArrowUp") => {
       if (composerMenuItems.length === 0) return;
-      const highlightedIndex = composerMenuItems.findIndex(
-        (item) => item.id === composerHighlightedItemId,
+      setComposerHighlightedItemId(
+        nudgeComposerMenuItemId(composerMenuItems, composerHighlightedItemId, key),
       );
-      const normalizedIndex =
-        highlightedIndex >= 0 ? highlightedIndex : key === "ArrowDown" ? -1 : 0;
-      const offset = key === "ArrowDown" ? 1 : -1;
-      const nextIndex =
-        (normalizedIndex + offset + composerMenuItems.length) % composerMenuItems.length;
-      const nextItem = composerMenuItems[nextIndex];
-      setComposerHighlightedItemId(nextItem?.id ?? null);
     },
     [composerHighlightedItemId, composerMenuItems],
   );

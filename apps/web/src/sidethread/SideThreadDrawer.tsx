@@ -10,8 +10,10 @@ import {
   type SideThreadPostAttachment,
 } from "@t3tools/contracts";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { sideThreadIdForThread } from "@t3tools/shared/sideThread";
+import { useNavigate } from "@tanstack/react-router";
 import {
   CheckIcon,
   CornerUpLeftIcon,
@@ -43,10 +45,13 @@ import { notifyPresenceTyping } from "../presence/presence";
 import { useThreadShells } from "../state/entities";
 import { threadEnvironment } from "../state/threads";
 import { useAtomCommand } from "../state/use-atom-command";
+import { buildThreadRouteParams } from "../threadRoutes";
 import { mentionHandleForGoogleUser } from "./takeALook";
 import { GifAttachmentInline } from "./GifAttachmentInline";
 import { GifPicker } from "./GifPicker";
 import { giphyAttachment } from "./giphyClient";
+import { SideThreadComposerInput } from "./SideThreadComposerInput";
+import { linkedThreadForText, type PickedThreadLink } from "./sideThreadComposerTriggers";
 import { sideThreadMessageTimestamp } from "./sideThreadTimestamp";
 
 const QUICK_REACTIONS = ["👍", "❤️", "👀", "🎉"] as const;
@@ -132,7 +137,8 @@ export function SideThreadDrawer(props: {
     () => new Map(thread.messages.map((message) => [message.id, message] as const)),
     [thread.messages],
   );
-  const allThreads = useThreadShells();
+  const allThreads = useThreadShells(open);
+  const navigate = useNavigate();
   const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
   const create = useAtomCommand(threadEnvironment.createSideThread, {
     reportDefect: false,
@@ -163,7 +169,25 @@ export function SideThreadDrawer(props: {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<ReadonlyArray<SideThreadPostAttachment>>([]);
   const [gifPickerOpen, setGifPickerOpen] = useState(false);
-  const [linkedThreadId, setLinkedThreadId] = useState("");
+  const [threadLinks, setThreadLinks] = useState<ReadonlyArray<PickedThreadLink>>([]);
+  const threadTitles = useMemo(
+    () =>
+      new Map(
+        allThreads.flatMap((candidate) =>
+          candidate.environmentId === environmentId
+            ? [[candidate.id, candidate.title] as const]
+            : [],
+        ),
+      ),
+    [allThreads, environmentId],
+  );
+  const openThread = (linkedThreadId: ThreadId) => {
+    onClose();
+    void navigate({
+      to: "/$environmentId/$threadId",
+      params: buildThreadRouteParams(scopeThreadRef(environmentId, linkedThreadId)),
+    });
+  };
 
   useEffect(() => {
     if (open && draftPrefill) setDraft(draftPrefill);
@@ -243,7 +267,7 @@ export function SideThreadDrawer(props: {
     setEditingId(null);
     setAttachments([]);
     setGifPickerOpen(false);
-    setLinkedThreadId("");
+    setThreadLinks([]);
   };
 
   const send = async () => {
@@ -271,6 +295,7 @@ export function SideThreadDrawer(props: {
     setSending(true);
     setError(null);
     const mentions = mentionsInText(text, team);
+    const linkedThreadId = linkedThreadForText(text, threadLinks);
     const result = await post({
       environmentId,
       input: {
@@ -284,10 +309,8 @@ export function SideThreadDrawer(props: {
           ? { replyToSideThreadMessageId: SideThreadMessageId.make(replyToId) }
           : {}),
         ...(attachments.length > 0 ? { attachments } : {}),
-        ...(linkedThreadId
-          ? {
-              linkedRef: { kind: "agent-thread" as const, threadId: ThreadId.make(linkedThreadId) },
-            }
+        ...(linkedThreadId !== null
+          ? { linkedRef: { kind: "agent-thread" as const, threadId: linkedThreadId } }
           : {}),
       },
     });
@@ -327,6 +350,7 @@ export function SideThreadDrawer(props: {
                   ? parentMessages.get(message.quotedMessageId)
                   : null;
                 const own = message.author.subject === currentSubject;
+                const linkedThreadId = message.linkedRef?.threadId;
                 const continuesPrevious =
                   sideThread.messages[index - 1]?.author.subject === message.author.subject;
                 const continuesNext =
@@ -384,11 +408,22 @@ export function SideThreadDrawer(props: {
                         />
                       ) : null,
                     )}
-                    {message.linkedRef ? (
-                      <div className="mt-2 flex items-center gap-1 rounded-md border px-2 py-1 text-xs text-muted-foreground">
-                        <LinkIcon className="size-3" /> Linked agent thread:{" "}
-                        {message.linkedRef.threadId}
-                      </div>
+                    {linkedThreadId ? (
+                      <Button
+                        type="button"
+                        size="xs"
+                        variant="outline"
+                        className="mt-2 max-w-full"
+                        disabled={!threadTitles.has(linkedThreadId)}
+                        onClick={() => openThread(linkedThreadId)}
+                      >
+                        <LinkIcon />
+                        <span className="truncate">
+                          {threadTitles.has(linkedThreadId)
+                            ? `#${threadTitles.get(linkedThreadId)}`
+                            : "Linked agent thread is unavailable"}
+                        </span>
+                      </Button>
                     ) : null}
                     <div className="mt-2 flex flex-wrap items-center gap-1 opacity-70 transition-opacity group-hover:opacity-100">
                       {(message.reactions ?? []).map((reaction) => {
@@ -496,22 +531,22 @@ export function SideThreadDrawer(props: {
                   </button>
                 </div>
               ) : null}
-              <textarea
+              <SideThreadComposerInput
                 value={draft}
-                onChange={(event) => {
-                  setDraft(event.target.value);
+                onValueChange={(value) => {
+                  setDraft(value);
                   notifyPresenceTyping(environmentId, threadId);
                 }}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-                    event.preventDefault();
-                    void send();
-                  }
-                }}
-                maxLength={20_000}
-                rows={4}
-                placeholder="Write to the team…"
-                className="w-full resize-none rounded-xl border bg-background p-3 text-sm outline-none focus:ring-2 focus:ring-inset focus:ring-ring"
+                onSubmit={() => void send()}
+                suggestionsEnabled={editingId === null}
+                environmentId={environmentId}
+                threadId={threadId}
+                onThreadLinkPicked={(link) =>
+                  setThreadLinks((current) => [
+                    ...current.filter((entry) => entry.threadId !== link.threadId),
+                    link,
+                  ])
+                }
               />
               {!editingId && team.length > 0 ? (
                 <div className="flex flex-wrap gap-1">
@@ -532,27 +567,6 @@ export function SideThreadDrawer(props: {
                         @{mentionHandleForGoogleUser(member)}
                       </button>
                     ))}
-                </div>
-              ) : null}
-              {!editingId ? (
-                <div className="grid gap-2">
-                  <select
-                    value={linkedThreadId}
-                    onChange={(event) => setLinkedThreadId(event.target.value)}
-                    className="h-8 rounded-md border bg-background px-2 text-xs"
-                  >
-                    <option value="">Link another chat…</option>
-                    {allThreads
-                      .filter(
-                        (candidate) =>
-                          candidate.environmentId === environmentId && candidate.id !== threadId,
-                      )
-                      .map((candidate) => (
-                        <option key={candidate.id} value={candidate.id}>
-                          {candidate.title}
-                        </option>
-                      ))}
-                  </select>
                 </div>
               ) : null}
               {attachments.length > 0 ? (

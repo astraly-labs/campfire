@@ -83,6 +83,8 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
   resolvedTheme: "light" | "dark";
   isLoading: boolean;
   triggerKind: ComposerTriggerKind | null;
+  /** Names the listbox when the items do not come from an agent-composer trigger. */
+  listLabel?: string;
   emptyStateText?: string;
   activeItemId: string | null;
   onHighlightedItemChange: (itemId: string | null) => void;
@@ -116,7 +118,10 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
         {props.items.length > 0 ? (
           <CommandList
             id={props.listId}
-            aria-label={props.triggerKind ? LISTBOX_LABEL_BY_TRIGGER[props.triggerKind] : undefined}
+            aria-label={
+              props.listLabel ??
+              (props.triggerKind ? LISTBOX_LABEL_BY_TRIGGER[props.triggerKind] : undefined)
+            }
             className="max-h-72 min-h-0 scroll-pb-6"
           >
             <CommandGroup>

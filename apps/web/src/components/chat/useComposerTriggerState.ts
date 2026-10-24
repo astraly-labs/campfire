@@ -1,13 +1,18 @@
 import { useCallback, useRef, useState } from "react";
 
-import type { ComposerTrigger } from "../../composer-logic";
+interface DismissibleTrigger {
+  readonly kind: string;
+  readonly rangeStart: number;
+}
 
 /** Keep a dismissed suggestion closed until the caret leaves its token. */
-export function useComposerTriggerState(initialTrigger: () => ComposerTrigger | null) {
+export function useComposerTriggerState<Trigger extends DismissibleTrigger>(
+  initialTrigger: () => Trigger | null,
+) {
   const [trigger, setActiveTrigger] = useState(initialTrigger);
-  const dismissedTriggerRef = useRef<ComposerTrigger | null>(null);
+  const dismissedTriggerRef = useRef<Trigger | null>(null);
 
-  const resolveTrigger = useCallback((candidate: ComposerTrigger | null) => {
+  const resolveTrigger = useCallback((candidate: Trigger | null) => {
     const dismissed = dismissedTriggerRef.current;
     return candidate &&
       dismissed &&
@@ -18,7 +23,7 @@ export function useComposerTriggerState(initialTrigger: () => ComposerTrigger | 
   }, []);
 
   const setTrigger = useCallback(
-    (candidate: ComposerTrigger | null) => {
+    (candidate: Trigger | null) => {
       const activeTrigger = resolveTrigger(candidate);
       if (candidate === null || activeTrigger !== null) {
         dismissedTriggerRef.current = null;
@@ -28,12 +33,12 @@ export function useComposerTriggerState(initialTrigger: () => ComposerTrigger | 
     [resolveTrigger],
   );
 
-  const dismissTrigger = useCallback((candidate: ComposerTrigger | null) => {
+  const dismissTrigger = useCallback((candidate: Trigger | null) => {
     dismissedTriggerRef.current = candidate;
     setActiveTrigger(null);
   }, []);
 
-  const resetTrigger = useCallback((candidate: ComposerTrigger | null) => {
+  const resetTrigger = useCallback((candidate: Trigger | null) => {
     dismissedTriggerRef.current = null;
     setActiveTrigger(candidate);
   }, []);
