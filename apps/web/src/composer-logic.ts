@@ -351,6 +351,18 @@ export function parseStandaloneComposerSlashCommand(
   return "default";
 }
 
+/** Swallow the space after the range when the replacement already ends with one. */
+export function extendReplacementRangeForTrailingSpace(
+  text: string,
+  rangeEnd: number,
+  replacement: string,
+): number {
+  if (!replacement.endsWith(" ")) {
+    return rangeEnd;
+  }
+  return text[rangeEnd] === " " ? rangeEnd + 1 : rangeEnd;
+}
+
 export function replaceTextRange(
   text: string,
   rangeStart: number,

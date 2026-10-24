@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
+import { nudgeComposerMenuItemId, resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
 
 describe("resolveComposerMenuActiveItemId", () => {
   const items = [{ id: "top" }, { id: "second" }, { id: "third" }] as const;
@@ -64,5 +64,28 @@ describe("resolveComposerMenuActiveItemId", () => {
         items: [{ id: "new-result" }, { id: "second" }],
       }),
     ).toBe("new-result");
+  });
+});
+
+describe("nudgeComposerMenuItemId", () => {
+  const items = [{ id: "top" }, { id: "second" }, { id: "third" }] as const;
+
+  it("moves down and up from the highlighted item", () => {
+    expect(nudgeComposerMenuItemId(items, "top", "ArrowDown")).toBe("second");
+    expect(nudgeComposerMenuItemId(items, "second", "ArrowUp")).toBe("top");
+  });
+
+  it("wraps at both ends", () => {
+    expect(nudgeComposerMenuItemId(items, "third", "ArrowDown")).toBe("top");
+    expect(nudgeComposerMenuItemId(items, "top", "ArrowUp")).toBe("third");
+  });
+
+  it("starts at the top on ArrowDown and the bottom on ArrowUp with nothing highlighted", () => {
+    expect(nudgeComposerMenuItemId(items, null, "ArrowDown")).toBe("top");
+    expect(nudgeComposerMenuItemId(items, null, "ArrowUp")).toBe("third");
+  });
+
+  it("has nothing to highlight in an empty menu", () => {
+    expect(nudgeComposerMenuItemId([], "top", "ArrowDown")).toBeNull();
   });
 });
