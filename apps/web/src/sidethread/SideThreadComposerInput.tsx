@@ -1,4 +1,4 @@
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { CollaborationUser, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { flushSync } from "react-dom";
 
@@ -17,6 +17,7 @@ import { useTheme } from "../hooks/useTheme";
 import { useThreadShells } from "../state/entities";
 import {
   detectSideThreadTrigger,
+  matchMentionItems,
   matchThreadLinkItems,
   suggestionToken,
   type PickedThreadLink,
@@ -24,18 +25,25 @@ import {
   type SideThreadTrigger,
 } from "./sideThreadComposerTriggers";
 
-/** The side-thread textarea, with `#` agent-thread suggestions. */
+const MENU_COPY = {
+  mention: { listLabel: "Teammates", emptyState: "No matching teammates." },
+  thread: { listLabel: "Agent threads", emptyState: "No matching active agent threads." },
+} as const;
+
+/** The side-thread textarea, with `@` teammate and `#` agent-thread suggestions. */
 export function SideThreadComposerInput(props: {
   readonly value: string;
   readonly onValueChange: (value: string) => void;
   readonly onSubmit: () => void;
-  /** Off while editing a sent message: an edit cannot change its link. */
+  /** Off while editing a sent message: an edit cannot change its mentions or link. */
   readonly suggestionsEnabled: boolean;
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
+  readonly team: ReadonlyArray<CollaborationUser>;
+  readonly currentSubject: string | null;
   readonly onThreadLinkPicked: (link: PickedThreadLink) => void;
 }) {
-  const { value, onValueChange, onSubmit, environmentId, threadId } = props;
+  const { value, onValueChange, onSubmit, environmentId, threadId, team, currentSubject } = props;
   const listId = useId();
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const { resolvedTheme } = useTheme();
@@ -48,19 +56,20 @@ export function SideThreadComposerInput(props: {
     readonly searchKey: string | null;
   }>({ itemId: null, searchKey: null });
 
-  const activeTrigger =
-    props.suggestionsEnabled && focused && trigger?.kind === "thread" ? trigger : null;
+  const activeTrigger = props.suggestionsEnabled && focused ? trigger : null;
   // Subscribe to every thread shell only while the `#` menu needs them.
-  const threads = useThreadShells(activeTrigger !== null);
+  const threads = useThreadShells(activeTrigger?.kind === "thread");
   const items = useMemo<SideThreadSuggestionItem[]>(() => {
     if (activeTrigger === null) return [];
-    return matchThreadLinkItems({
-      threads,
-      environmentId,
-      excludeThreadId: threadId,
-      query: activeTrigger.query,
-    });
-  }, [activeTrigger, environmentId, threadId, threads]);
+    return activeTrigger.kind === "mention"
+      ? matchMentionItems({ team, currentSubject, query: activeTrigger.query })
+      : matchThreadLinkItems({
+          threads,
+          environmentId,
+          excludeThreadId: threadId,
+          query: activeTrigger.query,
+        });
+  }, [activeTrigger, currentSubject, environmentId, team, threadId, threads]);
   const searchKey = activeTrigger ? `${activeTrigger.kind}:${activeTrigger.query}` : null;
   const activeItemId = resolveComposerMenuActiveItemId({
     items,
@@ -79,7 +88,7 @@ export function SideThreadComposerInput(props: {
 
   const pick = (item: ComposerCommandItem) => {
     const textarea = textareaRef.current;
-    if (!activeTrigger || !textarea || item.type !== "thread") return;
+    if (!activeTrigger || !textarea || (item.type !== "mention" && item.type !== "thread")) return;
     const replacement = suggestionToken(item);
     const next = replaceTextRange(
       value,
@@ -87,7 +96,9 @@ export function SideThreadComposerInput(props: {
       extendReplacementRangeForTrailingSpace(value, activeTrigger.rangeEnd, replacement),
       replacement,
     );
-    props.onThreadLinkPicked({ threadId: item.thread.threadId, title: item.label });
+    if (item.type === "thread") {
+      props.onThreadLinkPicked({ threadId: item.thread.threadId, title: item.label });
+    }
     // Commit the text before moving the caret, or React resets it on the next render.
     flushSync(() => onValueChange(next.text));
     textarea.focus();
@@ -140,8 +151,8 @@ export function SideThreadComposerInput(props: {
             resolvedTheme={resolvedTheme}
             isLoading={false}
             triggerKind={null}
-            listLabel="Agent threads"
-            emptyStateText="No matching active agent threads."
+            listLabel={MENU_COPY[activeTrigger.kind].listLabel}
+            emptyStateText={MENU_COPY[activeTrigger.kind].emptyState}
             activeItemId={activeItemId}
             onHighlightedItemChange={(itemId) => setHighlight({ itemId, searchKey })}
             onSelect={pick}
@@ -170,7 +181,7 @@ export function SideThreadComposerInput(props: {
         }
         maxLength={20_000}
         rows={4}
-        placeholder="Write to the team… # to link a thread"
+        placeholder="Write to the team… @ to mention, # to link a thread"
         className="relative z-20 w-full resize-none rounded-xl border bg-background p-3 text-sm outline-none focus:ring-2 focus:ring-inset focus:ring-ring"
       />
     </div>

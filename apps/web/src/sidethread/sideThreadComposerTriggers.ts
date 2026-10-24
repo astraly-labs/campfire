@@ -1,8 +1,9 @@
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { CollaborationUser, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { detectComposerTrigger } from "@t3tools/shared/composerTrigger";
 
 import type { ComposerCommandItem } from "../components/chat/ComposerCommandMenu";
 import { formatRelativeTimeLabel } from "../timestampFormat";
+import { mentionHandleForGoogleUser } from "./takeALook";
 
 const SIDE_THREAD_SUGGESTION_LIMIT = 8;
 
@@ -14,7 +15,7 @@ export interface SideThreadTrigger {
   readonly rangeEnd: number;
 }
 
-export type SideThreadSuggestionItem = Extract<ComposerCommandItem, { type: "thread" }>;
+export type SideThreadSuggestionItem = Extract<ComposerCommandItem, { type: "mention" | "thread" }>;
 
 /** A `#` link the user picked; it is sent only while its token is still in the text. */
 export interface PickedThreadLink {
@@ -37,6 +38,46 @@ export function detectSideThreadTrigger(text: string, caret: number): SideThread
   if (trigger?.kind === "path") return { ...trigger, kind: "mention" };
   if (trigger?.kind === "pull-request") return { ...trigger, kind: "thread" };
   return null;
+}
+
+/** Teammates to mention, never the current user, matched on handle or display name. */
+export function matchMentionItems(input: {
+  readonly team: ReadonlyArray<CollaborationUser>;
+  readonly currentSubject: string | null;
+  readonly query: string;
+}): SideThreadSuggestionItem[] {
+  const query = input.query.toLocaleLowerCase();
+  return input.team
+    .filter((member) => member.subject !== input.currentSubject)
+    .map((member) => ({ member, handle: mentionHandleForGoogleUser(member) }))
+    .filter(
+      ({ member, handle }) =>
+        handle.includes(query) || member.displayName.toLocaleLowerCase().includes(query),
+    )
+    .slice(0, SIDE_THREAD_SUGGESTION_LIMIT)
+    .map(({ member, handle }) => ({
+      id: `mention:${member.subject}`,
+      type: "mention",
+      user: { subject: member.subject, displayName: member.displayName },
+      label: member.displayName,
+      description: `@${handle}`,
+    }));
+}
+
+/** Teammates whose exact `@handle` appears in the text, so `@jane.doe` never notifies `@jane`. */
+export function mentionedTeammates(
+  text: string,
+  team: ReadonlyArray<CollaborationUser>,
+): CollaborationUser[] {
+  const handles = new Set(
+    Array.from(text.toLocaleLowerCase().matchAll(/@([a-z0-9][a-z0-9.]*)/gu), (match) =>
+      // A sentence can end right after a handle: "ping @jane.doe."
+      match[1]!.replace(/\.+$/u, ""),
+    ),
+  );
+  return team
+    .filter((member) => handles.has(mentionHandleForGoogleUser(member)))
+    .map(({ subject, displayName }) => ({ subject, displayName }));
 }
 
 /** Agent threads worth linking: same environment, not this one, not archived or settled. */
@@ -69,7 +110,7 @@ export function matchThreadLinkItems(input: {
 
 /** Text that replaces the typed trigger when the user picks a suggestion. */
 export function suggestionToken(item: SideThreadSuggestionItem): string {
-  return `#${item.label} `;
+  return item.type === "mention" ? `@${mentionHandleForGoogleUser(item.user)} ` : `#${item.label} `;
 }
 
 /** The message carries one linked thread: the earliest picked link whose token survived editing. */
