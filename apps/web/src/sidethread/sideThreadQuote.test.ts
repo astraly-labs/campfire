@@ -8,6 +8,10 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  createAssistantTextSelector,
+  findAssistantCitationText,
+} from "~/lib/assistantTextSelection";
+import {
   markdownPreviewText,
   sideThreadDraftQuoteFromCitation,
   sideThreadExcerptText,
@@ -58,6 +62,29 @@ describe("sideThreadDraftQuoteFromCitation", () => {
       messageId: "agent-message",
       excerpt: null,
     });
+  });
+});
+
+describe("locating a quoted passage in its message", () => {
+  // The selection toolbar's text stream: one line break between rendered blocks.
+  const rendered = "Thursday is settled.\nAt 10:39 UTC the deploy finished. At 10:39 UTC we left.";
+  const quoteAt = (start: number, end: number) => {
+    const selector = createAssistantTextSelector(rendered, start, end)!;
+    return sideThreadDraftQuoteFromCitation(citation(selector)).excerpt!;
+  };
+
+  it("finds a repeated passage at the occurrence that was selected", () => {
+    const second = rendered.lastIndexOf("At 10:39 UTC");
+    const excerpt = quoteAt(second, second + "At 10:39 UTC".length);
+    expect(findAssistantCitationText(rendered, excerpt)).toEqual({
+      start: second,
+      end: second + "At 10:39 UTC".length,
+    });
+  });
+
+  it("finds nothing once the message no longer contains the passage", () => {
+    const excerpt = quoteAt(rendered.indexOf("the deploy"), rendered.indexOf(" finished"));
+    expect(findAssistantCitationText(rendered.replace("deploy", "rollout"), excerpt)).toBeNull();
   });
 });
 
