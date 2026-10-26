@@ -1,4 +1,9 @@
-import { SideThreadId, SideThreadMessageId, type CollaborationUser } from "@t3tools/contracts";
+import {
+  SideThreadId,
+  SideThreadMessageId,
+  type CollaborationUser,
+  type SideThreadQuotedExcerpt,
+} from "@t3tools/contracts";
 import * as Exit from "effect/Exit";
 import { assert, it } from "@effect/vitest";
 import {
@@ -23,6 +28,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as Stream from "effect/Stream";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as Orchestrator from "./Orchestrator.ts";
@@ -754,4 +760,142 @@ it.effect(
       assert.ok(userItem?.type === "user_message");
       assert.deepStrictEqual(userItem.author, bob);
     }).pipe(Effect.provide(layerTest)),
+);
+
+const quotingThread = Effect.fn("quotingThread")(function* (name: string) {
+  const orchestrator = yield* Orchestrator.OrchestratorV2;
+  const threadId = ThreadId.make(`thread:${name}`);
+  const sideThreadId = SideThreadId.make(`thread:${threadId}`);
+  const alice = { subject: "google:alice", displayName: "Alice" };
+  const sourceMessageId = MessageId.make(`${name}:source`);
+  const now = "2026-10-24T10:39:00.000Z";
+  yield* orchestrator.dispatch({
+    type: "thread.create",
+    commandId: CommandId.make(`${name}:create`),
+    threadId,
+    projectId: ProjectId.make(`project:${name}`),
+    title: "Quotes",
+    modelSelection,
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    branch: null,
+    worktreePath: null,
+    createdBy: "user",
+    creationSource: "web",
+    collaborationUser: alice,
+  });
+  yield* orchestrator.dispatch({
+    type: "message.dispatch",
+    commandId: CommandId.make(`${name}:source`),
+    threadId,
+    messageId: sourceMessageId,
+    text: "**Thursday is settled.** At 10:39 UTC the deploy finished.",
+    attachments: [],
+    dispatchMode: { type: "start_immediately" },
+    createdBy: "user",
+    creationSource: "web",
+    collaborationUser: alice,
+  });
+  yield* orchestrator.dispatch({
+    type: "sidethread.create",
+    commandId: CommandId.make(`${name}:discussion`),
+    threadId,
+    sideThreadId,
+    collaborationUser: alice,
+    createdAt: now,
+  });
+  const post = (
+    id: string,
+    quote: {
+      readonly quotedMessageId?: MessageId;
+      readonly quotedExcerpt?: SideThreadQuotedExcerpt;
+    },
+  ) =>
+    orchestrator.dispatch({
+      type: "sidethread.message.post",
+      commandId: CommandId.make(`${name}:${id}`),
+      threadId,
+      sideThreadId,
+      messageId: SideThreadMessageId.make(id),
+      text: `Message ${id}`,
+      collaborationUser: alice,
+      createdAt: now,
+      ...quote,
+    });
+  return { threadId, sourceMessageId, post };
+});
+
+const excerpt: SideThreadQuotedExcerpt = {
+  text: "At 10:39 UTC",
+  start: 21,
+  end: 33,
+  prefix: "Thursday is settled. ",
+  suffix: " the deploy finished.",
+};
+
+it.effect("keeps a quoted passage through the command, stored event and projection", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const { threadId, sourceMessageId, post } = yield* quotingThread("quoted-passage");
+    yield* post("passage", { quotedMessageId: sourceMessageId, quotedExcerpt: excerpt });
+    yield* post("whole-message", { quotedMessageId: sourceMessageId });
+    const orphan = yield* Effect.exit(post("orphan-passage", { quotedExcerpt: excerpt }));
+    assert.isTrue(Exit.isFailure(orphan));
+
+    const stored = yield* orchestrator
+      .streamStoredEventsFrom({ threadId, eventType: "sidethread.message-posted" })
+      .pipe(Stream.take(2), Stream.runCollect);
+    const payloads = stored.flatMap(({ event }) =>
+      event.type === "sidethread.message-posted" ? [event.payload] : [],
+    );
+    assert.deepStrictEqual(payloads[0]?.quotedExcerpt, excerpt);
+    assert.equal(payloads[1]?.quotedMessageId, sourceMessageId);
+    assert.isFalse(payloads[1] !== undefined && "quotedExcerpt" in payloads[1]);
+
+    const messages = (yield* projections.getThreadProjection(threadId)).sideThreads?.[0]?.messages;
+    assert.deepStrictEqual(
+      messages?.map((message) => message.id),
+      ["passage", "whole-message"],
+    );
+    assert.deepStrictEqual(messages?.[0]?.quotedExcerpt, excerpt);
+    assert.equal(messages?.[0]?.quotedMessageId, sourceMessageId);
+    assert.equal(messages?.[1]?.quotedMessageId, sourceMessageId);
+    assert.isFalse(messages?.[1] !== undefined && "quotedExcerpt" in messages[1]);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("reads discussions stored before quoted passages existed", () =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const sql = yield* SqlClient.SqlClient;
+    const { threadId, sourceMessageId, post } = yield* quotingThread("legacy-quote");
+    const author = { subject: "google:bob", displayName: "Bob" };
+    const legacy = [
+      {
+        id: `thread:${threadId}`,
+        createdBy: author,
+        createdAt: "2026-10-01T09:00:00.000Z",
+        updatedAt: "2026-10-01T09:00:00.000Z",
+        archivedAt: null,
+        messages: [
+          {
+            id: "legacy",
+            author,
+            text: "> Thursday is settled.\n\nAgreed",
+            quotedMessageId: sourceMessageId,
+            createdAt: "2026-10-01T09:00:00.000Z",
+          },
+        ],
+      },
+    ];
+    yield* sql`UPDATE orchestration_v2_projection_side_threads SET payload_json = ${JSON.stringify(legacy)} WHERE thread_id = ${threadId}`;
+    yield* post("after-upgrade", { quotedMessageId: sourceMessageId, quotedExcerpt: excerpt });
+
+    const messages = (yield* projections.getThreadProjection(threadId)).sideThreads?.[0]?.messages;
+    assert.equal(messages?.[0]?.id, "legacy");
+    assert.equal(messages?.[0]?.quotedMessageId, sourceMessageId);
+    assert.isUndefined(messages?.[0]?.quotedExcerpt);
+    assert.deepStrictEqual(messages?.[1]?.quotedExcerpt, excerpt);
+  }).pipe(Effect.provide(layerTest)),
 );
