@@ -198,7 +198,11 @@ import {
   type AssistantCitationTarget,
 } from "./AssistantCitationSource";
 import { useAssistantCitationTarget, type CitationHistoryPage } from "./useAssistantCitationTarget";
-import { useTimelineMessageReveal } from "./timelineMessageReveal";
+import {
+  useRevealedPassage,
+  useTimelineMessageReveal,
+  type RevealTarget,
+} from "./timelineMessageReveal";
 import {
   computeStableMessagesTimelineRows,
   deriveMessagesTimelineRowsWithState,
@@ -388,7 +392,7 @@ interface TimelineRowActivityState {
 const TimelineRowCtx = createContext<TimelineRowSharedState>(null!);
 const TimelineRowActivityCtx = createContext<TimelineRowActivityState>(null!);
 // Its own context so a reveal re-renders rows without rebuilding the shared state.
-const TimelineRevealedMessageCtx = createContext<MessageId | null>(null);
+const TimelineRevealedMessageCtx = createContext<RevealTarget | null>(null);
 
 interface WorkGroupViewState {
   scrollPositions: Map<string, WorkGroupScrollAnchor>;
@@ -1107,7 +1111,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     onCitationListLoad();
     setFindListReady(true);
   }, [onCitationListLoad]);
-  const revealedMessageId = useTimelineMessageReveal({
+  const revealedMessage = useTimelineMessageReveal({
     threadKey: routeThreadKey,
     enabled: !paintOnly,
     listReady: findListReady,
@@ -1642,7 +1646,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     <MarkdownFindContext value={findActive}>
       <TimelineRowCtx value={sharedState}>
         <TimelineRowActivityCtx value={activityState}>
-          <TimelineRevealedMessageCtx value={revealedMessageId}>
+          <TimelineRevealedMessageCtx value={revealedMessage}>
             <TooltipScrollDismissArea
               ref={setTimelineViewportElement}
               className="relative h-full min-h-0"
@@ -2091,8 +2095,8 @@ type TimelineWorkEntry = Extract<MessagesTimelineRow, { kind: "work" }>["grouped
 type TimelineRow = MessagesTimelineRow;
 
 const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: TimelineRow }) {
-  const revealedMessageId = use(TimelineRevealedMessageCtx);
-  const revealed = row.kind === "message" && row.message.id === revealedMessageId;
+  const reveal = use(TimelineRevealedMessageCtx);
+  const revealed = row.kind === "message" && row.message.id === reveal?.messageId;
   const isExpandedToolGroup = row.kind === "work" && row.isExpandedToolGroup;
   const isSubagentGroup = row.kind === "event" && row.projectedItem.item.type === "subagent";
   const isWorkLogRow =
@@ -2171,7 +2175,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       ) : null}
       {row.kind === "message" && row.message.role === "user" ? <UserTimelineRow row={row} /> : null}
       {row.kind === "message" && row.message.role === "assistant" ? (
-        <AssistantTimelineRow row={row} />
+        <AssistantTimelineRow row={row} reveal={revealed ? reveal : null} />
       ) : null}
       {row.kind === "message" && !row.message.streaming ? (
         <TeamMessageActions messageId={row.message.id} />
@@ -2860,15 +2864,28 @@ function AttemptFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "at
   );
 }
 
-function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
+function AssistantTimelineRow({
+  row,
+  reveal,
+}: {
+  row: Extract<TimelineRow, { kind: "message" }>;
+  reveal: RevealTarget | null;
+}) {
   const ctx = use(TimelineRowCtx);
   const messageText = row.message.text || (row.message.streaming ? "" : "(empty response)");
+  const textRootRef = useRef<HTMLDivElement>(null);
+  useRevealedPassage({
+    reveal,
+    rootRef: textRootRef,
+    rowKey: row.id,
+    listRef: ctx.listRef,
+  });
 
   return (
     <>
       <div className="relative min-w-0 px-1 py-0.5">
         <MessageAuthorHeading>T3 Code</MessageAuthorHeading>
-        <div data-thread-find-text="true">
+        <div ref={textRootRef} data-thread-find-text="true">
           <AssistantCitationSource
             messageId={row.message.id}
             {...(ctx.threadRef ? { threadRef: ctx.threadRef } : {})}

@@ -1,7 +1,11 @@
 import { MessageId, RunId } from "@t3tools/contracts";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { locateTimelineMessage, useTimelineMessageRevealStore } from "./timelineMessageReveal";
+import {
+  locateTimelineMessage,
+  revealedPassageViewOffset,
+  useTimelineMessageRevealStore,
+} from "./timelineMessageReveal";
 
 const quoted = MessageId.make("quoted");
 const run = RunId.make("run-1");
@@ -84,6 +88,14 @@ describe("useTimelineMessageRevealStore", () => {
     expect(store.getState().highlighted).toBeNull();
   });
 
+  it("carries a quoted passage through to the highlighted reveal", () => {
+    const store = useTimelineMessageRevealStore;
+    const passage = { text: "At 10:39 UTC", start: 21, end: 33, prefix: "", suffix: "" };
+    store.getState().reveal("env:thread", quoted, passage);
+    store.getState().settle(store.getState().pending!, true);
+    expect(store.getState().highlighted).toMatchObject({ messageId: quoted, passage });
+  });
+
   it("does not highlight a message it could not find", () => {
     const store = useTimelineMessageRevealStore;
     store.getState().reveal("env:thread", quoted);
@@ -99,5 +111,31 @@ describe("useTimelineMessageRevealStore", () => {
     store.getState().settle(older, true);
     expect(store.getState().pending?.messageId).toBe("newer");
     expect(store.getState().highlighted).toBeNull();
+  });
+});
+
+describe("revealedPassageViewOffset", () => {
+  it("leaves the reveal's position alone when the passage already shows", () => {
+    expect(
+      revealedPassageViewOffset({ passageTop: 300, passageBottom: 340, viewportHeight: 800 }),
+    ).toBeNull();
+  });
+
+  it("brings a passage below the fold to the citation jump's position", () => {
+    expect(
+      revealedPassageViewOffset({ passageTop: 1_500, passageBottom: 1_540, viewportHeight: 800 }),
+    ).toBe(120 - 1_500);
+  });
+
+  it("moves a passage that the fold cuts through", () => {
+    expect(
+      revealedPassageViewOffset({ passageTop: 700, passageBottom: 790, viewportHeight: 800 }),
+    ).toBe(120 - 700);
+  });
+
+  it("keeps the passage in the upper third of a short timeline", () => {
+    expect(
+      revealedPassageViewOffset({ passageTop: 400, passageBottom: 440, viewportHeight: 300 }),
+    ).toBe(100 - 400);
   });
 });

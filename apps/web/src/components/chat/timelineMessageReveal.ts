@@ -3,16 +3,25 @@ import type { MessageId, RunId } from "@t3tools/contracts";
 import { useEffect, useRef, type RefObject } from "react";
 import { create } from "zustand";
 
+import {
+  resolveAssistantCitationRange,
+  type AssistantTextSelector,
+} from "~/lib/assistantTextSelection";
 import { toastManager } from "../ui/toast";
 
 const REVEAL_HIGHLIGHT_MS = 2_000;
 const REVEAL_MAX_HISTORY_PAGES = 20;
 // Matches the minimap jump: the message top lands just below the timeline's top edge.
 const REVEAL_VIEW_OFFSET = 24;
+// Matches the citation jump: a passage below the fold lands this far from the top edge.
+const REVEAL_PASSAGE_VIEW_TOP = 120;
+const REVEAL_PASSAGE_HIGHLIGHT = "campfire-revealed-passage";
 
-interface RevealTarget {
+export interface RevealTarget {
   readonly threadKey: string;
   readonly messageId: MessageId;
+  /** Text within the message to mark, located like an assistant citation. */
+  readonly passage: AssistantTextSelector | null;
   /** Tells repeated reveals of the same message apart. */
   readonly id: number;
 }
@@ -22,19 +31,23 @@ interface TimelineMessageRevealState {
   readonly pending: RevealTarget | null;
   /** The message showing the static reveal highlight. */
   readonly highlighted: RevealTarget | null;
-  readonly reveal: (threadKey: string, messageId: MessageId) => void;
+  readonly reveal: (
+    threadKey: string,
+    messageId: MessageId,
+    passage?: AssistantTextSelector | null,
+  ) => void;
   readonly settle: (target: RevealTarget, found: boolean) => void;
 }
 
 let nextRevealId = 0;
 
-/** Asks a thread's timeline to scroll to one message and highlight it briefly. */
+/** Asks a thread's timeline to scroll to one message and highlight it, or a passage in it, briefly. */
 export const useTimelineMessageRevealStore = create<TimelineMessageRevealState>((set) => ({
   pending: null,
   highlighted: null,
-  reveal: (threadKey, messageId) => {
+  reveal: (threadKey, messageId, passage = null) => {
     nextRevealId += 1;
-    set({ pending: { threadKey, messageId, id: nextRevealId } });
+    set({ pending: { threadKey, messageId, passage, id: nextRevealId } });
   },
   settle: (target, found) => {
     set((state) =>
@@ -93,7 +106,10 @@ export function locateTimelineMessage(input: {
   return input.canLoadEarlier ? { kind: "load-earlier" } : { kind: "missing" };
 }
 
-/** Positions the timeline on a requested message once it is loaded and unfolded. */
+/**
+ * Positions the timeline on a requested message once it is loaded and unfolded,
+ * and returns the reveal to highlight.
+ */
 export function useTimelineMessageReveal(input: {
   readonly threadKey: string;
   readonly enabled: boolean;
@@ -111,14 +127,14 @@ export function useTimelineMessageReveal(input: {
     | undefined;
   readonly onExpandTurn: (runId: RunId) => void;
   readonly onManualNavigation: () => void;
-}): MessageId | null {
+}): RevealTarget | null {
   const { threadKey, enabled, listReady, rows, entries, listRef, history } = input;
   const { onExpandTurn, onManualNavigation } = input;
   const pending = useTimelineMessageRevealStore((state) =>
     state.pending?.threadKey === threadKey ? state.pending : null,
   );
   const highlighted = useTimelineMessageRevealStore((state) =>
-    state.highlighted?.threadKey === threadKey ? state.highlighted.messageId : null,
+    state.highlighted?.threadKey === threadKey ? state.highlighted : null,
   );
   const progressRef = useRef<{
     readonly id: number;
@@ -184,4 +200,69 @@ export function useTimelineMessageReveal(input: {
   ]);
 
   return highlighted;
+}
+
+/**
+ * Where the revealed row must sit, as Legend's `viewOffset`, for a passage
+ * measured from the row's top to be visible. Null when the reveal's own
+ * position already shows it.
+ */
+export function revealedPassageViewOffset(input: {
+  readonly passageTop: number;
+  readonly passageBottom: number;
+  readonly viewportHeight: number;
+}): number | null {
+  if (REVEAL_VIEW_OFFSET + input.passageBottom <= input.viewportHeight) return null;
+  return Math.min(REVEAL_PASSAGE_VIEW_TOP, input.viewportHeight / 3) - input.passageTop;
+}
+
+/**
+ * While a reveal targets this row with a passage it can still find, scrolls
+ * the passage into view and marks it with a static highlight. A passage that
+ * no longer matches leaves only the row's message highlight.
+ */
+export function useRevealedPassage(input: {
+  readonly reveal: RevealTarget | null;
+  readonly rootRef: RefObject<HTMLElement | null>;
+  readonly rowKey: string;
+  readonly listRef: RefObject<LegendListRef | null>;
+}) {
+  const { reveal, rootRef, rowKey, listRef } = input;
+  useEffect(() => {
+    const passage = reveal?.passage;
+    const source = rootRef.current?.querySelector<HTMLElement>("[data-assistant-citation-source]");
+    if (!passage || !source) return;
+    const range = resolveAssistantCitationRange(source, passage);
+    if (!range) return;
+
+    const list = listRef.current;
+    const state = list?.getState();
+    const index = state?.indexByKey(rowKey);
+    const row: unknown = index === undefined ? undefined : state?.elementAtIndex(index);
+    const scrollNode: unknown = list?.getScrollableNode();
+    if (
+      list &&
+      index !== undefined &&
+      row instanceof HTMLElement &&
+      scrollNode instanceof HTMLElement
+    ) {
+      const rowTop = row.getBoundingClientRect().top;
+      const passageRect = range.getBoundingClientRect();
+      const viewOffset = revealedPassageViewOffset({
+        passageTop: passageRect.top - rowTop,
+        passageBottom: passageRect.bottom - rowTop,
+        viewportHeight: scrollNode.clientHeight,
+      });
+      if (viewOffset !== null) void list.scrollToIndex({ index, animated: true, viewOffset });
+    }
+
+    if (typeof Highlight === "undefined" || typeof CSS === "undefined" || !CSS.highlights) return;
+    const highlight = new Highlight(range);
+    CSS.highlights.set(REVEAL_PASSAGE_HIGHLIGHT, highlight);
+    return () => {
+      if (CSS.highlights.get(REVEAL_PASSAGE_HIGHLIGHT) === highlight) {
+        CSS.highlights.delete(REVEAL_PASSAGE_HIGHLIGHT);
+      }
+    };
+  }, [listRef, reveal, rootRef, rowKey]);
 }

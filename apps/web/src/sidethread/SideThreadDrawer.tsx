@@ -6,6 +6,7 @@ import {
   type OrchestrationV2ThreadProjection,
   type SideThreadMessage,
   type SideThreadPostAttachment,
+  type SideThreadQuotedExcerpt,
 } from "@t3tools/contracts";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
@@ -148,11 +149,11 @@ export function SideThreadDrawer(props: {
     [allThreads, environmentId],
   );
   // The drawer's backdrop covers the whole timeline, so it closes before the timeline scrolls.
-  const revealQuotedMessage = (messageId: MessageId) => {
+  const revealQuote = (messageId: MessageId, excerpt: SideThreadQuotedExcerpt | undefined) => {
     onClose();
     useTimelineMessageRevealStore
       .getState()
-      .reveal(scopedThreadKey(scopeThreadRef(environmentId, threadId)), messageId);
+      .reveal(scopedThreadKey(scopeThreadRef(environmentId, threadId)), messageId, excerpt);
   };
   const openThread = (linkedThreadId: ThreadId) => {
     onClose();
@@ -370,7 +371,7 @@ export function SideThreadDrawer(props: {
                         excerpt={message.quotedExcerpt}
                         source={quoted}
                         timestampFormat={timestampFormat}
-                        onReveal={() => revealQuotedMessage(quotedMessageId)}
+                        onReveal={() => revealQuote(quotedMessageId, message.quotedExcerpt)}
                       />
                     ) : null}
                     {message.text ? (
