@@ -55,6 +55,8 @@ import {
   type PickedThreadLink,
 } from "./sideThreadComposerTriggers";
 import { readImage, withAddedAttachments } from "./sideThreadImages";
+import { SideThreadPendingQuote } from "./SideThreadQuoteCard";
+import type { SideThreadDraftQuote } from "./sideThreadQuote";
 import { sideThreadMessageTimestamp } from "./sideThreadTimestamp";
 
 const QUICK_REACTIONS = ["👍", "❤️", "👀", "🎉"] as const;
@@ -84,21 +86,14 @@ export function SideThreadDrawer(props: {
   readonly team: ReadonlyArray<GoogleTeamMember>;
   readonly currentSubject: string | null;
   readonly open: boolean;
-  readonly contextMessageId: MessageId | null;
-  readonly draftPrefill: string;
+  /** Attached to the next message sent, then cleared. */
+  readonly quote: SideThreadDraftQuote | null;
+  readonly onQuoteChange: (quote: SideThreadDraftQuote | null) => void;
   readonly onClose: () => void;
 }) {
-  const {
-    environmentId,
-    threadId,
-    thread,
-    team,
-    currentSubject,
-    open,
-    contextMessageId,
-    draftPrefill,
-    onClose,
-  } = props;
+  const { environmentId, threadId, thread, team, currentSubject, open, quote } = props;
+  const { onQuoteChange, onClose } = props;
+  const anchorMessageId = quote?.messageId ?? null;
   const sideThreadId = sideThreadIdForThread(threadId);
   const sideThread = useMemo(
     () => (thread.sideThreads ?? []).find((entry) => entry.id === sideThreadId) ?? null,
@@ -167,10 +162,6 @@ export function SideThreadDrawer(props: {
     });
   };
 
-  useEffect(() => {
-    if (open && draftPrefill) setDraft(draftPrefill);
-  }, [draftPrefill, open]);
-
   const imageAttachmentIds = useMemo(
     () =>
       sideThread?.messages.flatMap((message) =>
@@ -206,7 +197,7 @@ export function SideThreadDrawer(props: {
       input: {
         threadId,
         sideThreadId,
-        ...(contextMessageId !== null ? { anchorMessageId: contextMessageId } : {}),
+        ...(anchorMessageId !== null ? { anchorMessageId } : {}),
       },
     }).then((result) => {
       createPending.current = null;
@@ -215,7 +206,7 @@ export function SideThreadDrawer(props: {
         setError(cause instanceof Error ? cause.message : String(cause));
       }
     });
-  }, [contextMessageId, create, environmentId, open, sideThread, sideThreadId, threadId]);
+  }, [anchorMessageId, create, environmentId, open, sideThread, sideThreadId, threadId]);
 
   const latestMessageAt = sideThread?.messages.at(-1)?.createdAt ?? null;
   useEffect(() => {
@@ -288,7 +279,8 @@ export function SideThreadDrawer(props: {
         messageId: SideThreadMessageId.make(randomUUID()),
         text,
         ...(mentions.length > 0 ? { mentions } : {}),
-        ...(contextMessageId !== null ? { quotedMessageId: contextMessageId } : {}),
+        ...(quote !== null ? { quotedMessageId: quote.messageId } : {}),
+        ...(quote?.excerpt ? { quotedExcerpt: quote.excerpt } : {}),
         ...(replyToId !== null
           ? { replyToSideThreadMessageId: SideThreadMessageId.make(replyToId) }
           : {}),
@@ -299,8 +291,10 @@ export function SideThreadDrawer(props: {
       },
     });
     setSending(false);
-    if (result._tag === "Success") clearComposer();
-    else setError(String(squashAtomCommandFailure(result)));
+    if (result._tag === "Success") {
+      clearComposer();
+      onQuoteChange(null);
+    } else setError(String(squashAtomCommandFailure(result)));
   };
 
   return (
@@ -497,6 +491,13 @@ export function SideThreadDrawer(props: {
             </p>
           ) : (
             <div className="space-y-2 border-t pt-3">
+              {quote && editingId === null ? (
+                <SideThreadPendingQuote
+                  quote={quote}
+                  source={parentMessages.get(quote.messageId)}
+                  onRemove={() => onQuoteChange(null)}
+                />
+              ) : null}
               {replyToId || editingId ? (
                 <div className="flex items-center gap-2 rounded-lg bg-muted px-2 py-1 text-xs text-muted-foreground">
                   {editingId ? (

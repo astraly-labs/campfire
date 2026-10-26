@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentProps,
+  type ReactNode,
+} from "react";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { MessageCircleIcon, LockKeyholeIcon } from "lucide-react";
 import {
@@ -19,8 +27,12 @@ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime"
 import { useGoogleTeam } from "./googleTeam";
 import { SideThreadDrawer } from "../sidethread/SideThreadDrawer";
 import { TakeALookButton } from "../sidethread/TakeALookButton";
-import { QuoteOnSelection } from "../sidethread/QuoteOnSelection";
+import {
+  sideThreadDraftQuoteFromCitation,
+  type SideThreadDraftQuote,
+} from "../sidethread/sideThreadQuote";
 import { useSideThreadUiStore } from "../sidethread/sideThreadUiStore";
+import { AssistantSelectionToolbar } from "../components/chat/AssistantSelectionToolbar";
 import { PresenceAvatarStack } from "../presence/PresenceAvatarStack";
 import { useThreadPresence } from "../presence/presence";
 import { ThreadBriefingView } from "../components/context-assistant/ThreadBriefingView";
@@ -61,10 +73,9 @@ export function ThreadCollaborationProvider(props: {
     [thread.environmentId, thread.id],
   );
   const team = useGoogleTeam(thread.environmentId);
-  const [discussion, setDiscussion] = useState<{
-    messageId: MessageId | null;
-    quote: string;
-  } | null>(null);
+  const [discussionOpen, setDiscussionOpen] = useState(false);
+  // Like the draft text, a pending quote outlives closing the drawer.
+  const [draftQuote, setDraftQuote] = useState<SideThreadDraftQuote | null>(null);
   const [reviewNumber, setReviewNumber] = useState<number | null>(null);
   const [startingReview, setStartingReview] = useState(false);
   const reviewInFlight = useRef(false);
@@ -90,7 +101,7 @@ export function ThreadCollaborationProvider(props: {
   const remove = useAtomCommand(threadEnvironment.delete, { reportFailure: false });
   useEffect(() => {
     if (requestedThreadKey !== threadKey) return;
-    setDiscussion({ messageId: null, quote: "" });
+    setDiscussionOpen(true);
     consumeRequest(threadKey);
   }, [requestedThreadKey, threadKey, consumeRequest]);
   const sideThread = projection?.sideThreads?.find(
@@ -101,7 +112,7 @@ export function ThreadCollaborationProvider(props: {
     (marker) => marker.user.subject === team.current?.subject,
   )?.lastReadAt;
   const unread =
-    discussion === null &&
+    !discussionOpen &&
     latest !== undefined &&
     team.current !== null &&
     latest.author.subject !== team.current.subject &&
@@ -112,7 +123,14 @@ export function ThreadCollaborationProvider(props: {
       team,
       unread,
       messageCount: sideThread?.messages.length ?? 0,
-      open: (messageId, quote = "") => setDiscussion({ messageId: messageId ?? null, quote }),
+      open: (messageId) => {
+        if (messageId) setDraftQuote({ messageId, excerpt: null });
+        setDiscussionOpen(true);
+      },
+      quote: (citation) => {
+        setDraftQuote(sideThreadDraftQuoteFromCitation(citation));
+        setDiscussionOpen(true);
+      },
       review: setReviewNumber,
       openBriefing: () => setBriefingOpen(true),
     }),
@@ -194,10 +212,10 @@ export function ThreadCollaborationProvider(props: {
           thread={projection}
           team={team.members}
           currentSubject={team.current?.subject ?? null}
-          open={discussion !== null}
-          contextMessageId={discussion?.messageId ?? null}
-          draftPrefill={discussion?.quote ?? ""}
-          onClose={() => setDiscussion(null)}
+          open={discussionOpen}
+          quote={draftQuote}
+          onQuoteChange={setDraftQuote}
+          onClose={() => setDiscussionOpen(false)}
         />
       ) : null}
       <Sheet open={briefingOpen} onOpenChange={setBriefingOpen}>
@@ -297,19 +315,15 @@ export function TeamMessageActions({ messageId }: { readonly messageId: MessageI
     </div>
   );
 }
-export function TeamQuoteSelection({
-  messageId,
-  children,
-}: {
-  readonly messageId: MessageId;
-  readonly children: ReactNode;
+/** The timeline's selection toolbar, with Quote in discussion when the thread has a team discussion. */
+export function TeamSelectionToolbar({
+  quoteEnabled,
+  ...props
+}: Omit<ComponentProps<typeof AssistantSelectionToolbar>, "onQuoteInDiscussion"> & {
+  readonly quoteEnabled: boolean;
 }) {
   const context = useThreadCollaboration();
-  return context ? (
-    <QuoteOnSelection onQuote={(quote) => context.open(messageId, quote)}>
-      {children}
-    </QuoteOnSelection>
-  ) : (
-    children
-  );
+  const onQuoteInDiscussion = quoteEnabled ? context?.quote : undefined;
+  if (!props.onCite && !onQuoteInDiscussion) return null;
+  return <AssistantSelectionToolbar {...props} onQuoteInDiscussion={onQuoteInDiscussion} />;
 }

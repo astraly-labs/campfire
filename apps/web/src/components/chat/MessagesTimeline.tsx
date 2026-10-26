@@ -1,4 +1,4 @@
-import { TeamMessageActions, TeamQuoteSelection } from "../../collaboration/ThreadCollaboration";
+import { TeamMessageActions, TeamSelectionToolbar } from "../../collaboration/ThreadCollaboration";
 import { CollaborationAvatar } from "../../collaboration/CollaborationAvatar";
 import { ThreadFindTimelineContext } from "./ThreadFindProvider";
 import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/markdownPipeline";
@@ -191,7 +191,6 @@ import { MessageCopyButton } from "./MessageCopyButton";
 import { promptLinkFor } from "../promptLinks/copyPromptLink";
 import { PierreEntryIcon } from "./PierreEntryIcon";
 import { WorkspaceEntryIcon, WorkspaceEntryTooltip } from "./WorkspaceEntryIcon";
-import { AssistantSelectionToolbar } from "./AssistantSelectionToolbar";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import {
   AssistantCitationSource,
@@ -1649,11 +1648,12 @@ const ConversationTimeline = memo(function ConversationTimeline({
               className="relative h-full min-h-0"
               data-assistant-citation-viewport="true"
             >
-              {onCiteAssistantText && citationThreadRef ? (
-                <AssistantSelectionToolbar
+              {citationThreadRef ? (
+                <TeamSelectionToolbar
                   viewport={timelineViewportElement}
                   threadRef={citationThreadRef}
                   onCite={onCiteAssistantText}
+                  quoteEnabled={!paintOnly}
                 />
               ) : null}
               <LegendList<MessagesTimelineRow>
@@ -2868,30 +2868,28 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
     <>
       <div className="relative min-w-0 px-1 py-0.5">
         <MessageAuthorHeading>T3 Code</MessageAuthorHeading>
-        <TeamQuoteSelection messageId={row.message.id}>
-          <div data-thread-find-text="true">
-            <AssistantCitationSource
-              messageId={row.message.id}
-              {...(ctx.threadRef ? { threadRef: ctx.threadRef } : {})}
-              itemKey={row.id}
-              request={ctx.citationRequest}
-              listRef={ctx.listRef}
-            >
-              <ChatMarkdown
-                text={messageText}
-                cwd={ctx.markdownCwd}
-                threadRef={ctx.threadRef ?? undefined}
-                isStreaming={Boolean(row.message.streaming)}
-                lineBreaks={shouldPreserveAssistantLineBreaks(messageText)}
-                skills={ctx.skills}
-                headingLevelOffset={MESSAGE_HEADING_LEVEL}
-                onUseArtifactTemplate={ctx.onUseArtifactTemplate}
-                onRunShellCommand={ctx.onRunShellCommand}
-                onImageExpand={ctx.onImageExpand}
-              />
-            </AssistantCitationSource>
-          </div>
-        </TeamQuoteSelection>
+        <div data-thread-find-text="true">
+          <AssistantCitationSource
+            messageId={row.message.id}
+            {...(ctx.threadRef ? { threadRef: ctx.threadRef } : {})}
+            itemKey={row.id}
+            request={ctx.citationRequest}
+            listRef={ctx.listRef}
+          >
+            <ChatMarkdown
+              text={messageText}
+              cwd={ctx.markdownCwd}
+              threadRef={ctx.threadRef ?? undefined}
+              isStreaming={Boolean(row.message.streaming)}
+              lineBreaks={shouldPreserveAssistantLineBreaks(messageText)}
+              skills={ctx.skills}
+              headingLevelOffset={MESSAGE_HEADING_LEVEL}
+              onUseArtifactTemplate={ctx.onUseArtifactTemplate}
+              onRunShellCommand={ctx.onRunShellCommand}
+              onImageExpand={ctx.onImageExpand}
+            />
+          </AssistantCitationSource>
+        </div>
         <AssistantChangedFilesSection
           turnSummary={row.assistantTurnDiffSummary}
           routeThreadKey={ctx.routeThreadKey}
