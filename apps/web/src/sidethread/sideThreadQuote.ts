@@ -30,6 +30,14 @@ export function sideThreadDraftQuoteFromCitation(
   return { messageId: citation.messageId, excerpt: isQuotedExcerpt(excerpt) ? excerpt : null };
 }
 
+/** What a quote shows: its passage, or else the quoted message's markdown as plain text. */
+export function sideThreadQuoteText(
+  excerpt: SideThreadQuotedExcerpt | null | undefined,
+  sourceMarkdown: string | undefined,
+): string {
+  return excerpt ? sideThreadExcerptText(excerpt.text) : markdownPreviewText(sourceMarkdown ?? "");
+}
+
 /** The passage as the reader saw it, without selection edge whitespace or stacked blank lines. */
 export function sideThreadExcerptText(text: string): string {
   return text

@@ -55,7 +55,7 @@ import {
   type PickedThreadLink,
 } from "./sideThreadComposerTriggers";
 import { readImage, withAddedAttachments } from "./sideThreadImages";
-import { SideThreadPendingQuote } from "./SideThreadQuoteCard";
+import { SideThreadPendingQuote, SideThreadQuoteCard } from "./SideThreadQuoteCard";
 import type { SideThreadDraftQuote } from "./sideThreadQuote";
 import { sideThreadMessageTimestamp } from "./sideThreadTimestamp";
 
@@ -324,9 +324,8 @@ export function SideThreadDrawer(props: {
                       (candidate) => candidate.id === message.replyToSideThreadMessageId,
                     )
                   : null;
-                const quoted = message.quotedMessageId
-                  ? parentMessages.get(message.quotedMessageId)
-                  : null;
+                const quotedMessageId = message.quotedMessageId;
+                const quoted = quotedMessageId ? parentMessages.get(quotedMessageId) : undefined;
                 const own = message.author.subject === currentSubject;
                 const linkedThreadId = message.linkedRef?.threadId;
                 const continuesPrevious =
@@ -366,14 +365,13 @@ export function SideThreadDrawer(props: {
                         Reply to {reply.author.displayName}: {reply.text || "attachment"}
                       </div>
                     ) : null}
-                    {quoted ? (
-                      <button
-                        type="button"
-                        className="mb-2 block w-full rounded-md border-info bg-background/55 px-2 py-1 text-left text-2xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-                        onClick={() => revealQuotedMessage(quoted.id)}
-                      >
-                        <span className="line-clamp-2">Agent thread: {quoted.text}</span>
-                      </button>
+                    {quotedMessageId && (quoted || message.quotedExcerpt) ? (
+                      <SideThreadQuoteCard
+                        excerpt={message.quotedExcerpt}
+                        source={quoted}
+                        timestampFormat={timestampFormat}
+                        onReveal={() => revealQuotedMessage(quotedMessageId)}
+                      />
                     ) : null}
                     {message.text ? (
                       <p className="whitespace-pre-wrap text-sm">{message.text}</p>
