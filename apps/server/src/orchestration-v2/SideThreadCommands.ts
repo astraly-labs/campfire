@@ -98,6 +98,8 @@ export function planSideThreadCommand(input: {
       ...new Map((command.mentions ?? []).map((mention) => [mention.subject, mention])).values(),
     ];
     if (mentions.length > 20) return { error: "A message cannot mention more than 20 teammates." };
+    if (command.quotedExcerpt !== undefined && command.quotedMessageId === undefined)
+      return { error: "A quoted passage needs the message it came from." };
     if (
       command.quotedMessageId !== undefined &&
       !projection.messages.some((message) => message.id === command.quotedMessageId)
@@ -122,6 +124,7 @@ export function planSideThreadCommand(input: {
           ...(command.quotedMessageId === undefined
             ? {}
             : { quotedMessageId: command.quotedMessageId }),
+          ...(command.quotedExcerpt === undefined ? {} : { quotedExcerpt: command.quotedExcerpt }),
           ...(command.attachments === undefined ? {} : { attachments: command.attachments }),
           ...(command.linkedRef === undefined ? {} : { linkedRef: command.linkedRef }),
           ...(command.replyToSideThreadMessageId === undefined

@@ -8,6 +8,10 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
+import {
+  ASSISTANT_CITATION_CONTEXT_LENGTH,
+  ASSISTANT_CITATION_MAX_TEXT_LENGTH,
+} from "./assistantCitations.ts";
 import { ChatImageAttachment, UploadChatImageAttachment } from "./chatAttachment.ts";
 
 export const ThreadKind = Schema.Literals(["default", "review"]);
@@ -53,6 +57,27 @@ export const SideThreadLinkedRef = Schema.Struct({
 });
 export type SideThreadLinkedRef = typeof SideThreadLinkedRef.Type;
 
+/** One selection toolbar both cites and quotes, so both share the citation length limit. */
+export const SIDE_THREAD_QUOTE_MAX_TEXT_LENGTH = ASSISTANT_CITATION_MAX_TEXT_LENGTH;
+
+/**
+ * The passage of `quotedMessageId` that a side-thread message quotes. It is
+ * located in the rendered message text the way an assistant citation is.
+ */
+export const SideThreadQuotedExcerpt = Schema.Struct({
+  text: Schema.String.check(
+    Schema.isNonEmpty(),
+    Schema.isMaxLength(SIDE_THREAD_QUOTE_MAX_TEXT_LENGTH),
+  ),
+  start: NonNegativeInt.check(Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER)),
+  end: NonNegativeInt.check(Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER)),
+  prefix: Schema.String.check(Schema.isMaxLength(ASSISTANT_CITATION_CONTEXT_LENGTH)),
+  suffix: Schema.String.check(Schema.isMaxLength(ASSISTANT_CITATION_CONTEXT_LENGTH)),
+}).check(
+  Schema.makeFilter((excerpt) => excerpt.end > excerpt.start && excerpt.text.trim().length > 0),
+);
+export type SideThreadQuotedExcerpt = typeof SideThreadQuotedExcerpt.Type;
+
 export const SideThreadMessageReaction = Schema.Struct({
   emoji: TrimmedNonEmptyString.check(Schema.isMaxLength(32)),
   users: Schema.Array(SideThreadAuthor),
@@ -71,6 +96,7 @@ export const SideThreadMessage = Schema.Struct({
   text: Schema.String.check(Schema.isMaxLength(20_000)),
   mentions: Schema.optional(Schema.Array(SideThreadAuthor)),
   quotedMessageId: Schema.optional(MessageId),
+  quotedExcerpt: Schema.optional(SideThreadQuotedExcerpt),
   attachments: Schema.optional(Schema.Array(SideThreadAttachment)),
   reactions: Schema.optional(Schema.Array(SideThreadMessageReaction)),
   linkedRef: Schema.optional(SideThreadLinkedRef),
@@ -139,6 +165,7 @@ export const ClientSideThreadMessagePostCommand = Schema.Struct({
   text: Schema.String.check(Schema.isMaxLength(20_000)),
   mentions: Schema.optional(Schema.Array(SideThreadAuthor)),
   quotedMessageId: Schema.optional(MessageId),
+  quotedExcerpt: Schema.optional(SideThreadQuotedExcerpt),
   attachments: Schema.optional(Schema.Array(SideThreadPostAttachment)),
   linkedRef: Schema.optional(SideThreadLinkedRef),
   replyToSideThreadMessageId: Schema.optional(SideThreadMessageId),
@@ -208,6 +235,7 @@ export const SideThreadMessagePostedPayload = Schema.Struct({
   text: Schema.String.check(Schema.isMaxLength(20_000)),
   mentions: Schema.optional(Schema.Array(SideThreadAuthor)),
   quotedMessageId: Schema.optional(MessageId),
+  quotedExcerpt: Schema.optional(SideThreadQuotedExcerpt),
   attachments: Schema.optional(Schema.Array(SideThreadAttachment)),
   linkedRef: Schema.optional(SideThreadLinkedRef),
   replyToSideThreadMessageId: Schema.optional(SideThreadMessageId),

@@ -53,6 +53,9 @@ export function applySideThreadEvent(
               ...(posted.quotedMessageId === undefined
                 ? {}
                 : { quotedMessageId: posted.quotedMessageId }),
+              ...(posted.quotedExcerpt === undefined
+                ? {}
+                : { quotedExcerpt: posted.quotedExcerpt }),
               ...(posted.attachments === undefined ? {} : { attachments: posted.attachments }),
               ...(posted.linkedRef === undefined ? {} : { linkedRef: posted.linkedRef }),
               ...(posted.replyToSideThreadMessageId === undefined

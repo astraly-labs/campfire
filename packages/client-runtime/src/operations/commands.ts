@@ -14,6 +14,7 @@ import {
   type SideThreadMessageId,
   type SideThreadAuthor,
   type SideThreadPostAttachment,
+  type SideThreadQuotedExcerpt,
   type SideThreadLinkedRef,
   MessageId,
   SideThreadAttachment,
@@ -1151,6 +1152,7 @@ export interface PostSideThreadMessageInput extends ThreadCommandInput {
   readonly text: string;
   readonly mentions?: ReadonlyArray<SideThreadAuthor>;
   readonly quotedMessageId?: MessageId;
+  readonly quotedExcerpt?: SideThreadQuotedExcerpt;
   readonly attachments?: ReadonlyArray<SideThreadPostAttachment>;
   readonly linkedRef?: SideThreadLinkedRef;
   readonly replyToSideThreadMessageId?: SideThreadMessageId;
