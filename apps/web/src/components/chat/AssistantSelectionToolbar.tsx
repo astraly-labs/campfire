@@ -4,7 +4,7 @@ import {
   type AssistantCitation,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import { QuoteIcon } from "lucide-react";
+import { MessageCircleIcon, QuoteIcon } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -22,17 +22,21 @@ export function AssistantSelectionToolbar({
   viewport,
   threadRef,
   onCite,
+  onQuoteInDiscussion,
 }: {
   viewport: HTMLElement | null;
   threadRef: ScopedThreadRef;
-  onCite: (citation: AssistantCitation, sourceAnchor: AssistantCitationSourceAnchor) => boolean;
+  onCite?:
+    | ((citation: AssistantCitation, sourceAnchor: AssistantCitationSourceAnchor) => boolean)
+    | undefined;
+  onQuoteInDiscussion?: ((citation: AssistantCitation) => void) | undefined;
 }) {
   const [selection, setSelection] = useState<{
     citation: AssistantCitation;
     position: SelectionActionPoint;
     sourceAnchor: AssistantCitationSourceAnchor;
   } | null>(null);
-  const toolbarRef = useRef<HTMLButtonElement>(null);
+  const toolbarRef = useRef<HTMLDivElement>(null);
   const actionsRef = useRef<ReturnType<typeof observeSelectionActions> | null>(null);
 
   useLayoutEffect(() => {
@@ -108,10 +112,11 @@ export function AssistantSelectionToolbar({
       ) {
         return;
       }
-      if (toolbar.disabled) return;
+      const firstAction = toolbar.querySelector<HTMLButtonElement>("button:not(:disabled)");
+      if (!firstAction) return;
       event.preventDefault();
       event.stopPropagation();
-      toolbar.focus({ preventScroll: true });
+      firstAction.focus({ preventScroll: true });
     };
     document.addEventListener("keydown", focusActions, true);
     document.addEventListener("selectionchange", actions.selectionChanged);
@@ -124,29 +129,31 @@ export function AssistantSelectionToolbar({
   }, [threadRef, viewport]);
 
   if (!selection) return null;
+  // Cite and Quote in discussion share this limit, so one notice covers both.
   const tooLong = selection.citation.text.length > ASSISTANT_CITATION_MAX_TEXT_LENGTH;
   const dismiss = () => {
     actionsRef.current?.cancel();
     setSelection(null);
   };
-  const cite = () => {
-    if (tooLong || !onCite(selection.citation, selection.sourceAnchor)) return false;
+  const finish = () => {
     window.getSelection()?.removeAllRanges();
     dismiss();
-    return true;
+  };
+  const cite = () => {
+    if (onCite?.(selection.citation, selection.sourceAnchor)) finish();
+  };
+  const quoteInDiscussion = () => {
+    onQuoteInDiscussion?.(selection.citation);
+    finish();
   };
   return createPortal(
-    <Button
+    <div
       ref={toolbarRef}
-      type="button"
-      size="xs"
-      variant="glass"
-      disabled={tooLong}
-      aria-label={tooLong ? "Selection is too long to cite" : "Cite selection in composer"}
-      className="fixed z-50 max-w-[calc(100vw-1rem)]"
+      role="group"
+      aria-label="Selection actions"
+      className="fixed z-50 flex max-w-[calc(100vw-1rem)] gap-1"
       style={{ left: selection.position.x, top: selection.position.y }}
       onPointerDown={(event) => event.preventDefault()}
-      onClick={cite}
       onKeyDown={(event) => {
         event.stopPropagation();
         if (event.key === "Escape" && !event.nativeEvent.isComposing) {
@@ -155,9 +162,46 @@ export function AssistantSelectionToolbar({
         }
       }}
     >
-      <QuoteIcon aria-hidden="true" className="size-3.5" />
-      {tooLong ? "Shorten selection" : "Cite"}
-    </Button>,
+      {tooLong ? (
+        <Button
+          type="button"
+          size="xs"
+          variant="glass"
+          disabled
+          aria-label="Selection is too long to cite or quote"
+        >
+          <QuoteIcon aria-hidden="true" className="size-3.5" />
+          Shorten selection
+        </Button>
+      ) : (
+        <>
+          {onCite ? (
+            <Button
+              type="button"
+              size="xs"
+              variant="glass"
+              aria-label="Cite selection in composer"
+              onClick={cite}
+            >
+              <QuoteIcon aria-hidden="true" className="size-3.5" />
+              Cite
+            </Button>
+          ) : null}
+          {onQuoteInDiscussion ? (
+            <Button
+              type="button"
+              size="xs"
+              variant="glass"
+              aria-label="Quote selection in team discussion"
+              onClick={quoteInDiscussion}
+            >
+              <MessageCircleIcon aria-hidden="true" className="size-3.5" />
+              Quote in discussion
+            </Button>
+          ) : null}
+        </>
+      )}
+    </div>,
     document.body,
   );
 }
