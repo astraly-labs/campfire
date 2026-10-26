@@ -11,6 +11,7 @@ import {
   markdownPreviewText,
   sideThreadDraftQuoteFromCitation,
   sideThreadExcerptText,
+  sideThreadQuoteText,
 } from "./sideThreadQuote";
 
 const citation = (overrides: Partial<AssistantCitation> = {}): AssistantCitation => ({
@@ -57,6 +58,29 @@ describe("sideThreadDraftQuoteFromCitation", () => {
       messageId: "agent-message",
       excerpt: null,
     });
+  });
+});
+
+describe("sideThreadQuoteText", () => {
+  const source = "**Thursday is settled.** At 10:39 UTC the deploy finished.";
+
+  it("shows the quoted passage rather than the start of its message", () => {
+    const { excerpt } = sideThreadDraftQuoteFromCitation(citation());
+    expect(sideThreadQuoteText(excerpt, source)).toBe("At 10:39 UTC");
+  });
+
+  it("shows a passage as rendered text, keeping its literal symbols and line breaks", () => {
+    const text = "Total: 2 * 3 * 4 = *24*\nShip it";
+    const { excerpt } = sideThreadDraftQuoteFromCitation(
+      citation({ text, start: 0, end: text.length, prefix: "", suffix: "" }),
+    );
+    expect(sideThreadQuoteText(excerpt, source)).toBe(text);
+  });
+
+  it("shows a message quoted before passages were stored as plain text", () => {
+    expect(sideThreadQuoteText(undefined, source)).toBe(
+      "Thursday is settled. At 10:39 UTC the deploy finished.",
+    );
   });
 });
 
