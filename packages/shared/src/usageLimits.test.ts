@@ -9,6 +9,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   type LimitAccount,
+  accountQuotaLeft,
   isUsageLimitsCommand,
   collectProviderUsageLimits,
   sameUsageLimitCommandCoverage,
@@ -109,6 +110,51 @@ describe("limitsNotice", () => {
         unavailable: { reason: "probeFailed", message: "Codex timed out." },
       }),
     ).toBe("Codex timed out.");
+  });
+});
+
+describe("accountQuotaLeft", () => {
+  const checkedAt = "2026-09-03T11:00:00.000Z";
+  const weekly = {
+    id: "seven_day",
+    kind: "weekly",
+    label: "Weekly",
+    usedPercent: 75,
+    windowDurationMins: 10_080,
+    resetsAt: "2026-09-06T12:00:00.000Z",
+  } as const;
+
+  it("shows the lower of the session and weekly windows", () => {
+    expect(accountQuotaLeft({ checkedAt, windows: [window, weekly] }, now)).toBe(25);
+    expect(
+      accountQuotaLeft({ checkedAt, windows: [window, { ...weekly, usedPercent: 10 }] }, now),
+    ).toBe(60);
+  });
+
+  it("ignores a model-scoped weekly after the account-wide one", () => {
+    const scoped = { ...weekly, id: "seven_day_fable", label: "Weekly · Fable", usedPercent: 100 };
+    expect(accountQuotaLeft({ checkedAt, windows: [window, weekly, scoped] }, now)).toBe(25);
+  });
+
+  it("counts a window whose reset has passed as full", () => {
+    const spent = { ...window, usedPercent: 100, resetsAt: "2026-09-03T11:30:00.000Z" };
+    expect(accountQuotaLeft({ checkedAt, windows: [spent] }, now)).toBe(100);
+    expect(accountQuotaLeft({ checkedAt, windows: [{ ...spent, resetsAt: undefined }] }, now)).toBe(
+      0,
+    );
+  });
+
+  it("has nothing to show without a session or weekly window", () => {
+    expect(accountQuotaLeft(undefined, now)).toBeNull();
+    expect(
+      accountQuotaLeft({ checkedAt, windows: [], unavailable: { reason: "unsupported" } }, now),
+    ).toBeNull();
+    expect(
+      accountQuotaLeft(
+        { checkedAt, windows: [{ ...window, id: "monthly", kind: "monthly", usedPercent: 90 }] },
+        now,
+      ),
+    ).toBeNull();
   });
 });
 
