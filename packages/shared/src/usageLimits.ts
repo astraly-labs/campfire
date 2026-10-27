@@ -558,6 +558,27 @@ export function remainingPercent(window: ServerProviderUsageWindow): number {
   return Math.round(100 - Math.max(0, Math.min(100, window.usedPercent)));
 }
 
+/**
+ * Quota left on an account at a glance: the lower of its session and weekly
+ * windows, or null when it reports neither. Only the first window of each kind
+ * counts, which is the account-wide one; model-scoped weeklies follow it and
+ * limit a single model. A window whose reset has passed counts as full until
+ * the next probe reports it.
+ */
+export function accountQuotaLeft(
+  limits: ServerProviderUsageLimits | undefined,
+  now: number,
+): number | null {
+  if (!limits) return null;
+  const left = (["session", "weekly"] as const).flatMap((kind) => {
+    const window = limits.windows.find((candidate) => candidate.kind === kind);
+    if (!window) return [];
+    const resetsAt = resetMillis(window);
+    return [resetsAt !== null && resetsAt <= now ? 100 : remainingPercent(window)];
+  });
+  return left.length === 0 ? null : Math.min(...left);
+}
+
 function resetMillis(window: ServerProviderUsageWindow): number | null {
   if (window.resetsAt === undefined) return null;
   const at = Date.parse(window.resetsAt);

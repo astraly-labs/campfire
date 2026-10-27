@@ -1,8 +1,10 @@
 import { Toolbar } from "@base-ui/react/toolbar";
-import { type ProviderInstanceId } from "@t3tools/contracts";
+import { type ProviderInstanceId, type ServerProviderUsageLimits } from "@t3tools/contracts";
+import { accountQuotaLeft, formatDuration } from "@t3tools/shared/usageLimits";
 import { memo, useLayoutEffect, useRef, useState } from "react";
 import { SparklesIcon, StarIcon } from "lucide-react";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
+import { LimitWindows } from "../usage/UsageLimits";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
 import {
@@ -35,6 +37,37 @@ const SELECTED_INDICATOR_CLASS =
 const BADGE_BASE_CLASS =
   "pointer-events-none absolute -right-0.5 top-0.5 z-10 flex size-3.5 items-center justify-center rounded-full bg-transparent shadow-sm ";
 const NEW_BADGE_CLASS = `${BADGE_BASE_CLASS} text-update-foreground `;
+
+function quotaLeftClass(left: number): string {
+  if (left <= 10) return "text-destructive";
+  return left <= 30 ? "text-warning-foreground" : "text-muted-foreground";
+}
+
+/** The rail tooltip for an account that reports quota: its name, then every window. */
+function InstanceQuotaTooltip(props: {
+  readonly title: string;
+  readonly entry: ProviderInstanceEntry;
+  readonly limits: ServerProviderUsageLimits;
+  readonly now: number;
+}) {
+  const age = props.now - Date.parse(props.limits.checkedAt);
+  return (
+    <div className="w-64 space-y-1.5">
+      <div>{props.title}</div>
+      <LimitWindows
+        driver={props.entry.driverKind}
+        windows={props.limits.windows}
+        now={props.now}
+        compact
+      />
+      <div className="text-muted-foreground text-2xs">
+        {Number.isFinite(age) && age >= 60_000
+          ? `Updated ${formatDuration(age)} ago`
+          : "Updated just now"}
+      </div>
+    </div>
+  );
+}
 
 /** Opens toward the rail so the list stays readable (not over the model names). */
 const PICKER_TOOLTIP_SIDE = "left" as const;
@@ -70,6 +103,8 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
   };
   const showFavorites = props.showFavorites ?? true;
   const [hoveredInstanceId, setHoveredInstanceId] = useState<ProviderInstanceId | null>(null);
+  // The picker mounts when it opens, so this is the moment quota is read at.
+  const [now] = useState(() => Date.now());
   const sidebarContentRef = useRef<HTMLDivElement>(null);
   const [selectedIndicatorTop, setSelectedIndicatorTop] = useState<number | null>(null);
   useLayoutEffect(() => {
@@ -159,6 +194,8 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
             const isHovered = hoveredInstanceId === entry.instanceId;
             const showNewBadge = props.newBadgeInstanceIds?.has(entry.instanceId) ?? false;
             const showInstanceBadge = shouldShowInstanceBadge(entry, props.instanceEntries);
+            const usageLimits = entry.snapshot.usageLimits;
+            const quotaLeft = accountQuotaLeft(usageLimits, now);
 
             const tooltip = isUnavailable
               ? describeUnavailableInstance(entry)
@@ -172,6 +209,7 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
               <Toolbar.Button
                 className={cn(
                   "relative isolate flex w-full cursor-pointer aspect-square items-center justify-center rounded-md transition-colors hover:bg-foreground/10 focus-visible:bg-foreground/10 focus-visible:outline-none",
+                  quotaLeft !== null && "flex-col gap-px",
                   isDisabled && "opacity-50 cursor-not-allowed hover:bg-transparent",
                 )}
                 data-provider-accent-color={entry.accentColor}
@@ -188,13 +226,13 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
                 focusableWhenDisabled={!isDisabled}
                 aria-pressed={isSelected}
                 type="button"
-                aria-label={
+                aria-label={`${
                   isUnavailable || isContextDisabled
                     ? tooltip
                     : showNewBadge
                       ? `${entry.displayName}, new`
                       : entry.displayName
-                }
+                }${quotaLeft !== null ? `, ${quotaLeft}% quota left` : ""}`}
               >
                 <ProviderInstanceIcon
                   driverKind={entry.driverKind}
@@ -214,6 +252,17 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
                   }
                   {...(entry.accentColor ? { badgeClassName: "h-3 min-w-3 px-0.5 text-5xs" } : {})}
                 />
+                {quotaLeft !== null ? (
+                  <span
+                    className={cn(
+                      "text-4xs leading-none font-medium tabular-nums",
+                      quotaLeftClass(quotaLeft),
+                    )}
+                    aria-hidden
+                  >
+                    {quotaLeft}%
+                  </span>
+                ) : null}
                 {showNewBadge ? (
                   <span className={NEW_BADGE_CLASS} aria-hidden>
                     <SparklesIcon className="size-2" />
@@ -241,7 +290,16 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
                     sideOffset={PICKER_TOOLTIP_SIDE_OFFSET}
                     align="center"
                   >
-                    {tooltip}
+                    {usageLimits && quotaLeft !== null ? (
+                      <InstanceQuotaTooltip
+                        title={tooltip}
+                        entry={entry}
+                        limits={usageLimits}
+                        now={now}
+                      />
+                    ) : (
+                      tooltip
+                    )}
                   </TooltipPopup>
                 </Tooltip>
               </div>
