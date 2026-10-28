@@ -1,3 +1,6 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- dirname only; no filesystem access.
+import * as NodePath from "node:path";
+
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import {
@@ -465,34 +468,50 @@ export const layer: Layer.Layer<
           .exists(worktreePath)
           .pipe(Effect.orElseSucceed(() => true));
         if (!exists) {
+          // An unmounted volume hides the parent folder too. Recreating there
+          // would fail, and dropping the registration would orphan the worktree
+          // once the volume comes back, so only a worktree deleted from a
+          // present folder is recreated.
+          const storageAvailable = yield* fileSystem
+            .exists(NodePath.dirname(worktreePath))
+            .pipe(Effect.orElseSucceed(() => false));
           const project = yield* projects.getById(projection.thread.projectId).pipe(
             Effect.map(Option.getOrUndefined),
             Effect.orElseSucceed(() => undefined),
           );
-          if (project !== undefined) {
+          if (!storageAvailable) {
+            yield* Effect.logWarning("provider turn start found the worktree storage unavailable", {
+              threadId: projection.thread.id,
+              worktreePath,
+            });
+          } else if (project !== undefined) {
             yield* Effect.logWarning("provider turn start recreating missing worktree", {
               threadId: projection.thread.id,
               worktreePath,
               branch,
             });
-            yield* gitWorkflow.pruneWorktrees({ cwd: project.workspaceRoot }).pipe(
-              Effect.andThen(
-                gitWorkflow.createWorktree({
-                  cwd: project.workspaceRoot,
-                  refName: branch,
-                  path: worktreePath,
-                }),
-              ),
-              Effect.catchCause((cause) =>
-                Cause.hasInterruptsOnly(cause)
-                  ? Effect.failCause(cause)
-                  : Effect.logWarning("provider turn start failed to recreate worktree", {
-                      threadId: projection.thread.id,
-                      worktreePath,
-                      cause: Cause.pretty(cause),
-                    }),
-              ),
-            );
+            // Clear only this worktree's stale registration: a repo-wide prune
+            // would also drop every other worktree on a disconnected volume.
+            yield* gitWorkflow
+              .removeWorktree({ cwd: project.workspaceRoot, path: worktreePath })
+              .pipe(
+                Effect.andThen(
+                  gitWorkflow.createWorktree({
+                    cwd: project.workspaceRoot,
+                    refName: branch,
+                    path: worktreePath,
+                  }),
+                ),
+                Effect.catchCause((cause) =>
+                  Cause.hasInterruptsOnly(cause)
+                    ? Effect.failCause(cause)
+                    : Effect.logWarning("provider turn start failed to recreate worktree", {
+                        threadId: projection.thread.id,
+                        worktreePath,
+                        cause: Cause.pretty(cause),
+                      }),
+                ),
+              );
           }
         }
       }

@@ -7,7 +7,7 @@ import * as ProjectService from "../project/ProjectService.ts";
 
 export const layer = Layer.merge(
   Layer.mock(GitWorkflow.GitWorkflowService)({
-    pruneWorktrees: () => Effect.void,
+    removeWorktree: () => Effect.void,
     createWorktree: () => Effect.succeed({} as never),
   }),
   Layer.mock(ProjectService.ProjectService)({
