@@ -45,7 +45,14 @@ const layerPassThroughAuthors = Layer.mock(TurnAuthorService.TurnAuthorService)(
   providerText: ({ text }) => Effect.succeed(text),
 });
 
-it("does not commit running state when inherited background routing cannot be read", async () => {
+const missingWorktreePath = "/tmp/missing-provider-turn-start-worktree";
+
+/**
+ * A turn start whose worktree folder is gone and whose inherited background
+ * routing cannot be read, so it stops right after the worktree recovery.
+ * `storageAvailable` says whether the worktree's parent folder still exists.
+ */
+function makeMissingWorktreeHarness(input: { readonly storageAvailable: boolean }) {
   const threadId = ThreadId.make("thread_provider_turn_start_projection_failure");
   const runId = RunId.make("run_provider_turn_start_projection_failure");
   const attemptId = RunAttemptId.make("attempt_provider_turn_start_projection_failure");
@@ -65,7 +72,7 @@ it("does not commit running state when inherited background routing cannot be re
       id: threadId,
       projectId: ProjectId.make("project_provider_turn_start_projection_failure"),
       branch: "feature/restore",
-      worktreePath: "/tmp/missing-provider-turn-start-worktree",
+      worktreePath: missingWorktreePath,
     },
     runs: [
       {
@@ -92,7 +99,7 @@ it("does not commit running state when inherited background routing cannot be re
     Effect.succeed({ committed: true, storedEvents: [] } as never),
   );
   const startRootRun = vi.fn(() => Effect.void);
-  const pruneWorktrees = vi.fn(() => Effect.void);
+  const removeWorktree = vi.fn(() => Effect.void);
   const createWorktree = vi.fn(() => Effect.succeed({} as never));
   const layer = ProviderTurnStart.layer.pipe(
     Layer.provide(
@@ -100,8 +107,11 @@ it("does not commit running state when inherited background routing cannot be re
         Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({}),
         Layer.mock(EventSink.EventSinkV2)({ writeIfRunCurrent }),
         IdAllocator.layer,
-        Layer.succeed(FileSystem.FileSystem, { exists: () => Effect.succeed(false) } as never),
-        Layer.mock(GitWorkflow.GitWorkflowService)({ pruneWorktrees, createWorktree }),
+        Layer.succeed(FileSystem.FileSystem, {
+          exists: (path: string) =>
+            Effect.succeed(path !== missingWorktreePath && input.storageAvailable),
+        } as never),
+        Layer.mock(GitWorkflow.GitWorkflowService)({ removeWorktree, createWorktree }),
         Layer.mock(ProjectService.ProjectService)({
           getById: () =>
             Effect.succeed(
@@ -141,22 +151,50 @@ it("does not commit running state when inherited background routing cannot be re
     ),
   );
 
-  await Effect.gen(function* () {
-    const error = yield* (yield* ProviderTurnStart.ProviderTurnStartServiceV2)
-      .start({ threadId, runId })
-      .pipe(Effect.flip);
+  const start = () =>
+    Effect.gen(function* () {
+      return yield* (yield* ProviderTurnStart.ProviderTurnStartServiceV2)
+        .start({ threadId, runId })
+        .pipe(Effect.flip);
+    }).pipe(Effect.provide(layer), Effect.runPromise);
 
-    expect(error._tag).toBe("ProviderTurnStartError");
-    expect(projectionReadCount).toBe(2);
-    expect(pruneWorktrees).toHaveBeenCalledWith({ cwd: "/tmp/provider-turn-start-project" });
-    expect(createWorktree).toHaveBeenCalledWith({
-      cwd: "/tmp/provider-turn-start-project",
-      refName: "feature/restore",
-      path: "/tmp/missing-provider-turn-start-worktree",
-    });
-    expect(writeIfRunCurrent).not.toHaveBeenCalled();
-    expect(startRootRun).not.toHaveBeenCalled();
-  }).pipe(Effect.provide(layer), Effect.runPromise);
+  return {
+    start,
+    projectionReadCount: () => projectionReadCount,
+    writeIfRunCurrent,
+    startRootRun,
+    removeWorktree,
+    createWorktree,
+  };
+}
+
+it("does not commit running state when inherited background routing cannot be read", async () => {
+  const harness = makeMissingWorktreeHarness({ storageAvailable: true });
+
+  const error = await harness.start();
+
+  expect(error._tag).toBe("ProviderTurnStartError");
+  expect(harness.projectionReadCount()).toBe(2);
+  expect(harness.removeWorktree).toHaveBeenCalledWith({
+    cwd: "/tmp/provider-turn-start-project",
+    path: missingWorktreePath,
+  });
+  expect(harness.createWorktree).toHaveBeenCalledWith({
+    cwd: "/tmp/provider-turn-start-project",
+    refName: "feature/restore",
+    path: missingWorktreePath,
+  });
+  expect(harness.writeIfRunCurrent).not.toHaveBeenCalled();
+  expect(harness.startRootRun).not.toHaveBeenCalled();
+});
+
+it("leaves git untouched when the worktree's storage is offline", async () => {
+  const harness = makeMissingWorktreeHarness({ storageAvailable: false });
+
+  await harness.start();
+
+  expect(harness.removeWorktree).not.toHaveBeenCalled();
+  expect(harness.createWorktree).not.toHaveBeenCalled();
 });
 
 function makeLocalCommandHarness(input: {

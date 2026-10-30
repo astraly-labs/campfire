@@ -3485,32 +3485,36 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
-    it.effect("prunes stale registrations when removing an already-gone worktree", () =>
+    it.effect("drops only its own registration when removing a deleted worktree", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
         const { initialBranch } = yield* initRepoWithCommit(cwd);
         const pathService = yield* Path.Path;
         const fileSystem = yield* FileSystem.FileSystem;
         const worktreesRoot = yield* makeTmpDir("git-worktrees-");
-        const stalePath = pathService.join(worktreesRoot, "stale");
+        const deletedPath = pathService.join(worktreesRoot, "deleted");
+        // Stands in for a worktree on an unmounted volume: its folder is gone
+        // for now, but its registration must survive until the volume returns.
+        const offlinePath = pathService.join(worktreesRoot, "offline");
         const driver = yield* GitVcsDriver.GitVcsDriver;
 
-        yield* driver.createWorktree({
-          cwd,
-          path: stalePath,
-          refName: initialBranch,
-          newRefName: "feature/stale",
-        });
-        // Delete the directory behind git's back so the registration goes stale.
-        yield* fileSystem.remove(stalePath, { recursive: true });
+        for (const [path, newRefName] of [
+          [deletedPath, "feature/deleted"],
+          [offlinePath, "feature/offline"],
+        ] as const) {
+          yield* driver.createWorktree({ cwd, path, refName: initialBranch, newRefName });
+          yield* fileSystem.remove(path, { recursive: true });
+        }
 
+        yield* driver.removeWorktree({ cwd, path: deletedPath });
         yield* driver.removeWorktree({
           cwd,
           path: pathService.join(worktreesRoot, "never-registered"),
         });
 
         const registered = yield* git(cwd, ["worktree", "list", "--porcelain"]);
-        assert.notInclude(registered, "stale");
+        assert.notInclude(registered, "/deleted\n");
+        assert.include(registered, "/offline\n");
       }),
     );
   });
