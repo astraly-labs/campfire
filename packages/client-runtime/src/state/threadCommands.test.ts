@@ -89,6 +89,9 @@ const makeHarness = Effect.fn("TestThreadCommands.makeHarness")(function* () {
     target: { environmentId: ENVIRONMENT_ID },
     session: yield* SubscriptionRef.make(
       Option.some({
+        initialConfig: Effect.succeed({
+          environment: { capabilities: { serverResolvedCommandContext: true } },
+        }),
         client: {
           [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: OrchestrationV2Command) =>
             Effect.gen(function* () {
@@ -347,6 +350,74 @@ describe("remote thread lifecycle commands", () => {
         expect((yield* Effect.promise(() => result))._tag).toBe("Success");
         expect(h.registry.get(h.visibleAtom)).toBe(newer);
       }),
+  );
+
+  const CLAUDE_ACCOUNT = ProviderInstanceId.make("claude_c3");
+  const SHARED_SELECTION = {
+    instanceId: CLAUDE_ACCOUNT,
+    model: "claude-opus-4-7",
+    options: [{ id: "effort", value: "high" }],
+  };
+
+  it.effect("shows a model selection before the remote reply and rolls back a rejection", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      const result = h.commands.updateMetadata.run(h.registry, {
+        environmentId: ENVIRONMENT_ID,
+        input: { threadId: THREAD_ID, modelSelection: SHARED_SELECTION },
+      });
+      expect(h.registry.get(h.visibleAtom)?.threads[0]).toMatchObject({
+        providerInstanceId: CLAUDE_ACCOUNT,
+        modelSelection: SHARED_SELECTION,
+      });
+      const request = yield* Queue.take(h.requests);
+      expect(request.command).toMatchObject({
+        type: "thread.model-selection.set",
+        modelSelection: SHARED_SELECTION,
+      });
+      yield* Deferred.fail(request.reply, new Error("Provider instance unavailable"));
+      expect((yield* Effect.promise(() => result))._tag).toBe("Failure");
+      expect(h.registry.get(h.visibleAtom)).toBe(SNAPSHOT);
+    }),
+  );
+
+  it.effect("lets a newer selection from another client replace an acknowledged one", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      const result = h.commands.updateMetadata.run(h.registry, {
+        environmentId: ENVIRONMENT_ID,
+        input: { threadId: THREAD_ID, modelSelection: SHARED_SELECTION },
+      });
+      const request = yield* Queue.take(h.requests);
+      yield* Deferred.succeed(request.reply, { sequence: 2 });
+      expect((yield* Effect.promise(() => result))._tag).toBe("Success");
+      const otherClientSelection = {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5.5",
+      };
+      const newer = {
+        ...SNAPSHOT,
+        snapshotSequence: 3,
+        threads: [{ ...SNAPSHOT.threads[0]!, modelSelection: otherClientSelection }],
+      };
+      h.registry.set(h.snapshotAtom(ENVIRONMENT_ID), newer);
+      expect(h.registry.get(h.visibleAtom)).toBe(newer);
+    }),
+  );
+
+  it.effect("leaves the shell untouched for a metadata update without a model", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      const result = h.commands.updateMetadata.run(h.registry, {
+        environmentId: ENVIRONMENT_ID,
+        input: { threadId: THREAD_ID, title: "Renamed" },
+      });
+      expect(h.registry.get(h.visibleAtom)?.threads[0]).toBe(SNAPSHOT.threads[0]);
+      const request = yield* Queue.take(h.requests);
+      expect(request.command.type).toBe("thread.metadata.update");
+      yield* Deferred.succeed(request.reply, { sequence: 2 });
+      yield* Effect.promise(() => result);
+    }),
   );
 
   it.effect.each(undoableActions)(

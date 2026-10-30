@@ -42,6 +42,18 @@ describe("threadAllowsProviderSwitch", () => {
     ).toBe(true);
   });
 
+  it("keeps a running turn on its provider even when the session can hand off", () => {
+    expect(
+      threadAllowsProviderSwitch({
+        thread: startedThread,
+        projection: {
+          ...projectionWithSession(true),
+          runs: [{ status: "running", providerThreadId: "provider-thread" }],
+        } as unknown as OrchestrationV2ThreadProjection,
+      }),
+    ).toBe(false);
+  });
+
   it("keeps a started thread on its provider when the session cannot hand off", () => {
     expect(
       threadAllowsProviderSwitch({

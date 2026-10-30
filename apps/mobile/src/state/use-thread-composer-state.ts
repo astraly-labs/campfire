@@ -201,6 +201,10 @@ export function useThreadComposerState() {
     label: "edit queued message",
     reportFailure: false,
   });
+  const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
+    label: "change model",
+    reportFailure: false,
+  });
   const [isSavingQueuedEdit, setIsSavingQueuedEdit] = useState(false);
   const savingQueuedEditRef = useRef(false);
   const pastedTextFileNamesRef = useRef<{ threadKey: string | null; names: Set<string> }>({
@@ -325,15 +329,16 @@ export function useThreadComposerState() {
       : queuedRunEdit === null
         ? selectedThreadKey
         : queuedEditDraftKey(selectedThreadKey, queuedRunEdit.runId);
-  // Content follows the composer's current draft; the model and mode pickers
-  // stay bound to the thread's own draft, which is what they write to.
+  // Content follows the composer's current draft; the mode pickers stay bound
+  // to the thread's own draft, which is what they write to. The model is the
+  // thread's own selection, shared with everyone in it.
   const editedDraft = composerDraftKey ? composerDrafts[composerDraftKey] : null;
   const selectedDraft = selectedThreadKey ? composerDrafts[selectedThreadKey] : null;
   const draftMessage = editedDraft?.text ?? "";
   const draftAttachments = editedDraft?.attachments ?? [];
   const selectedThreadQueueCount = selectedThreadQueuedMessages.length;
   const selectedThread = selectedThreadShell;
-  const modelSelection = selectedDraft?.modelSelection ?? selectedThread?.modelSelection ?? null;
+  const modelSelection = selectedThread?.modelSelection ?? null;
   const runtimeMode = selectedDraft?.runtimeMode ?? selectedThread?.runtimeMode ?? null;
   const selectedProvider = selectedEnvironmentRuntime?.serverConfig?.providers.find(
     (provider) => provider.instanceId === modelSelection?.instanceId,
@@ -615,7 +620,7 @@ export function useThreadComposerState() {
         return null;
       }
 
-      const modelSelection = draft.modelSelection ?? thread.modelSelection;
+      const modelSelection = thread.modelSelection;
       const serverConfig = selectedEnvironmentRuntime?.serverConfig;
       if (
         selectedEnvironmentRuntime?.connectionState === "connected" &&
@@ -1025,20 +1030,36 @@ export function useThreadComposerState() {
 
   const onUpdateModelSelection = useCallback(
     (value: ModelSelection) => {
-      if (!selectedThreadKey) {
+      if (
+        !selectedThreadShell ||
+        !selectedThreadKey ||
+        !readEnvironmentScope(selectedThreadShell.environmentId, AuthOrchestrationOperateScope)
+      ) {
         return;
       }
       const provider = selectedEnvironmentRuntime?.serverConfig?.providers.find(
         (candidate) => candidate.instanceId === value.instanceId,
       );
-      updateComposerDraftSettings(selectedThreadKey, {
-        modelSelection: value,
-        ...(provider?.showInteractionModeToggle === false
-          ? { interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE }
-          : {}),
+      if (provider?.showInteractionModeToggle === false) {
+        updateComposerDraftSettings(selectedThreadKey, {
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        });
+      }
+      void updateThreadMetadata({
+        environmentId: selectedThreadShell.environmentId,
+        input: { threadId: selectedThreadShell.id, modelSelection: value },
+      }).then((result) => {
+        if (result._tag === "Failure") {
+          Alert.alert("Could not change the model", "The thread keeps its current model.");
+        }
       });
     },
-    [selectedEnvironmentRuntime?.serverConfig, selectedThreadKey],
+    [
+      selectedEnvironmentRuntime?.serverConfig,
+      selectedThreadKey,
+      selectedThreadShell,
+      updateThreadMetadata,
+    ],
   );
 
   const onUpdateRuntimeMode = useCallback(
@@ -1056,11 +1077,8 @@ export function useThreadComposerState() {
       if (!selectedThreadKey) {
         return;
       }
-      const modelSelection =
-        getComposerDraftSnapshot(selectedThreadKey).modelSelection ??
-        selectedThread?.modelSelection;
       const provider = selectedEnvironmentRuntime?.serverConfig?.providers.find(
-        (candidate) => candidate.instanceId === modelSelection?.instanceId,
+        (candidate) => candidate.instanceId === selectedThread?.modelSelection.instanceId,
       );
       updateComposerDraftSettings(selectedThreadKey, {
         interactionMode: resolveProviderInteractionMode(provider, value),

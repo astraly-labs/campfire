@@ -2,6 +2,7 @@ import {
   ANTIGRAVITY_DEFAULT_MODEL,
   ProviderDriverKind,
   ProviderInstanceId,
+  type ModelSelection,
   type ServerProvider,
 } from "@t3tools/contracts";
 import { DEFAULT_UNIFIED_SETTINGS, type UnifiedSettings } from "@t3tools/contracts/settings";
@@ -565,6 +566,63 @@ describe("instance-scoped model selection", () => {
 
     expect(state.selectedModel).toBe("openrouter/kimi-k3");
     expect(state.modelOptions?.[instanceId]).toEqual(draftSelection.options);
+  });
+
+  it("shows and sends a server thread's selection as another client changes it", () => {
+    const instanceId = ProviderInstanceId.make("claude_c3");
+    const driver = ProviderDriverKind.make("claudeAgent");
+    const effort = {
+      id: "effort",
+      label: "Effort",
+      type: "select" as const,
+      options: [
+        { id: "low", label: "Low" },
+        { id: "high", label: "High", isDefault: true },
+      ],
+      currentValue: "high",
+    };
+    const providers = [
+      {
+        ...provider({ instanceId: "claude_c3" }),
+        models: ["claude-opus-4-7", "claude-sonnet-4-6"].map((slug) => ({
+          slug,
+          name: slug,
+          isCustom: false,
+          capabilities: { optionDescriptors: [effort] },
+        })),
+      },
+    ];
+    // A server thread's composer reads no draft picks: the thread owns the selection.
+    const composerFor = (threadModelSelection: ModelSelection) => {
+      const state = deriveEffectiveComposerModelState({
+        draft: null,
+        providers,
+        selectedProvider: driver,
+        selectedInstanceId: instanceId,
+        threadModelSelection,
+        projectModelSelection: createModelSelection(instanceId, "claude-opus-4-7"),
+        settings: settingsWithProviderInstances(),
+      });
+      const sent = getComposerProviderState({
+        provider: driver,
+        model: state.selectedModel,
+        models: providers[0]!.models,
+        modelOptions: state.modelOptions?.[instanceId],
+        planModeEnabled: false,
+      });
+      return { model: state.selectedModel, options: sent.modelOptionsForDispatch };
+    };
+
+    expect(
+      composerFor(
+        createModelSelection(instanceId, "claude-opus-4-7", [{ id: "effort", value: "high" }]),
+      ),
+    ).toEqual({ model: "claude-opus-4-7", options: [{ id: "effort", value: "high" }] });
+    expect(
+      composerFor(
+        createModelSelection(instanceId, "claude-sonnet-4-6", [{ id: "effort", value: "low" }]),
+      ),
+    ).toEqual({ model: "claude-sonnet-4-6", options: [{ id: "effort", value: "low" }] });
   });
 
   it("preserves the Antigravity model in drafts and existing threads after sign-out", () => {

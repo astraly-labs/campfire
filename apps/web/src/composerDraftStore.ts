@@ -615,8 +615,12 @@ interface ComposerDraftStoreState {
       | undefined,
   ) => void;
   applyStickyState: (threadRef: ComposerThreadTarget) => void;
+  /**
+   * A null `threadRef` writes only the sticky memory (with `persistSticky`):
+   * a server thread keeps its model selection on the server, not in a draft.
+   */
   setProviderModelOptions: (
-    threadRef: ComposerThreadTarget,
+    threadRef: ComposerThreadTarget | null,
     provider: ProviderDriverKind,
     nextProviderOptions: ReadonlyArray<ProviderOptionSelection> | null | undefined,
     options?: {
@@ -3246,8 +3250,9 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
           });
         },
         setProviderModelOptions: (threadRef, provider, nextProviderOptions, options) => {
-          const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
-          if (threadKey.length === 0) {
+          const threadKey =
+            threadRef === null ? null : (resolveComposerDraftKey(get(), threadRef) ?? "");
+          if (threadKey === "") {
             return;
           }
           const normalizedProvider = normalizeProviderDriverKind(provider);
@@ -3263,7 +3268,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             nextProviderOptions && nextProviderOptions.length > 0 ? nextProviderOptions : undefined;
 
           set((state) => {
-            const existing = state.draftsByThreadKey[threadKey];
+            const existing = threadKey === null ? undefined : state.draftsByThreadKey[threadKey];
             const base = existing ?? createEmptyThreadDraft();
 
             // Update the map entry for this provider
@@ -3327,12 +3332,22 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                 : (base.activeProvider ?? instanceKey);
             }
 
-            if (
-              Equal.equals(base.modelSelectionByProvider, nextMap) &&
+            const stickyUnchanged =
               Equal.equals(state.stickyModelSelectionByProvider, nextStickyMap) &&
               Equal.equals(state.stickyOptionsByModelByProvider, nextOptionsByModel) &&
-              state.stickyActiveProvider === nextStickyActiveProvider
-            ) {
+              state.stickyActiveProvider === nextStickyActiveProvider;
+            const stickyUpdate =
+              options?.persistSticky === true
+                ? {
+                    stickyModelSelectionByProvider: nextStickyMap,
+                    stickyOptionsByModelByProvider: nextOptionsByModel,
+                    stickyActiveProvider: nextStickyActiveProvider,
+                  }
+                : {};
+            if (threadKey === null) {
+              return stickyUnchanged ? state : stickyUpdate;
+            }
+            if (Equal.equals(base.modelSelectionByProvider, nextMap) && stickyUnchanged) {
               return state;
             }
 
@@ -3352,16 +3367,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               nextDraftsByThreadKey[threadKey] = nextDraft;
             }
 
-            return {
-              draftsByThreadKey: nextDraftsByThreadKey,
-              ...(options?.persistSticky === true
-                ? {
-                    stickyModelSelectionByProvider: nextStickyMap,
-                    stickyOptionsByModelByProvider: nextOptionsByModel,
-                    stickyActiveProvider: nextStickyActiveProvider,
-                  }
-                : {}),
-            };
+            return { draftsByThreadKey: nextDraftsByThreadKey, ...stickyUpdate };
           });
         },
         setRuntimeMode: (threadRef, runtimeMode) => {
@@ -4511,10 +4517,12 @@ export function useThreadHasUnsentDraft(threadRef: ScopedThreadRef): boolean {
   );
 }
 
-function useComposerDraftModelState(threadRef: ComposerThreadTarget): ComposerDraftModelState {
+function useComposerDraftModelState(
+  threadRef: ComposerThreadTarget | null,
+): ComposerDraftModelState {
   return useComposerDraftStore(
     useShallow((state) => {
-      const draft = getComposerDraftState(state, threadRef);
+      const draft = threadRef === null ? undefined : getComposerDraftState(state, threadRef);
       return draft
         ? {
             activeProvider: draft.activeProvider,
@@ -4526,8 +4534,11 @@ function useComposerDraftModelState(threadRef: ComposerThreadTarget): ComposerDr
 }
 
 export function useEffectiveComposerModelState(input: {
-  threadRef?: ComposerThreadTarget;
-  draftId?: DraftId;
+  /**
+   * The draft holding this composer's own model picks. Null for a server
+   * thread, whose shared `threadModelSelection` is the only source.
+   */
+  draftTarget: ComposerThreadTarget | null;
   providers: ReadonlyArray<ServerProvider>;
   selectedProvider: ProviderDriverKind;
   /**
@@ -4540,7 +4551,7 @@ export function useEffectiveComposerModelState(input: {
   projectModelSelection: ModelSelection | null | undefined;
   settings: UnifiedSettings;
 }): EffectiveComposerModelState {
-  const draft = useComposerDraftModelState(input.threadRef ?? input.draftId ?? DraftId.make(""));
+  const draft = useComposerDraftModelState(input.draftTarget);
 
   return useMemo(
     () =>

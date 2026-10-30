@@ -2406,6 +2406,30 @@ describe("composerDraftStore per-model sticky options", () => {
     );
   });
 
+  it("remembers a server thread's option change without saving a thread draft", () => {
+    useComposerDraftStore
+      .getState()
+      .setProviderModelOptions(null, CODEX_DRIVER, toSelections({ reasoningEffort: "xhigh" }), {
+        instanceId: CODEX_SECONDARY_INSTANCE,
+        model: "gpt-5.4",
+        persistSticky: true,
+      });
+
+    const state = useComposerDraftStore.getState();
+    expect(state.stickyOptionsByModelByProvider[CODEX_SECONDARY_INSTANCE]).toEqual({
+      "gpt-5.4": toSelections({ reasoningEffort: "xhigh" }),
+    });
+    expect(state.stickyModelSelectionByProvider[CODEX_SECONDARY_INSTANCE]).toEqual(
+      createModelSelection(
+        CODEX_SECONDARY_INSTANCE,
+        "gpt-5.4",
+        toSelections({ reasoningEffort: "xhigh" }),
+      ),
+    );
+    expect(state.stickyActiveProvider).toBe(CODEX_SECONDARY_INSTANCE);
+    expect(state.draftsByThreadKey).toEqual({});
+  });
+
   it("does not record options when sticky persistence is omitted", () => {
     const store = useComposerDraftStore.getState();
 
