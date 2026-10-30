@@ -1,3 +1,4 @@
+import { applyUsageLimitsUpdate } from "@t3tools/provider-core/server/usageLimits";
 import { describe, expect, it } from "vite-plus/test";
 
 import { claudeRateLimitEventToUpdate, claudeUsageResponseToLimits } from "./claudeUsageLimits.ts";
@@ -95,6 +96,25 @@ describe("claudeUsageResponseToLimits", () => {
     ).toEqual({ checkedAt, windows: [], unavailable: { reason: "unsupported" } });
   });
 
+  it("lets a subscription login it cannot read fill in from the windows its turns stream", () => {
+    const probed = claudeUsageResponseToLimits({
+      checkedAt,
+      response: { rate_limits_available: false, rate_limits: null },
+      subscriptionLogin: true,
+    }).limits;
+    const update = claudeRateLimitEventToUpdate(
+      { status: "allowed", rateLimitType: "seven_day", utilization: 0.48 },
+      noNames,
+    );
+
+    const limits = applyUsageLimitsUpdate({ previous: probed, update: update!, checkedAt });
+
+    expect(limits?.unavailable).toBeUndefined();
+    expect(limits?.windows.map((window) => [window.id, window.usedPercent])).toEqual([
+      ["seven_day", 48],
+    ]);
+  });
+
   it("skips a window the endpoint reports without a utilization", () => {
     expect(
       claudeUsageResponseToLimits({
@@ -164,6 +184,32 @@ describe("claudeRateLimitEventToUpdate", () => {
         },
       ],
     });
+  });
+
+  it("reads every window a current CLI attaches, even without a top-level utilization", () => {
+    // Captured from a `claude setup-token` account on staging.
+    const event = {
+      status: "allowed",
+      resetsAt: 1_793_281_800,
+      rateLimitType: "five_hour",
+      overageStatus: "rejected",
+      isUsingOverage: false,
+      unifiedWindows: {
+        five_hour: { utilization: 0.14, resetsAt: 1_793_281_800, status: "allowed" },
+        seven_day: { utilization: 0.48, resetsAt: 1_793_682_000, status: "allowed" },
+      },
+    } as const;
+
+    expect(
+      claudeRateLimitEventToUpdate(event, noNames)?.windows.map((window) => [
+        window.id,
+        Math.round(window.usedPercent),
+        window.resetsAt,
+      ]),
+    ).toEqual([
+      ["five_hour", 14, "2026-10-29T13:50:00.000Z"],
+      ["seven_day", 48, "2026-11-03T05:00:00.000Z"],
+    ]);
   });
 
   it("ignores windows the page does not render and events without a utilization", () => {

@@ -187,16 +187,21 @@ function claudeAuthStatus(
     "email" | "subscriptionType" | "tokenSource" | "apiKeySource" | "apiProvider"
   >,
 ): "authenticated" | "unauthenticated" {
-  if (capabilities.apiProvider !== undefined && capabilities.apiProvider !== "firstParty") {
-    return "authenticated";
-  }
+  if (usesThirdPartyBackend(capabilities)) return "authenticated";
   if (capabilities.tokenSource !== "none") return "authenticated";
   // An `ANTHROPIC_API_KEY` install reports no token source but is authenticated
   // all the same, so the key and account fields still get a say.
-  const hasApiKey = Boolean(capabilities.apiKeySource) && capabilities.apiKeySource !== "none";
-  return hasApiKey || capabilities.email || capabilities.subscriptionType
+  return usesApiKey(capabilities) || capabilities.email || capabilities.subscriptionType
     ? "authenticated"
     : "unauthenticated";
+}
+
+function usesThirdPartyBackend(capabilities: Pick<ClaudeCapabilitiesProbe, "apiProvider">) {
+  return capabilities.apiProvider !== undefined && capabilities.apiProvider !== "firstParty";
+}
+
+function usesApiKey(capabilities: Pick<ClaudeCapabilitiesProbe, "apiKeySource">) {
+  return Boolean(capabilities.apiKeySource) && capabilities.apiKeySource !== "none";
 }
 
 // ── SDK capability probe ────────────────────────────────────────────
@@ -654,14 +659,16 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       subscriptionType: capabilities.subscriptionType,
       authMethod: capabilities.tokenSource,
     }) ?? apiProviderAuthMetadata(capabilities.apiProvider);
-  const usageLimits = !capabilities.usage
+  const usageResponse = capabilities.usage && {
+    response: capabilities.usage,
+    checkedAt,
+    subscriptionLogin: !usesThirdPartyBackend(capabilities) && !usesApiKey(capabilities),
+  };
+  const usageLimits = !usageResponse
     ? makeUnavailableUsageLimits({ checkedAt, reason: "probeFailed" })
     : scopedLimitNames
-      ? yield* recordClaudeUsageResponse(scopedLimitNames, {
-          response: capabilities.usage,
-          checkedAt,
-        })
-      : claudeUsageResponseToLimits({ response: capabilities.usage, checkedAt }).limits;
+      ? yield* recordClaudeUsageResponse(scopedLimitNames, usageResponse)
+      : claudeUsageResponseToLimits(usageResponse).limits;
   const resetCredits =
     resolveResetCredits &&
     capabilities.subscriptionType &&

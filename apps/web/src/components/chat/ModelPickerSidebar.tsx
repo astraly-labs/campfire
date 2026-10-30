@@ -1,6 +1,6 @@
 import { Toolbar } from "@base-ui/react/toolbar";
 import { type ProviderInstanceId, type ServerProviderUsageLimits } from "@t3tools/contracts";
-import { accountQuotaLeft, formatDuration } from "@t3tools/shared/usageLimits";
+import { accountQuotaLeft, formatDuration, limitsNotice } from "@t3tools/shared/usageLimits";
 import { memo, useLayoutEffect, useRef, useState } from "react";
 import { SparklesIcon, StarIcon } from "lucide-react";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
@@ -43,7 +43,7 @@ function quotaLeftClass(left: number): string {
   return left <= 30 ? "text-warning-foreground" : "text-muted-foreground";
 }
 
-/** The rail tooltip for an account that reports quota: its name, then every window. */
+/** The rail tooltip for an account with limits: its name, then every window or why there are none. */
 function InstanceQuotaTooltip(props: {
   readonly title: string;
   readonly entry: ProviderInstanceEntry;
@@ -51,20 +51,27 @@ function InstanceQuotaTooltip(props: {
   readonly now: number;
 }) {
   const age = props.now - Date.parse(props.limits.checkedAt);
+  const notice = limitsNotice(props.limits);
   return (
     <div className="w-64 space-y-1.5">
       <div>{props.title}</div>
-      <LimitWindows
-        driver={props.entry.driverKind}
-        windows={props.limits.windows}
-        now={props.now}
-        compact
-      />
-      <div className="text-muted-foreground text-2xs">
-        {Number.isFinite(age) && age >= 60_000
-          ? `Updated ${formatDuration(age)} ago`
-          : "Updated just now"}
-      </div>
+      {notice ? (
+        <div className="text-muted-foreground">{notice}</div>
+      ) : (
+        <>
+          <LimitWindows
+            driver={props.entry.driverKind}
+            windows={props.limits.windows}
+            now={props.now}
+            layout="stacked"
+          />
+          <div className="text-muted-foreground text-2xs">
+            {Number.isFinite(age) && age >= 60_000
+              ? `Updated ${formatDuration(age)} ago`
+              : "Updated just now"}
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -290,7 +297,7 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
                     sideOffset={PICKER_TOOLTIP_SIDE_OFFSET}
                     align="center"
                   >
-                    {usageLimits && quotaLeft !== null ? (
+                    {usageLimits && !isUnavailable ? (
                       <InstanceQuotaTooltip
                         title={tooltip}
                         entry={entry}

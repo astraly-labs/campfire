@@ -126,6 +126,39 @@ function makeWindow(
   };
 }
 
+interface StreamedWindow {
+  readonly utilization?: number;
+  readonly resetsAt?: number;
+}
+
+/**
+ * Current CLIs attach every window to each event under `unifiedWindows`, and
+ * often leave the top-level `utilization` out. It shipped after the SDK
+ * typings we pin, so it is read structurally until the `.d.ts` catches up.
+ */
+function readUnifiedWindows(info: SDKRateLimitInfo): ReadonlyArray<[string, StreamedWindow]> {
+  const raw = (info as { readonly unifiedWindows?: unknown }).unifiedWindows;
+  if (typeof raw !== "object" || raw === null) return [];
+  return Object.entries(raw).filter(
+    (entry): entry is [string, StreamedWindow] => typeof entry[1] === "object" && entry[1] !== null,
+  );
+}
+
+function streamedWindow(
+  type: string,
+  window: StreamedWindow,
+  names: ClaudeScopedLimitNames,
+): ServerProviderUsageWindow | undefined {
+  if (typeof window.utilization !== "number") return undefined;
+  const usedPercent = window.utilization * 100;
+  const resetsAt = isoFromEpochSeconds(window.resetsAt);
+  if (type in WINDOWS) return makeWindow(type, usedPercent, resetsAt);
+  if (type === OVERAGE_INCLUDED_EVENT_TYPE && names.overageIncluded) {
+    return scopedWindow(names.overageIncluded, usedPercent, resetsAt);
+  }
+  return undefined;
+}
+
 /**
  * Utilization is a 0–1 fraction on the streamed event. An overage-included
  * event before any probe has named the bucket is dropped: guessing a name
@@ -135,33 +168,40 @@ export function claudeRateLimitEventToUpdate(
   info: SDKRateLimitInfo,
   names: ClaudeScopedLimitNames,
 ): ProviderUsageLimitsUpdate | undefined {
-  const type: string | undefined = info.rateLimitType;
-  if (!type || typeof info.utilization !== "number") {
-    return undefined;
+  const windows = new Map<string, ServerProviderUsageWindow>();
+  for (const [type, entry] of readUnifiedWindows(info)) {
+    const window = streamedWindow(type, entry, names);
+    if (window) windows.set(window.id, window);
   }
-  const usedPercent = info.utilization * 100;
-  const resetsAt = isoFromEpochSeconds(info.resetsAt);
-  if (type in WINDOWS) {
-    return { windows: [makeWindow(type, usedPercent, resetsAt)] };
-  }
-  if (type === OVERAGE_INCLUDED_EVENT_TYPE && names.overageIncluded) {
-    return { windows: [scopedWindow(names.overageIncluded, usedPercent, resetsAt)] };
-  }
-  return undefined;
+  const named = info.rateLimitType ? streamedWindow(info.rateLimitType, info, names) : undefined;
+  if (named) windows.set(named.id, named);
+  return windows.size === 0 ? undefined : { windows: [...windows.values()] };
 }
 
 /**
  * Percentages on the `get_usage` response are already 0–100. Also yields the
  * scoped-bucket names the response carried, for the event mapper to reuse.
+ *
+ * `subscriptionLogin` marks a first-party login without an API key. Its plan
+ * limits apply even when `get_usage` cannot read them (a `claude setup-token`
+ * lacks the profile scope), so that case stays open to the windows its turns
+ * stream instead of being written off as an account without limits.
  */
 export function claudeUsageResponseToLimits(input: {
   readonly response: Pick<SDKControlGetUsageResponse, "rate_limits_available" | "rate_limits">;
   readonly checkedAt: string;
+  readonly subscriptionLogin?: boolean;
 }): { readonly limits: ServerProviderUsageLimits; readonly names: ClaudeScopedLimitNames } {
   const { response, checkedAt } = input;
   if (!response.rate_limits_available || !response.rate_limits) {
     return {
-      limits: makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" }),
+      limits: input.subscriptionLogin
+        ? makeUnavailableUsageLimits({
+            checkedAt,
+            reason: "probeFailed",
+            message: "Limits show after this account's next turn.",
+          })
+        : makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" }),
       names: { overageIncluded: undefined },
     };
   }
