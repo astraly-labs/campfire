@@ -31,6 +31,7 @@ import type {
   PullRequestListInput,
   PreviewAnnotationPayload,
   ProviderApprovalDecision,
+  ProviderOptionSelection,
   ThreadContextRecord,
   ProviderInteractionMode,
   ResolvedKeybindingsConfig,
@@ -1687,6 +1688,8 @@ export interface ChatComposerProps {
     model: string,
     options?: { focusComposer?: boolean },
   ) => void;
+  /** Sends a server thread's new shared model selection, such as a changed effort. */
+  onThreadModelSelectionChange: (modelSelection: ModelSelection) => void;
   onOpenProviderSetup: (instanceId: ProviderInstanceId) => void;
   getModelDisabledReason: (instanceId: ProviderInstanceId, model: string) => string | null;
   toggleInteractionMode: () => void;
@@ -1725,7 +1728,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activeThread,
     promptHistoryMessages,
     isServerThread: _isServerThread,
-    isLocalDraftThread: _isLocalDraftThread,
+    isLocalDraftThread,
     forceExpandedOnMobile,
     projectSelectionRequired,
     phase,
@@ -1796,6 +1799,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onPreviousActivePendingUserInputQuestion,
     onChangeActivePendingUserInputCustomAnswer,
     onProviderModelSelect,
+    onThreadModelSelectionChange,
     onOpenProviderSetup,
     getModelDisabledReason,
     toggleInteractionMode,
@@ -2141,7 +2145,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       ),
     [providerStatuses, settings, activeProjectId],
   );
-  const selectedProviderByThreadId = composerDraft.activeProvider ?? null;
+  // Everyone in a server thread shares its `modelSelection`; only a local
+  // draft thread keeps model picks of its own.
+  const modelDraftTarget = isLocalDraftThread ? composerDraftTarget : null;
+  const selectedProviderByThreadId = isLocalDraftThread
+    ? (composerDraft.activeProvider ?? null)
+    : null;
   const {
     selectedProviderEntry,
     requestedDriverKind,
@@ -2208,7 +2217,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     : (compatibleRuntimeModeOptions[0]?.mode ?? runtimeMode);
 
   const { modelOptions: composerModelOptions, selectedModel } = useEffectiveComposerModelState({
-    threadRef: composerDraftTarget,
+    draftTarget: modelDraftTarget,
     providers: providerStatuses,
     selectedProvider,
     selectedInstanceId,
@@ -2985,11 +2994,38 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     ],
   );
 
+  const setProviderModelOptions = useComposerDraftStore((store) => store.setProviderModelOptions);
+  // A server thread's option change is a new shared selection. This user's
+  // sticky memory still keeps it for their next new thread.
+  const onThreadModelOptionsChange = useCallback(
+    (options: ReadonlyArray<ProviderOptionSelection> | undefined) => {
+      setProviderModelOptions(null, selectedProvider, options, {
+        instanceId: selectedInstanceId,
+        model: selectedModel,
+        persistSticky: true,
+      });
+      onThreadModelSelectionChange(
+        createModelSelection(selectedInstanceId, selectedModel, options),
+      );
+    },
+    [
+      onThreadModelSelectionChange,
+      selectedInstanceId,
+      selectedModel,
+      selectedProvider,
+      setProviderModelOptions,
+    ],
+  );
+  const traitsPersistence = isLocalDraftThread
+    ? {
+        ...(routeKind === "server" ? { threadRef: routeThreadRef } : {}),
+        ...(routeKind === "draft" && draftId ? { draftId } : {}),
+      }
+    : { onModelOptionsChange: onThreadModelOptionsChange };
   const providerTraitsMenuContent = renderProviderTraitsMenuContent({
     provider: selectedProvider,
     instanceId: selectedInstanceId,
-    ...(routeKind === "server" ? { threadRef: routeThreadRef } : {}),
-    ...(routeKind === "draft" && draftId ? { draftId } : {}),
+    ...traitsPersistence,
     model: selectedModel,
     models: selectedProviderModels,
     modelOptions: composerModelOptions?.[selectedInstanceId],
@@ -3001,8 +3037,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const providerTraitsPickerInput = {
     provider: selectedProvider,
     instanceId: selectedInstanceId,
-    ...(routeKind === "server" ? { threadRef: routeThreadRef } : {}),
-    ...(routeKind === "draft" && draftId ? { draftId } : {}),
+    ...traitsPersistence,
     model: selectedModel,
     models: selectedProviderModels,
     modelOptions: composerModelOptions?.[selectedInstanceId],

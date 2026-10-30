@@ -534,5 +534,15 @@ export function createThreadEnvironmentAtoms<R, E>(
       ...thread,
       activeOrderKey: input.orderKey,
     })),
+    // Mirrors the server: a model selection also moves the thread to its instance.
+    updateMetadata: optimistic.wrap(commands.updateMetadata, (thread, input) =>
+      input.modelSelection === undefined
+        ? thread
+        : {
+            ...thread,
+            providerInstanceId: input.modelSelection.instanceId,
+            modelSelection: input.modelSelection,
+          },
+    ),
   };
 }

@@ -57,9 +57,11 @@ export function composerPromptLink(input: {
   const draft = useComposerDraftStore.getState().getComposerDraft(input.target);
   if (!draft) return null;
   if (!input.withContext) return promptLinkFor(draft.prompt);
+  // A server thread's composer shows the thread's shared selection; a local
+  // draft shows its own pick.
   const selection =
-    (draft.activeProvider ? draft.modelSelectionByProvider[draft.activeProvider] : undefined) ??
-    input.threadModelSelection;
+    input.threadModelSelection ??
+    (draft.activeProvider ? draft.modelSelectionByProvider[draft.activeProvider] : undefined);
   const provider = selection
     ? (input.providers.find((candidate) => candidate.instanceId === selection.instanceId)?.driver ??
       null)

@@ -1046,6 +1046,7 @@ export function deriveLockedProvider(input: {
 export function getStartedThreadModelChangeBlockReason(input: {
   providers: ReadonlyArray<Pick<ServerProvider, "instanceId" | "requiresNewThreadForModelChange">>;
   hasStartedSession: boolean;
+  turnInProgress?: boolean;
   supportsProviderSwitchingViaHandoff?: boolean;
   currentModelSelection: ModelSelection;
   currentProviderInstanceId?: ModelSelection["instanceId"] | null | undefined;
@@ -1066,7 +1067,14 @@ export function getStartedThreadModelChangeBlockReason(input: {
   }
   if (currentModelSelection.instanceId !== input.nextModelSelection.instanceId) {
     if (input.supportsProviderSwitchingViaHandoff === true) {
-      return null;
+      // The server applies a thread's selection at once, and moving to another
+      // instance restarts the provider session, which stops a running turn.
+      return input.turnInProgress === true
+        ? {
+            title: "Wait for the turn to finish",
+            description: "Switching providers now would stop the running turn.",
+          }
+        : null;
     }
     return {
       title: "Start a new chat to switch providers",

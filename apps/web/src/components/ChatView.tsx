@@ -108,7 +108,10 @@ import {
   presentPendingBackgroundWork,
   presentProviderGoal,
 } from "@t3tools/client-runtime/state/thread-execution";
-import { threadSupportsProviderHandoff } from "@t3tools/client-runtime/state/thread-workflows";
+import {
+  resolveActiveThreadRun,
+  threadSupportsProviderHandoff,
+} from "@t3tools/client-runtime/state/thread-workflows";
 import {
   codexFeedbackMessage,
   parseCodexFeedbackCommand,
@@ -128,6 +131,7 @@ import {
   applyClaudePromptEffortPrefix,
   createModelSelection,
   formatModelSlugName,
+  modelSelectionsEqual,
   resolvePromptInjectedEffort,
   resolveSelectableModel,
 } from "@t3tools/shared/model";
@@ -2136,6 +2140,8 @@ export default function ChatView(props: ChatViewProps) {
     () => threadSupportsProviderHandoff(serverProjection),
     [serverProjection],
   );
+  const turnInProgress =
+    serverProjection !== null && resolveActiveThreadRun(serverProjection) !== null;
   const activeLatestRun = isServerThread ? serverLatestRun : (activeThread?.latestRun ?? null);
   const activeActivityRun = isServerThread ? serverActivityRun : (activeThread?.latestRun ?? null);
   const activeRuntime = isServerThread ? serverRuntime : (activeThread?.runtime ?? null);
@@ -3001,7 +3007,7 @@ export default function ChatView(props: ChatViewProps) {
     ? (activeEnvironment?.serverConfig ?? null)
     : (primaryEnvironment?.serverConfig ?? null);
   const providerStatuses = serverConfig?.providers ?? EMPTY_PROVIDERS;
-  const selectedProviderByThreadId = composerActiveProvider ?? null;
+  const selectedProviderByThreadId = isLocalDraftThread ? (composerActiveProvider ?? null) : null;
   const threadProvider =
     activeThread?.modelSelection.instanceId ??
     activeProjectDefaultModelSelection?.instanceId ??
@@ -10790,6 +10796,7 @@ export default function ChatView(props: ChatViewProps) {
       const reason = getStartedThreadModelChangeBlockReason({
         providers: providerStatuses,
         hasStartedSession: activeRuntime !== null,
+        turnInProgress,
         supportsProviderSwitchingViaHandoff,
         currentModelSelection: activeThread.modelSelection,
         currentProviderInstanceId: activeRuntime?.providerInstanceId ?? null,
@@ -10797,7 +10804,33 @@ export default function ChatView(props: ChatViewProps) {
       });
       return reason ? `${reason.description} Start a new thread to use this model.` : null;
     },
-    [activeRuntime, activeThread, providerStatuses, supportsProviderSwitchingViaHandoff],
+    [
+      activeRuntime,
+      activeThread,
+      providerStatuses,
+      supportsProviderSwitchingViaHandoff,
+      turnInProgress,
+    ],
+  );
+
+  const persistThreadModelSelection = useCallback(
+    async (modelSelection: ModelSelection) => {
+      if (!serverThread || modelSelectionsEqual(serverThread.modelSelection, modelSelection))
+        return;
+      const result = await updateThreadMetadata({
+        environmentId: serverThread.environmentId,
+        input: { threadId: serverThread.id, modelSelection },
+      });
+      if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Unable to change the model",
+          description: chatActionErrorMessage(squashAtomCommandFailure(result)),
+        }),
+      );
+    },
+    [serverThread, updateThreadMetadata],
   );
 
   const onProviderModelSelect = useCallback(
@@ -10857,6 +10890,7 @@ export default function ChatView(props: ChatViewProps) {
       const modelChangeBlockReason = getStartedThreadModelChangeBlockReason({
         providers: providerStatuses,
         hasStartedSession: activeRuntime !== null,
+        turnInProgress,
         supportsProviderSwitchingViaHandoff,
         currentModelSelection: activeThread.modelSelection,
         currentProviderInstanceId: activeRuntime?.providerInstanceId ?? null,
@@ -10871,21 +10905,28 @@ export default function ChatView(props: ChatViewProps) {
         if (options?.focusComposer !== false) scheduleComposerFocus();
         return;
       }
-      setComposerDraftModelSelection(
-        scopeThreadRef(activeThread.environmentId, activeThread.id),
-        nextModelSelection,
-        // A complete snapshot: an absent options field means "start from the
-        // model default", not "keep the previous model's options".
-        { explicit: true, replaceOptions: true },
-      );
+      if (isLocalDraftThread) {
+        setComposerDraftModelSelection(
+          scopeThreadRef(activeThread.environmentId, activeThread.id),
+          nextModelSelection,
+          // A complete snapshot: an absent options field means "start from the
+          // model default", not "keep the previous model's options".
+          { explicit: true, replaceOptions: true },
+        );
+      } else {
+        void persistThreadModelSelection(nextModelSelection);
+      }
       setStickyComposerModelSelection(nextModelSelection);
       if (options?.focusComposer !== false) scheduleComposerFocus();
     },
     [
       activeThread,
       activeRuntime,
+      isLocalDraftThread,
       lockedProvider,
+      persistThreadModelSelection,
       supportsProviderSwitchingViaHandoff,
+      turnInProgress,
       scheduleComposerFocus,
       setComposerDraftModelSelection,
       setStickyComposerModelSelection,
@@ -11885,6 +11926,7 @@ export default function ChatView(props: ChatViewProps) {
                                 onChangeActivePendingUserInputCustomAnswer
                               }
                               onProviderModelSelect={onProviderModelSelect}
+                              onThreadModelSelectionChange={persistThreadModelSelection}
                               onOpenProviderSetup={openProviderSetup}
                               getModelDisabledReason={getModelDisabledReason}
                               toggleInteractionMode={toggleInteractionMode}

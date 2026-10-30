@@ -109,8 +109,8 @@ export function useNewThreadHandler() {
           : null;
       const carrySourceDraft =
         currentRouteTarget?.kind === "draft" ? getDraftSession(currentRouteTarget.draftId) : null;
-      // Composer overrides win over the persisted thread state — they are
-      // what the user currently sees in the composer controls.
+      // Carry what the composer controls show. A server thread's model is its
+      // shared selection; the composer's own picks cover the rest.
       const carrySourceComposer = currentRouteTarget
         ? getComposerDraft(
             currentRouteTarget.kind === "server"
@@ -123,7 +123,7 @@ export function useNewThreadHandler() {
         ? (carrySourceComposer?.modelSelectionByProvider[composerActiveProvider] ?? null)
         : null;
       const carryModelSelection =
-        composerModelSelection ?? carrySourceShell?.modelSelection ?? null;
+        carrySourceShell?.modelSelection ?? composerModelSelection ?? null;
       const carryInteractionMode =
         carrySourceComposer?.interactionMode ??
         carrySourceShell?.interactionMode ??

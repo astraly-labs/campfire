@@ -417,6 +417,46 @@ describe("getStartedThreadModelChangeBlockReason", () => {
         "This provider does not allow switching models after a conversation has started.",
     });
   });
+
+  it("holds a switch to another account until the running turn ends", () => {
+    const switchAccounts = (turnInProgress: boolean) =>
+      getStartedThreadModelChangeBlockReason({
+        providers,
+        hasStartedSession: true,
+        turnInProgress,
+        supportsProviderSwitchingViaHandoff: true,
+        currentModelSelection: {
+          instanceId: ProviderInstanceId.make("claude_c1"),
+          model: "claude-opus-4-7",
+        },
+        nextModelSelection: {
+          instanceId: ProviderInstanceId.make("claude_c3"),
+          model: "claude-opus-4-7",
+        },
+      });
+
+    expect(switchAccounts(true)?.title).toBe("Wait for the turn to finish");
+    expect(switchAccounts(false)).toBeNull();
+  });
+
+  it("lets a running turn's own account change model for the next turn", () => {
+    expect(
+      getStartedThreadModelChangeBlockReason({
+        providers,
+        hasStartedSession: true,
+        turnInProgress: true,
+        supportsProviderSwitchingViaHandoff: true,
+        currentModelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5.4",
+        },
+        nextModelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5.5",
+        },
+      }),
+    ).toBeNull();
+  });
 });
 
 describe("resolveSendEnvMode", () => {

@@ -46,6 +46,8 @@ type TraitsRenderInput = {
   instanceId?: ProviderInstanceId;
   threadRef?: ScopedThreadRef;
   draftId?: DraftId;
+  /** Takes the place of a draft target when the options live on the server thread. */
+  onModelOptionsChange?: (nextOptions: ReadonlyArray<ProviderOptionSelection> | undefined) => void;
   model: string;
   models: ReadonlyArray<ServerProviderModel>;
   modelOptions: ReadonlyArray<ProviderOptionSelection> | undefined;
@@ -169,6 +171,7 @@ function renderTraitsControl(
     instanceId,
     threadRef,
     draftId,
+    onModelOptionsChange,
     model,
     models,
     modelOptions,
@@ -181,7 +184,11 @@ function renderTraitsControl(
     triggerClassName,
     isComposerOwned,
   } = input;
-  const hasTarget = threadRef !== undefined || draftId !== undefined;
+  const persistence = onModelOptionsChange
+    ? { onModelOptionsChange }
+    : { ...(threadRef ? { threadRef } : {}), ...(draftId ? { draftId } : {}) };
+  const hasTarget =
+    threadRef !== undefined || draftId !== undefined || onModelOptionsChange !== undefined;
   const { selections: resolvedModelOptions } = resolveComposerOptionSelections(
     models,
     model,
@@ -207,8 +214,7 @@ function renderTraitsControl(
       provider={provider}
       {...(instanceId ? { instanceId } : {})}
       models={models}
-      {...(threadRef ? { threadRef } : {})}
-      {...(draftId ? { draftId } : {})}
+      {...persistence}
       model={model}
       modelOptions={resolvedModelOptions}
       reportedModelSelection={reportedModelSelection}
