@@ -56,6 +56,10 @@ export function makeUnavailableUsageLimits(input: {
  *
  * An `unsupported` snapshot stays unsupported: an account that cannot have
  * subscription windows will not start reporting them mid-turn.
+ *
+ * A window that had already reset by this update and that the update does not
+ * renew is one the provider stopped reporting, as Claude did with the 5-hour
+ * session on some plans, so it is dropped instead of showing a stale bar.
  */
 export function applyUsageLimitsUpdate(input: {
   readonly previous: ServerProviderUsageLimits | undefined;
@@ -88,6 +92,14 @@ export function applyUsageLimitsUpdate(input: {
       changed = true;
     }
   }
+  const readAt = Date.parse(input.checkedAt);
+  const renewed = new Set(update.windows.map((window) => window.id));
+  for (const [id, window] of merged) {
+    if (!renewed.has(id) && lapsedBy(window, readAt)) {
+      merged.delete(id);
+      changed = true;
+    }
+  }
   if (!changed && previous !== undefined && previous.unavailable === undefined) {
     return previous;
   }
@@ -95,6 +107,19 @@ export function applyUsageLimitsUpdate(input: {
     ...makeUsageLimits({ checkedAt: input.checkedAt, windows: merged.values() }),
     ...(previous?.resetCredits !== undefined ? { resetCredits: previous.resetCredits } : {}),
   };
+}
+
+function lapsedBy(window: ServerProviderUsageWindow, at: number): boolean {
+  if (window.resetsAt === undefined) return false;
+  const resetsAt = Date.parse(window.resetsAt);
+  return Number.isFinite(resetsAt) && Number.isFinite(at) && resetsAt <= at;
+}
+
+/** The windows that were still open when `limits` were read; see `applyUsageLimitsUpdate`. */
+function withoutLapsedWindows(limits: ServerProviderUsageLimits): ServerProviderUsageLimits {
+  const readAt = Date.parse(limits.checkedAt);
+  const open = limits.windows.filter((window) => !lapsedBy(window, readAt));
+  return open.length === limits.windows.length ? limits : { ...limits, windows: open };
 }
 
 function usageWindowEquals(a: ServerProviderUsageWindow, b: ServerProviderUsageWindow): boolean {
@@ -111,8 +136,9 @@ function usageWindowEquals(a: ServerProviderUsageWindow, b: ServerProviderUsageW
 /**
  * Choose what to publish after a status probe finishes. A probe that failed
  * this time must not wipe bars a previous probe or a turn already
- * established, so the last good snapshot stays; `unsupported` is
- * authoritative and replaces them.
+ * established, so the last good snapshot stays, minus any window that had
+ * already lapsed when it was read; `unsupported` is authoritative and
+ * replaces them.
  *
  * A successful probe replaces the published windows outright, including any
  * runtime update that landed while it was running. That is a deliberate
@@ -128,7 +154,7 @@ export function resolveUsageLimitsAfterProbe(input: {
 }): ServerProviderUsageLimits | undefined {
   const { published, probed } = input;
   if (probed?.unavailable?.reason === "probeFailed" && published && !published.unavailable) {
-    return published;
+    return withoutLapsedWindows(published);
   }
   return probed;
 }

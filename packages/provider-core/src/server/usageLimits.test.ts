@@ -78,6 +78,58 @@ describe("applyUsageLimitsUpdate", () => {
   });
 });
 
+describe("dropping windows the provider stopped reporting", () => {
+  const lapsedSession = { ...session, resetsAt: "2026-09-03T05:00:00.000Z" };
+
+  it("drops a window that had reset before an update that does not renew it", () => {
+    const next = applyUsageLimitsUpdate({
+      previous: { checkedAt, windows: [lapsedSession, weekly] },
+      checkedAt: "2026-09-03T12:00:05.000Z",
+      update: { windows: [{ ...weekly, usedPercent: 21 }] },
+    });
+
+    expect(next?.windows.map((window) => window.id)).toEqual(["seven_day"]);
+  });
+
+  it("keeps a lapsed window the update renews", () => {
+    const next = applyUsageLimitsUpdate({
+      previous: { checkedAt, windows: [lapsedSession, weekly] },
+      checkedAt: "2026-09-03T12:00:05.000Z",
+      update: { windows: [{ ...session, usedPercent: 5 }] },
+    });
+
+    expect(next?.windows.map((window) => [window.id, window.usedPercent])).toEqual([
+      ["five_hour", 5],
+      ["seven_day", 20],
+    ]);
+  });
+
+  it("drops it from the snapshot a failed probe keeps, but not one that lapsed later", () => {
+    const resolved = resolveUsageLimitsAfterProbe({
+      published: { checkedAt, windows: [lapsedSession, weekly] },
+      probed: {
+        checkedAt: "2026-09-04T00:00:00.000Z",
+        windows: [],
+        unavailable: { reason: "probeFailed" },
+      },
+    });
+    expect(resolved?.windows.map((window) => window.id)).toEqual(["seven_day"]);
+
+    // Open when last read: it shows as reset until the next reading renews it.
+    const untouched = { checkedAt, windows: [session, weekly] };
+    expect(
+      resolveUsageLimitsAfterProbe({
+        published: untouched,
+        probed: {
+          checkedAt: "2026-09-04T00:00:00.000Z",
+          windows: [],
+          unavailable: { reason: "probeFailed" },
+        },
+      }),
+    ).toBe(untouched);
+  });
+});
+
 describe("resolveUsageLimitsAfterProbe", () => {
   it("keeps the last good windows through a failed probe but not an unsupported one", () => {
     const failed = { checkedAt, windows: [], unavailable: { reason: "probeFailed" as const } };
