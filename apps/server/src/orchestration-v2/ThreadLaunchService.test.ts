@@ -55,6 +55,7 @@ import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
+import { threadShellFromProjection } from "./ProjectionStore.ts";
 import * as ThreadLaunch from "./ThreadLaunchService.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import * as ThreadTitleRegeneration from "./ThreadTitleRegenerationService.ts";
@@ -361,6 +362,10 @@ it.effect.each(
       );
       assert.equal(turnItem?.text, task.prompt);
       assert.equal(turnItem?.scheduledTaskId, task.id);
+      // Only a thread the task launched records it; a bound thread was started by someone else.
+      const launchedBy = target === "new" ? task.id : undefined;
+      assert.equal(thread!.scheduledTaskId, launchedBy);
+      assert.equal(threadShellFromProjection(projection).scheduledTaskId, launchedBy);
     }).pipe(Effect.provide(Layer.mergeAll(harness.layer, layerScheduledTasks)));
   },
 );

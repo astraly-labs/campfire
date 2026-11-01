@@ -45,6 +45,7 @@ describe("V2 preview upgrade", () => {
         [68, "CampfireV2Collaboration"],
         [69, "AuthSessionEmail"],
         [70, "UserMemory"],
+        [71, "ScheduledTaskThreadOrigin"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);
@@ -132,6 +133,7 @@ describe("V2 preview upgrade", () => {
         [68, "CampfireV2Collaboration"],
         [69, "AuthSessionEmail"],
         [70, "UserMemory"],
+        [71, "ScheduledTaskThreadOrigin"],
       ]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );

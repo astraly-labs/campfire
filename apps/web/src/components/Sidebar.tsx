@@ -2,6 +2,7 @@ import {
   useCollaborationSidebarThreads,
   CollaborationThreadOwner,
   ReviewThreadBadge,
+  ScheduledThreadBadge,
 } from "../collaboration/SidebarCollaboration";
 import { type EnvironmentId, type ScopedProjectRef } from "@t3tools/contracts";
 import { ThreadHoverCard, ThreadHoverCardPopup } from "./ThreadHoverCard";
@@ -1678,6 +1679,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       <>
         <CollaborationThreadOwner thread={thread} />
         {thread.kind === "review" ? <ReviewThreadBadge thread={thread} /> : null}
+        <ScheduledThreadBadge thread={thread} />
         <span
           aria-hidden
           className={cn(
@@ -2383,7 +2385,7 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
               >
                 <CollaborationThreadOwner thread={thread} />{" "}
                 {thread.kind === "review" ? <ReviewThreadBadge thread={thread} /> : null}{" "}
-                {thread.title}
+                <ScheduledThreadBadge thread={thread} /> {thread.title}
               </span>
               <span id={`${props.resultId}-pr`} className="contents">
                 <ThreadSearchPullRequestNumber

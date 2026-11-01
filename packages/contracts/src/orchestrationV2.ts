@@ -376,6 +376,8 @@ export type OrchestrationV2LimitRecoveryUpdate = typeof OrchestrationV2LimitReco
 
 export const OrchestrationV2AppThread = Schema.Struct({
   collaborationCreatedBy: Schema.optional(Schema.NullOr(CollaborationUser)),
+  /** The scheduled task that launched this thread. Absent when a person started it. */
+  scheduledTaskId: Schema.optional(Schema.NullOr(ScheduledTaskId)),
   kind: Schema.optional(ThreadKind),
   reviewPullRequestNumber: Schema.optional(Schema.NullOr(PositiveInt)),
   ...OrchestrationV2CreationFields,
@@ -1981,6 +1983,7 @@ export type OrchestrationV2LatestVisibleMessageSummary =
 export const OrchestrationV2ThreadShell = Schema.Struct({
   teamDiscussion: Schema.optional(SideThreadShellSummary),
   collaborationCreatedBy: Schema.optional(Schema.NullOr(CollaborationUser)),
+  scheduledTaskId: OrchestrationV2AppThread.fields.scheduledTaskId,
   kind: Schema.optional(ThreadKind),
   reviewPullRequestNumber: Schema.optional(Schema.NullOr(PositiveInt)),
   ...OrchestrationV2CreationFields,
@@ -2799,6 +2802,7 @@ export const OrchestrationV2Command = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("thread.create"),
     collaborationUser: Schema.optional(Schema.NullOr(CollaborationUser)),
+    scheduledTaskId: OrchestrationV2AppThread.fields.scheduledTaskId,
     kind: Schema.optional(ThreadKind),
     reviewPullRequestNumber: Schema.optional(Schema.NullOr(PositiveInt)),
     ...OrchestrationV2CreationFields,

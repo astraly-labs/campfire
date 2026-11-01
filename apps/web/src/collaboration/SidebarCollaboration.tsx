@@ -3,6 +3,7 @@ import type {
   EnvironmentProject,
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/models";
+import { CalendarClockIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import {
@@ -158,6 +159,22 @@ export function ReviewThreadBadge({ thread }: { readonly thread: EnvironmentThre
         <Icon className={cn("size-3.5", presentation?.toneClassName ?? "text-muted-foreground")} />
       </TooltipTrigger>
       <TooltipPopup>{label}</TooltipPopup>
+    </Tooltip>
+  );
+}
+
+const SCHEDULED_THREAD_LABEL = "Started by a scheduled task";
+
+export function ScheduledThreadBadge({ thread }: { readonly thread: EnvironmentThreadShell }) {
+  if (!thread.scheduledTaskId) return null;
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={<span className="inline-flex shrink-0" aria-label={SCHEDULED_THREAD_LABEL} />}
+      >
+        <CalendarClockIcon className="size-3.5 text-muted-foreground" />
+      </TooltipTrigger>
+      <TooltipPopup>{SCHEDULED_THREAD_LABEL}</TooltipPopup>
     </Tooltip>
   );
 }

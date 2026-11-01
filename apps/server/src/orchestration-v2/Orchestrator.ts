@@ -2247,6 +2247,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ...("collaborationUser" in command ? { author: command.collaborationUser ?? null } : {}),
       creationSource: command.creationSource,
       collaborationCreatedBy: command.collaborationUser ?? null,
+      ...(command.scheduledTaskId == null ? {} : { scheduledTaskId: command.scheduledTaskId }),
       kind: command.kind ?? "default",
       reviewPullRequestNumber: command.reviewPullRequestNumber ?? null,
       id: command.threadId,

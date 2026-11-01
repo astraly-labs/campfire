@@ -994,6 +994,15 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           {props.projectTitle ?? props.project?.title ?? ""}
         </Text>
         {props.hasQueuedMessages ? <QueuedMessageIcon selected={selected} /> : null}
+        {thread.scheduledTaskId ? (
+          <SymbolView
+            accessibilityLabel="Started by a scheduled task"
+            name="clock"
+            size={11}
+            tintColorClassName={rowAppearance.mutedIconTintClassName}
+            type="monochrome"
+          />
+        ) : null}
         {pinnedRow ? (
           <SymbolView
             name="pin"
