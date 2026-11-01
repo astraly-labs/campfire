@@ -90,6 +90,7 @@ function threadRunStatusIsActive(status: ThreadRuntimeSummary["status"]): boolea
 
 export interface EnvironmentThreadShell {
   readonly collaborationCreatedBy?: import("@t3tools/contracts").CollaborationUser | null;
+  readonly scheduledTaskId?: OrchestrationV2ThreadShell["scheduledTaskId"];
   readonly teamDiscussion?: import("@t3tools/contracts").SideThreadShellSummary;
   readonly kind?: "default" | "review";
   readonly reviewPullRequestNumber?: number | null;
@@ -297,6 +298,7 @@ export function presentThreadShell(
     ...(thread.collaborationCreatedBy === undefined
       ? {}
       : { collaborationCreatedBy: thread.collaborationCreatedBy }),
+    ...(thread.scheduledTaskId == null ? {} : { scheduledTaskId: thread.scheduledTaskId }),
     ...(thread.teamDiscussion === undefined ? {} : { teamDiscussion: thread.teamDiscussion }),
     ...(thread.kind === undefined ? {} : { kind: thread.kind }),
     ...(thread.reviewPullRequestNumber === undefined

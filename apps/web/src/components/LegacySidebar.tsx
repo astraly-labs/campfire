@@ -2,6 +2,7 @@ import {
   useCollaborationSidebarThreads,
   CollaborationThreadOwner,
   ReviewThreadBadge,
+  ScheduledThreadBadge,
 } from "../collaboration/SidebarCollaboration";
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
 import { resolveThreadCurrentPullRequestLink } from "@t3tools/shared/threadPullRequests";
@@ -823,7 +824,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                   >
                     <CollaborationThreadOwner thread={thread} />{" "}
                     {thread.kind === "review" ? <ReviewThreadBadge thread={thread} /> : null}{" "}
-                    {thread.title}
+                    <ScheduledThreadBadge thread={thread} /> {thread.title}
                   </span>
                 }
               />

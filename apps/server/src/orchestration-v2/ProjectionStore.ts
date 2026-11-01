@@ -1481,6 +1481,9 @@ export function threadShellFromProjection(
   return {
     createdBy: projection.thread.createdBy,
     collaborationCreatedBy: projection.thread.collaborationCreatedBy ?? null,
+    ...(projection.thread.scheduledTaskId == null
+      ? {}
+      : { scheduledTaskId: projection.thread.scheduledTaskId }),
     kind: projection.thread.kind ?? "default",
     reviewPullRequestNumber: projection.thread.reviewPullRequestNumber ?? null,
     teamDiscussion: sideThreadShellSummary(projection.thread.id, projection.sideThreads ?? []),
@@ -1754,6 +1757,9 @@ function shellFromState(input: {
   return {
     createdBy: input.state.thread.createdBy,
     collaborationCreatedBy: input.state.thread.collaborationCreatedBy ?? null,
+    ...(input.state.thread.scheduledTaskId == null
+      ? {}
+      : { scheduledTaskId: input.state.thread.scheduledTaskId }),
     kind: input.state.thread.kind ?? "default",
     reviewPullRequestNumber: input.state.thread.reviewPullRequestNumber ?? null,
     teamDiscussion: input.state.teamDiscussion,
