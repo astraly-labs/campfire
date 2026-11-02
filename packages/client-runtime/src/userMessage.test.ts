@@ -1,4 +1,4 @@
-import { ScheduledTaskId } from "@t3tools/contracts";
+import { ScheduledTaskId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { resolveUserMessagePresentation } from "./userMessage.ts";
@@ -70,6 +70,33 @@ describe("resolveUserMessagePresentation", () => {
         resolveUserMessagePresentation({ role: "user", createdBy: "agent", creationSource, text }),
       ).toMatchObject({ attribution: "agent" });
     }
+  });
+
+  it("keeps the T3 Code label on a message T3 Code sent for another thread and opens that thread", () => {
+    const senderThreadId = ThreadId.make("thread-review");
+    const text = "**Review 1 of 3** from Cursor on #42";
+    expect(
+      resolveUserMessagePresentation({
+        role: "user",
+        createdBy: "agent",
+        creationSource: "server",
+        senderThreadId,
+        text,
+      }),
+    ).toEqual({ text, attribution: "t3code", scheduledTaskId: undefined, senderThreadId });
+    expect(
+      resolveUserMessagePresentation({
+        role: "user",
+        createdBy: "agent",
+        creationSource: "mcp",
+        senderThreadId,
+        text,
+      }),
+    ).toMatchObject({ attribution: "agent", senderThreadId });
+    expect(
+      resolveUserMessagePresentation({ role: "user", createdBy: "user", senderThreadId, text })
+        .senderThreadId,
+    ).toBeUndefined();
   });
 
   it("recovers the triggering automation from older scheduler message ids", () => {

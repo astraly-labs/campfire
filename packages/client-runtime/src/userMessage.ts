@@ -2,14 +2,15 @@ import {
   type OrchestrationV2Actor,
   type OrchestrationV2CreationSource,
   ScheduledTaskId,
+  type ThreadId,
 } from "@t3tools/contracts";
 
 const LEGACY_AUTOMATION_PREFIX = /^\[Triggered by schedule task: [^\r\n]+\]\r?\n\r?\n/;
 const LEGACY_AUTOMATION_MESSAGE_ID = /^scheduled-task-message:(.+):\d+:(?:scheduled|manual)$/;
 
 /**
- * Text and sender label for a user-role message. Older scheduled messages
- * stored their attribution in the prompt itself.
+ * Text and sender label for a user-role message, and the thread the label opens. Older
+ * scheduled messages stored their attribution in the prompt itself.
  */
 export function resolveUserMessagePresentation(message: {
   readonly id?: string;
@@ -18,20 +19,29 @@ export function resolveUserMessagePresentation(message: {
   readonly createdBy?: OrchestrationV2Actor;
   readonly creationSource?: OrchestrationV2CreationSource;
   readonly scheduledTaskId?: ScheduledTaskId;
+  readonly senderThreadId?: ThreadId;
 }): {
   readonly text: string;
   /** Who sent a user-role message the user did not type. */
   readonly attribution: "automation" | "agent" | "t3code" | null;
   readonly scheduledTaskId: ScheduledTaskId | undefined;
+  /** The thread an agent or T3 Code message came from, which its label opens. */
+  readonly senderThreadId: ThreadId | undefined;
 } {
   if (message.role !== "user") {
-    return { text: message.text, attribution: null, scheduledTaskId: undefined };
+    return {
+      text: message.text,
+      attribution: null,
+      scheduledTaskId: undefined,
+      senderThreadId: undefined,
+    };
   }
   if (message.scheduledTaskId !== undefined) {
     return {
       text: message.text,
       attribution: "automation",
       scheduledTaskId: message.scheduledTaskId,
+      senderThreadId: undefined,
     };
   }
   const legacyPrefix = LEGACY_AUTOMATION_PREFIX.exec(message.text);
@@ -43,6 +53,7 @@ export function resolveUserMessagePresentation(message: {
       text: message.text.slice(legacyPrefix[0].length),
       attribution: "automation",
       scheduledTaskId: legacyTaskId === undefined ? undefined : ScheduledTaskId.make(legacyTaskId),
+      senderThreadId: undefined,
     };
   }
   return {
@@ -55,5 +66,6 @@ export function resolveUserMessagePresentation(message: {
           ? "t3code"
           : "agent",
     scheduledTaskId: undefined,
+    senderThreadId: message.createdBy === "agent" ? message.senderThreadId : undefined,
   };
 }

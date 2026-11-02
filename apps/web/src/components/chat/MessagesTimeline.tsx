@@ -2303,10 +2303,11 @@ function MessageAuthorHeading({ children }: { children: string }) {
   return <h3 className="sr-only select-none">{children}</h3>;
 }
 
+const SENDER_LABELS = { agent: "Sent by another agent", t3code: "Sent by T3 Code" } as const;
+
 function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
   const { onImageExpand, onFileOpen } = ctx;
-  const senderThreadId = row.message.senderThreadId;
   const resources = useMemo(
     () => selectMessageImageResources(row.message.attachments),
     [row.message.attachments],
@@ -2338,6 +2339,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
     (attachment) => !isImageAttachment(attachment) && !isFileAttachment(attachment),
   );
   const userMessage = resolveUserMessagePresentation(row.message);
+  const senderThreadId = userMessage.senderThreadId;
   const resolvedContext = useMemo(() => resolveUserMessageContext(row.message), [row.message]);
   const previewImages = useMemo(
     () => userImages.filter((image) => image.name.startsWith("preview-annotation-")),
@@ -2491,25 +2493,21 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             "Sent by automation"
           )}
         </p>
-      ) : userMessage.attribution === "t3code" ? (
+      ) : userMessage.attribution !== null ? (
         <p
           className="me-1 text-2xs text-muted-foreground/70"
-          data-user-message-attribution="t3code"
+          data-user-message-attribution={userMessage.attribution}
         >
-          Sent by T3 Code
-        </p>
-      ) : userMessage.attribution === "agent" ? (
-        <p className="me-1 text-2xs text-muted-foreground/70" data-user-message-attribution="agent">
           {senderThreadId ? (
             <InlineButton
               onClick={() => ctx.onOpenThread(senderThreadId)}
               tone="muted"
               aria-label="Open sending thread"
             >
-              Sent by another agent
+              {SENDER_LABELS[userMessage.attribution]}
             </InlineButton>
           ) : (
-            "Sent by another agent"
+            SENDER_LABELS[userMessage.attribution]
           )}
         </p>
       ) : null}
