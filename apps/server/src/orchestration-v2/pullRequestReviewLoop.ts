@@ -33,7 +33,6 @@ const MAX_REVIEW_CHARS = 20_000;
 const MAX_AUTHOR_REPLY_CHARS = 4_000;
 const MAX_DETAIL_CHARS = 200;
 
-/** The request text and the parser both read these, so they cannot drift apart. */
 export const REVIEW_VERDICT_LINE = {
   clean: "REVIEW-LOOP: CLEAN",
   changes: "REVIEW-LOOP: CHANGES",
@@ -81,7 +80,6 @@ const NEXT_PHASE = {
   readonly fixing: Record<ReviewLoopFixRound, ReviewLoopLivePhase>;
 };
 
-/** Checked under the source thread's lock, so no caller can run a fourth review or a third fix. */
 export function isReviewLoopStep(from: ReviewLoopLivePhase, to: ReviewLoopPhase): boolean {
   if (to.status === "ended") return true;
   const next =
@@ -113,18 +111,14 @@ export interface ReviewLoopStepRecords {
   readonly providerThreads: PendingWorkInput["providerThreads"];
   readonly backgroundTurnItems: PendingWorkInput["turnItems"];
   readonly activeProviderThreadId: OrchestrationV2AppThread["activeProviderThreadId"];
-  /** Runs whose restart continuation is still pending in the outbox. */
   readonly continuationPending: ReadonlySet<RunId>;
 }
 
 export type ReviewLoopStepProgress =
-  /** The step that sent the awaited message committed it, so only a deletion removes it. */
   | { readonly kind: "missing" }
   | { readonly kind: "pending" }
-  /** Stop, a restart, a provider failure, or a missing worktree paused the queue. */
   | { readonly kind: "held" }
   | { readonly kind: "working" }
-  /** The thread is idle, and `run` is the turn to judge. */
   | { readonly kind: "settled"; readonly run: StepRun };
 
 const ACTIVE_RUN_STATUSES = new Set<OrchestrationV2Run["status"]>([
@@ -188,7 +182,6 @@ export function reviewLoopStepProgress(records: ReviewLoopStepRecords): ReviewLo
 export interface ReviewLoopPullRequest {
   readonly number: number;
   readonly url: string;
-  /** `snapshot.headBranch`, else the source thread's branch. */
   readonly branch: string | null;
   readonly state: PullRequestState | null;
 }
@@ -198,12 +191,7 @@ export interface ReviewLoopFacts {
   readonly pullRequest: ReviewLoopPullRequest;
   readonly reviewThread: "live" | "archived" | "deleted" | "missing";
   readonly progress: ReviewLoopStepProgress;
-  /**
-   * The settled run's error when it failed, else its final assistant message, read with
-   * `subagentResultForRun`. Null when it has neither, and while the step is not settled.
-   */
   readonly resultText: string | null;
-  /** The review thread's model, such as "Cursor · composer-1". */
   readonly reviewerLabel: string;
   readonly now: string;
 }
@@ -219,7 +207,6 @@ export type ReviewLoopDecision =
 type EndedPhase<Reason extends ReviewLoopEndReason> = ReviewLoopEndedPhase & {
   readonly reason: Reason;
 };
-/** The ends the source thread hears about. It already shows its own failed or stopped turn. */
 export type ReviewLoopNotedEnd = EndedPhase<
   Extract<ReviewLoopEndReason, "clean" | "needs_human" | "review_stopped" | "review_failed">
 >;
@@ -356,7 +343,6 @@ function branchName(pullRequest: ReviewLoopPullRequest): string {
   return pullRequest.branch ?? "the pull request branch";
 }
 
-/** Sent into the review thread: request 1 by the start, requests 2 and 3 by a step. */
 export function reviewRequestText(input: {
   readonly prompt: string;
   readonly round: ReviewLoopReviewRound;
@@ -386,7 +372,6 @@ export function reviewRequestText(input: {
   ].join("\n");
 }
 
-/** Sent into the source thread after a review that is not clean and not the last. */
 export function reviewDeliveryText(input: {
   readonly round: ReviewLoopFixRound;
   readonly reviewerLabel: string;
@@ -412,7 +397,6 @@ export function reviewDeliveryText(input: {
   ].join("\n");
 }
 
-/** Sent into the source thread when the loop ends for a reason it hears about. Starts one short turn. */
 export function reviewLoopEndText(
   input: Pick<ReviewLoopFacts, "reviewerLabel" | "pullRequest"> & {
     readonly to: ReviewLoopNotedEnd;

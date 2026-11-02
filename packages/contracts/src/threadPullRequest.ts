@@ -127,11 +127,9 @@ export const ThreadPullRequestWatch = Schema.Struct({
 });
 export type ThreadPullRequestWatch = typeof ThreadPullRequestWatch.Type;
 
-/** Review 3 is the last review, so a fourth review cannot be written down. */
 export const ReviewLoopReviewRound = Schema.Literals([1, 2, 3]);
 export type ReviewLoopReviewRound = typeof ReviewLoopReviewRound.Type;
 
-/** Fix 2 is the last fix, so a third fix cannot be written down. */
 export const ReviewLoopFixRound = Schema.Literals([1, 2]);
 export type ReviewLoopFixRound = typeof ReviewLoopFixRound.Type;
 
@@ -156,7 +154,7 @@ export const ReviewLoopEndReason = Schema.Literals([
   "fix_failed",
   "pr_merged",
   "pr_closed",
-  /** A step could not commit. The server log has the cause. */
+  /** A step could not commit, or the message the loop waited for is gone. */
   "aborted",
 ]);
 export type ReviewLoopEndReason = typeof ReviewLoopEndReason.Type;
@@ -189,9 +187,7 @@ export type ReviewLoopEndedPhase = typeof ReviewLoopEndedPhase.Type;
  *
  *   reviewing 1 -> fixing 1 -> reviewing 2 -> fixing 2 -> reviewing 3
  *
- * Any live phase can end. A clean review ends the loop at any round, and review 3 always ends
- * it. The message a live phase waits for derives from the loop id and the phase, so it is
- * never stored.
+ * Any live phase can end. A clean review ends the loop at any round, and review 3 always ends it.
  */
 export const ReviewLoopPhase = Schema.Union([
   ReviewLoopReviewing,
@@ -200,7 +196,7 @@ export const ReviewLoopPhase = Schema.Union([
 ]);
 export type ReviewLoopPhase = typeof ReviewLoopPhase.Type;
 
-/** What the user confirmed in the start dialog. Every review request starts with it. */
+/** Every review request starts with it. */
 export const ReviewLoopPrompt = TrimmedNonEmptyString.check(Schema.isMaxLength(2000));
 
 /**
@@ -242,7 +238,6 @@ export const ThreadPullRequestLink = Schema.Struct({
   snapshot: Schema.NullOr(ThreadPullRequestSnapshot),
   stack: Schema.NullOr(ThreadPullRequestStack),
   watch: Schema.optional(ThreadPullRequestWatch),
-  /** A loop shape this build does not know decodes as absent instead of failing the thread. */
   reviewLoop: ForwardCompatibleOptional(ThreadPullRequestReviewLoop),
 });
 export type ThreadPullRequestLink = typeof ThreadPullRequestLink.Type;

@@ -54,7 +54,6 @@ const reviewerOffProjectId = ProjectId.make("project:review-loop:reviewer-off");
 const authorOffProjectId = ProjectId.make("project:review-loop:author-off");
 const pullRequest = { host: "github.com", repository: "pingdotgg/t3code", number: 42 };
 
-/** One scripted turn. A turn with `until` runs until that deferred completes. */
 interface Reply {
   readonly text: string;
   readonly status?: "completed" | "failed" | "interrupted";
@@ -63,7 +62,6 @@ interface Reply {
 
 const unsupported = () => Effect.die("Unexpected provider operation in the review loop tests");
 
-/** A provider whose turns end with the next scripted reply, in order. */
 const scriptedAdapter = (
   model: ModelSelection,
   driverName: string,
@@ -289,7 +287,6 @@ const phaseOf = (sourceId: ThreadId) =>
     link?.reviewLoop?.role === "author" ? link.reviewLoop.phase : null,
   );
 
-/** The texts T3 Code posted into a thread for the loop, oldest first. */
 const loopMessages = (threadId: ThreadId) =>
   Effect.map(threadOf(threadId), (projection) =>
     projection.messages
@@ -302,7 +299,6 @@ const loopMessages = (threadId: ThreadId) =>
       .map((message) => message.text),
   );
 
-/** Creates a source thread with the pull request linked, and starts a loop on it. */
 const startLoop = (
   sourceId: ThreadId,
   options: { readonly projectId?: ProjectId; readonly name?: string } = {},
@@ -331,7 +327,6 @@ const startLoop = (
       url: "https://github.com/pingdotgg/t3code/pull/42",
       source: "created",
     });
-    // The orchestrator itself does not check that a provider is on; the reviewer-off case uses it.
     yield* orchestrator.dispatch({
       type: "thread.pull-request.review-loop",
       commandId: CommandId.make(`review-loop:${options.name ?? sourceId}`),
@@ -347,7 +342,6 @@ const startLoop = (
     return loop!;
   });
 
-/** Waits until the run of the message that `phase` posted has ended. */
 const awaitTurn = (
   threadId: ThreadId,
   loop: { readonly id: ReviewLoopId },
@@ -371,7 +365,6 @@ const awaitTurn = (
     );
   });
 
-/** Steps a thread three times and sweeps, the way repeated events and the sweep race. */
 const stepRepeatedly = (
   reactor: PullRequestReviewLoopService.PullRequestReviewLoopService["Service"],
   threadId: ThreadId,

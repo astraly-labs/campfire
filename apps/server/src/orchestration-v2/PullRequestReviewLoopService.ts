@@ -92,7 +92,6 @@ function holdsMarker(
   );
 }
 
-/** The advance command for one step. Its ids derive from the loop and the phases it joins. */
 function stepCommand(
   source: OrchestrationV2AppThread,
   link: ThreadPullRequestLink,
@@ -186,7 +185,6 @@ export const make = Effect.gen(function* () {
           ),
     ).pipe(Effect.map((ids) => new Set<RunId>(ids.flat())));
 
-  /** How far the awaited turn got, and the text it ended with once the thread is idle. */
   const readStep = Effect.fn("PullRequestReviewLoopService.readStep")(function* (
     threadId: ThreadId,
     awaitedMessageId: MessageId,
@@ -271,7 +269,6 @@ export const make = Effect.gen(function* () {
       ...(detail === undefined ? {} : { detail }),
       endedAt: facts.now,
     });
-    /** The step to take instead when the thread a step posts into has its provider off. */
     const withProviderOff = (step: Step): Step => {
       if (step.to.status === "ended") return { kind: "advance", to: step.to };
       if (step.to.status === "fixing") {
@@ -314,7 +311,6 @@ export const make = Effect.gen(function* () {
     return decision.kind === "wait" ? false : yield* commit(decision);
   });
 
-  /** Releases a review thread's marker for a loop that is no longer live. */
   const release = (
     review: OrchestrationV2AppThread,
     loopId: ReviewLoopId,
@@ -332,7 +328,6 @@ export const make = Effect.gen(function* () {
           })
           .pipe(Effect.asVoid);
 
-  /** Steps the source thread's live loops, and releases the marker of each loop that ended. */
   const advanceSource = (source: OrchestrationV2AppThread) =>
     Effect.forEach(
       threadPullRequestsOf(source),

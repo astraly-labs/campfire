@@ -127,7 +127,6 @@ export function reviewLoopOtherThreadLabel(chip: ReviewLoopChip): string {
   return chip.role === "author" ? "Open review thread" : "Open source thread";
 }
 
-/** The loop's static status: an icon and a word, never a spinner. */
 export function ReviewLoopStatusChip({
   chip,
   ...props
@@ -140,7 +139,6 @@ export function ReviewLoopStatusChip({
   );
 }
 
-/** The pull request panel header's review loop button, or the loop's chip and its menu. */
 export function ReviewLoopControl({
   threadRef,
   pullRequest,

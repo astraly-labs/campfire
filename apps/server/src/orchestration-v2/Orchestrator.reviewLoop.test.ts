@@ -59,7 +59,6 @@ const adapter = (model: ModelSelection, driver: string) =>
   }) as ProviderAdapter.ProviderAdapterV2["Service"];
 
 const layerDatabase = SqlitePersistence.layerMemory;
-// No effect worker: runs stay unstarted, so each test sees exactly what one command committed.
 const layerTest = ThreadManagementService.layer.pipe(
   Layer.provideMerge(
     Layer.mergeAll(
@@ -199,7 +198,6 @@ const linkOf = (threadId: ThreadId) =>
       projection.thread.pullRequests?.find((link) => link.number === pullRequest.number) ?? null,
   );
 
-/** Starts a loop and returns its author record. */
 const startLoop = (threadId: ThreadId, name: string) =>
   Effect.gen(function* () {
     yield* dispatch(start(threadId, name));
@@ -430,7 +428,6 @@ it.layer(layerTest)("review loop commands", (it) => {
         assert.isUndefined((yield* linkOf(sourceId))?.reviewLoop, name);
       }
 
-      // Clients are refused earlier, by the provider "off" check; this is the orchestrator's own guard.
       const unknownReviewer = ThreadId.make("thread:loop:refused-unknown-reviewer");
       yield* createSource(unknownReviewer);
       const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -702,7 +699,6 @@ it.layer(layerTest)("review loop commands", (it) => {
         url: pullRequestUrl,
       };
 
-      // The review thread shares the source thread's branch, so branch discovery rebuilds both.
       for (const threadId of [sourceId, loop.reviewThreadId]) {
         yield* dispatch({
           type: "thread.pull-request.sync",
