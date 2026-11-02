@@ -3153,7 +3153,7 @@ export const OrchestrationV2Command = Schema.Union([
     reason: Schema.optional(Schema.String),
     /**
      * Set by the Stop button. Stop also holds the queue, ends the thread's pull request
-     * watches, and stops every delegated task under the thread.
+     * watches and review loops, and stops every delegated task under the thread.
      */
     holdQueue: Schema.optional(Schema.Boolean),
   }),
@@ -3389,8 +3389,9 @@ const OrchestrationV2InternalCommand = Schema.Union([
   }),
   /**
    * Stop for one thread, whatever it is doing: interrupts its running turn, holds its queue,
-   * ends its pull request watches, and drops pending delegated-task wakes. Nothing to stop is
-   * an accepted no-op. Delegated tasks under the thread get their own `thread.stop`.
+   * ends its pull request watches and review loops, and drops pending delegated-task wakes.
+   * Nothing to stop is an accepted no-op. Delegated tasks under the thread get their own
+   * `thread.stop`.
    */
   Schema.Struct({
     type: Schema.Literal("thread.stop"),

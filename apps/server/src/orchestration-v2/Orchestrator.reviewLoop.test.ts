@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
+  EventId,
   MessageId,
   type ModelSelection,
   type OrchestrationV2Command,
@@ -12,6 +13,7 @@ import {
   type ReviewLoopPhase,
   ThreadId,
   type ThreadPullRequestSnapshot,
+  type ThreadPullRequestStack,
 } from "@t3tools/contracts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -25,8 +27,10 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
+import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import * as ProjectStore from "./ProjectStore.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
@@ -60,6 +64,7 @@ const layerTest = ThreadManagementService.layer.pipe(
   Layer.provideMerge(
     Layer.mergeAll(
       ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
+      ProjectStore.layer.pipe(Layer.provide(layerDatabase)),
       ProviderReplayHarness.layerWithRegistry(
         { name: "review-loop-commands" },
         ProviderAdapterRegistry.layerFromAdapters([
@@ -129,10 +134,14 @@ const linkPullRequest = (threadId: ThreadId) =>
 const createSource = (threadId: ThreadId, options: { readonly projectId?: ProjectId } = {}) =>
   Effect.andThen(createThread(threadId, options), linkPullRequest(threadId));
 
-const syncSnapshot = (threadId: ThreadId, snapshot: Partial<ThreadPullRequestSnapshot>) =>
+const syncSnapshot = (
+  threadId: ThreadId,
+  snapshot: Partial<ThreadPullRequestSnapshot>,
+  stack: ThreadPullRequestStack | null = null,
+) =>
   dispatch({
     type: "thread.pull-request-link.sync",
-    commandId: CommandId.make(`sync:${threadId}:${JSON.stringify(snapshot)}`),
+    commandId: CommandId.make(`sync:${threadId}:${JSON.stringify([snapshot, stack])}`),
     threadId,
     ...pullRequest,
     snapshot: {
@@ -145,7 +154,7 @@ const syncSnapshot = (threadId: ThreadId, snapshot: Partial<ThreadPullRequestSna
       syncedAt: "2026-11-02T10:00:00.000Z",
       ...snapshot,
     },
-    stack: null,
+    stack,
   });
 
 const start = (
@@ -656,5 +665,130 @@ it.layer(layerTest)("review loop commands", (it) => {
           round: 2,
         });
       }),
+  );
+
+  it.effect("a pull request sync that rebuilds the linked pull request keeps the loop", () =>
+    Effect.gen(function* () {
+      const projects = yield* ProjectStore.ProjectStoreV2;
+      const sink = yield* EventSink.EventSinkV2;
+      yield* projects.apply({
+        sequence: 0,
+        eventId: EventId.make(`seed:${projectId}`),
+        aggregateKind: "project",
+        aggregateId: projectId,
+        occurredAt: "2026-11-02T09:00:00.000Z",
+        commandId: null,
+        causationEventId: null,
+        correlationId: null,
+        metadata: {},
+        type: "project.created",
+        payload: {
+          projectId,
+          title: "Login",
+          workspaceRoot: "/workspace/login",
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt: "2026-11-02T09:00:00.000Z",
+          updatedAt: "2026-11-02T09:00:00.000Z",
+        },
+      });
+      const sourceId = ThreadId.make("thread:loop:legacy-sync");
+      yield* createSource(sourceId);
+      const loop = yield* startLoop(sourceId, "legacy-sync");
+      const linked = {
+        projectId,
+        repository: pullRequest.repository,
+        number: pullRequest.number,
+        url: pullRequestUrl,
+      };
+
+      // The review thread shares the source thread's branch, so branch discovery rebuilds both.
+      for (const threadId of [sourceId, loop.reviewThreadId]) {
+        yield* dispatch({
+          type: "thread.pull-request.sync",
+          commandId: CommandId.make(`pull-request-sync:${threadId}`),
+          threadId,
+          projectId,
+          snapshotSequence: yield* sink.latestSequence({ threadId }),
+          expected: {
+            workspaceRoot: "/workspace/login",
+            branch: "feature/login",
+            worktreePath: "/workspace/login",
+            linkedPullRequest: null,
+            branchPullRequest: null,
+          },
+          branchPullRequest: linked,
+          linkedPullRequest: linked,
+        });
+      }
+
+      const rebuilt = yield* linkOf(sourceId);
+      assert.equal(rebuilt?.source, "manual");
+      assert.deepEqual(liveAuthorLoop(rebuilt!), loop);
+      assert.equal(reviewerMarker((yield* linkOf(loop.reviewThreadId))!)?.id, loop.id);
+    }),
+  );
+
+  it.effect(
+    "archive, settle, Stop, and a stack unlink end the source's loop as stopped and keep the marker",
+    () =>
+      Effect.gen(function* () {
+        const stack: ThreadPullRequestStack = {
+          kind: "native",
+          id: "stack-1",
+          number: 41,
+          url: "https://github.com/pingdotgg/t3code/pull/41",
+          base: "main",
+          layers: [
+            { number: 41, headBranch: "feature/base", state: "open" },
+            { number: 42, headBranch: "feature/login", state: "open" },
+          ],
+        };
+        for (const name of ["archive", "settle", "stop", "stack-unlink"] as const) {
+          const sourceId = ThreadId.make(`thread:loop:ends-on-${name}`);
+          yield* createSource(sourceId);
+          if (name === "stack-unlink") yield* syncSnapshot(sourceId, {}, stack);
+          const loop = yield* startLoop(sourceId, `ends-on-${name}`);
+          const commandId = CommandId.make(`ends-on-${name}`);
+          yield* dispatch(
+            name === "archive"
+              ? { type: "thread.archive", commandId, threadId: sourceId }
+              : name === "settle"
+                ? { type: "thread.settle", commandId, threadId: sourceId }
+                : name === "stop"
+                  ? { type: "thread.stop", commandId, threadId: sourceId }
+                  : {
+                      type: "thread.pull-request.unlink",
+                      commandId,
+                      threadId: sourceId,
+                      ...pullRequest,
+                    },
+          );
+
+          const record = (yield* linkOf(sourceId))?.reviewLoop;
+          assert.deepInclude(
+            record?.role === "author" ? record.phase : undefined,
+            { status: "ended", reason: "stopped", reviews: 0 },
+            name,
+          );
+          assert.equal(reviewerMarker((yield* linkOf(loop.reviewThreadId))!)?.id, loop.id, name);
+        }
+      }),
+  );
+
+  it.effect("Stop in the review thread keeps its marker and the source's loop", () =>
+    Effect.gen(function* () {
+      const sourceId = ThreadId.make("thread:loop:review-stop");
+      yield* createSource(sourceId);
+      const loop = yield* startLoop(sourceId, "review-stop");
+      yield* dispatch({
+        type: "thread.stop",
+        commandId: CommandId.make("review-stop"),
+        threadId: loop.reviewThreadId,
+      });
+
+      assert.equal(reviewerMarker((yield* linkOf(loop.reviewThreadId))!)?.id, loop.id);
+      assert.deepEqual(liveAuthorLoop((yield* linkOf(sourceId))!), loop);
+    }),
   );
 });

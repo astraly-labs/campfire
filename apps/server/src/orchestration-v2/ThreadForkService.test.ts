@@ -9,8 +9,10 @@ import {
   ProjectId,
   ProviderInstanceId,
   ProviderThreadId,
+  ReviewLoopId,
   RunId,
   ThreadId,
+  type ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -83,9 +85,12 @@ function makeSourceRun(status: OrchestrationV2Run["status"]): OrchestrationV2Run
   };
 }
 
-function makeSourceProjection(sourceRun: OrchestrationV2Run): OrchestrationV2ThreadProjection {
+function makeSourceProjection(
+  sourceRun: OrchestrationV2Run,
+  thread: OrchestrationV2AppThread,
+): OrchestrationV2ThreadProjection {
   return {
-    thread: makeSourceThread(),
+    thread,
     runs: [sourceRun],
     attempts: [],
     nodes: [],
@@ -106,11 +111,11 @@ function makeSourceProjection(sourceRun: OrchestrationV2Run): OrchestrationV2Thr
   };
 }
 
-const planFork = (sourceRun: OrchestrationV2Run) =>
+const planFork = (sourceRun: OrchestrationV2Run, thread = makeSourceThread()) =>
   Effect.gen(function* () {
     const service = yield* ThreadForkService.ThreadForkServiceV2;
     return yield* service.plan({
-      sourceProjection: makeSourceProjection(sourceRun),
+      sourceProjection: makeSourceProjection(sourceRun, thread),
       sourceRun,
       sourceProviderThread: undefined,
       canonicalSourcePoint: {
@@ -189,5 +194,55 @@ it.effect("rejects in-progress and rolled-back fork sources", () =>
       assert.equal(error.targetThreadId, targetThreadId);
       assert.equal(error.cause, ThreadForkService.forkableSourceRunStatusError(sourceRun));
     }
+  }),
+);
+
+it.effect("a fork keeps its source's pull request watches but none of its review loops", () =>
+  Effect.gen(function* () {
+    const loopId = ReviewLoopId.make("review-loop:fork-source");
+    const link = (number: number): ThreadPullRequestLink => ({
+      host: "github.com",
+      repository: "pingdotgg/t3code",
+      number,
+      url: `https://github.com/pingdotgg/t3code/pull/${number}`,
+      source: "created",
+      linkedAt: "2026-07-24T09:00:00.000Z",
+      snapshot: null,
+      stack: null,
+    });
+    const watch = {
+      startedAt: "2026-07-24T09:00:00.000Z",
+      headSha: null,
+      failedChecks: [],
+      passed: false,
+      passedChecks: [],
+      remarksThrough: "2026-07-24T09:00:00.000Z",
+      remarkIds: [],
+      conflicting: false,
+      wakes: 0,
+    };
+    const result = yield* planFork(makeSourceRun("completed"), {
+      ...makeSourceThread(),
+      pullRequests: [
+        {
+          ...link(42),
+          watch,
+          reviewLoop: {
+            role: "author",
+            id: loopId,
+            reviewThreadId: ThreadId.make("thread:fork-source-review"),
+            prompt: "/review #42",
+            startedAt: "2026-07-24T09:00:00.000Z",
+            phase: { status: "fixing", round: 1 },
+          },
+        },
+        {
+          ...link(43),
+          reviewLoop: { role: "reviewer", id: loopId, sourceThreadId: sourceThreadId },
+        },
+      ],
+    });
+
+    assert.deepEqual(result.targetThread.pullRequests, [{ ...link(42), watch }, link(43)]);
   }),
 );

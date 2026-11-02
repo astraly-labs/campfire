@@ -16,6 +16,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
+import { withoutReviewLoop } from "./pullRequestReviewLoop.ts";
+
 export interface ThreadForkPlanV2 {
   readonly targetThread: OrchestrationV2AppThread;
   readonly transfer: OrchestrationV2ContextTransfer;
@@ -87,6 +89,7 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
         }
         const targetThread: OrchestrationV2AppThread = {
           ...input.sourceProjection.thread,
+          pullRequests: input.sourceProjection.thread.pullRequests?.map(withoutReviewLoop),
           createdBy: input.createdBy,
           creationSource: input.creationSource,
           id: input.targetThreadId,

@@ -141,6 +141,8 @@ import {
 } from "./ThreadForkService.ts";
 import { planThreadDeletion } from "./ThreadDeletion.ts";
 import {
+  carryLinkAutomation,
+  endLinkAutomation,
   isReviewLoopStep,
   makeReviewThread,
   reviewRequestText,
@@ -575,14 +577,15 @@ function withPullRequestWatch(
   return watch === undefined ? rest : { ...rest, watch };
 }
 
-/** A legacy single-PR link as a link entry. Re-linking a pull request keeps its watch. */
+/** A legacy single-PR link as a link entry. Re-linking a pull request keeps its automation. */
 function legacyPullRequestLink(
   thread: OrchestrationV2AppThread,
   linked: ThreadLinkedPullRequest,
   now: DateTime.Utc,
 ): ThreadPullRequestLink {
   const key = legacyThreadPullRequestKey(linked);
-  return withPullRequestWatch(
+  return carryLinkAutomation(
+    threadPullRequestsOf(thread).find((link) => threadPullRequestKeysEqual(link, key)),
     {
       ...key,
       url: linked.url,
@@ -591,7 +594,6 @@ function legacyPullRequestLink(
       snapshot: null,
       stack: null,
     },
-    threadPullRequestsOf(thread).find((link) => threadPullRequestKeysEqual(link, key))?.watch,
   );
 }
 
@@ -3257,12 +3259,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const updatedThread: OrchestrationV2AppThread = (() => {
       switch (command.type) {
         case "thread.archive":
-          // An archived thread takes no wakes, so its watches end like a settled thread's.
+          // An archived thread takes no wakes, so its watches and review loops end like a
+          // settled thread's.
           return {
             ...thread,
             archivedAt: now,
             titleRegeneration: null,
-            pullRequests: thread.pullRequests?.map((link) => withPullRequestWatch(link, undefined)),
+            pullRequests: thread.pullRequests?.map((link) =>
+              endLinkAutomation(link, DateTime.formatIso(now)),
+            ),
             updatedAt: now,
           };
         case "thread.unarchive":
@@ -3277,7 +3282,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ...thread,
             settledOverride: "settled",
             settledAt: alreadySettled ? thread.settledAt : (command.settledAt ?? now),
-            pullRequests: thread.pullRequests?.map((link) => withPullRequestWatch(link, undefined)),
+            pullRequests: thread.pullRequests?.map((link) =>
+              endLinkAutomation(link, DateTime.formatIso(now)),
+            ),
             unsettledAt: null,
             pinnedAt: null,
             pinOrderKey: null,
@@ -3521,7 +3528,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               ? links.map((link) =>
                   link === existing
                     ? {
-                        ...withPullRequestWatch(link, undefined),
+                        ...endLinkAutomation(link, DateTime.formatIso(now)),
                         source: "stack-dismissed" as const,
                       }
                     : link,
@@ -9250,9 +9257,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
   /**
    * What Stop holds besides the run it interrupts: queued runs wait for the user, the
-   * thread's pull request watches end, and every wake its delegated tasks still owe is
-   * dropped, since Stop stops those tasks too. Nothing automatic starts the thread again.
-   * `cohortRunIds` are dropped even when they owe nothing, like a plain interrupt's.
+   * thread's pull request watches and review loops end, and every wake its delegated tasks
+   * still owe is dropped, since Stop stops those tasks too. Nothing automatic starts the thread
+   * again. `cohortRunIds` are dropped even when they owe nothing, like a plain interrupt's.
    */
   const holdStoppedThread = (input: {
     readonly command: Extract<
@@ -9287,7 +9294,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
       }
       const pullRequests = thread.pullRequests ?? [];
-      if (pullRequests.some((link) => link.watch !== undefined)) {
+      if (
+        pullRequests.some((link) => link.watch !== undefined || liveAuthorLoop(link) !== undefined)
+      ) {
         yield* emitEvent({
           type: "thread.pull-request-synced",
           threadId: thread.id,
@@ -9295,7 +9304,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           occurredAt: input.now,
           payload: {
             ...thread,
-            pullRequests: pullRequests.map((link) => withPullRequestWatch(link, undefined)),
+            pullRequests: pullRequests.map((link) =>
+              endLinkAutomation(link, DateTime.formatIso(input.now)),
+            ),
           },
         });
       }
