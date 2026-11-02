@@ -8,7 +8,6 @@ export interface CollaborationContext {
   readonly open: (messageId?: MessageId) => void;
   /** Opens the team discussion with the selected agent text as the draft's quote. */
   readonly quote: (citation: AssistantCitation) => void;
-  readonly review: (number: number) => void;
   readonly openBriefing: () => void;
   readonly unread: boolean;
   readonly messageCount: number;
