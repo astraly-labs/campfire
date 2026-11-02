@@ -12,6 +12,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   ProviderDriverKind,
+  ReviewLoopId,
   RunId,
   RuntimeRequestId,
   SideThreadId,
@@ -626,6 +627,122 @@ describe("V2 environment commands", () => {
           repository: "pingdotgg/t3code",
           number: 7,
           watching: false,
+        },
+      ]);
+    }).pipe(Effect.provide(layerTestCrypto)),
+  );
+
+  it.effect("Stop with no run left ends the live review loop held on the thread's links", () =>
+    Effect.gen(function* () {
+      const link = {
+        host: "github.com",
+        repository: "pingdotgg/t3code",
+        url: "https://github.com/pingdotgg/t3code/pull/7",
+        source: "created" as const,
+        linkedAt: "2026-10-05T00:00:00.000Z",
+        snapshot: null,
+        stack: null,
+      };
+      const author = {
+        role: "author" as const,
+        reviewThreadId: ThreadId.make("thread-review"),
+        prompt: "/review #7",
+        startedAt: "2026-10-05T00:00:00.000Z",
+      };
+      const projection: OrchestrationV2ThreadProjection = {
+        ...v2Projection,
+        thread: {
+          ...v2Projection.thread,
+          pullRequests: [
+            {
+              ...link,
+              number: 7,
+              reviewLoop: {
+                ...author,
+                id: ReviewLoopId.make("loop-live"),
+                phase: { status: "reviewing", round: 2 },
+              },
+            },
+            {
+              ...link,
+              number: 8,
+              reviewLoop: {
+                ...author,
+                id: ReviewLoopId.make("loop-ended"),
+                phase: {
+                  status: "ended",
+                  reason: "clean",
+                  reviews: 1,
+                  endedAt: "2026-10-05T01:00:00.000Z",
+                },
+              },
+            },
+          ],
+        },
+      };
+      const commands: OrchestrationV2Command[] = [];
+      const supervisor = yield* makeSupervisor({ commands, projects: [], projection });
+
+      yield* interruptThreadTurn({ threadId: v2ThreadId }).pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+      );
+
+      expect(commands).toEqual([
+        {
+          type: "thread.pull-request.review-loop",
+          commandId: expect.any(String),
+          createdBy: "user",
+          creationSource: "web",
+          threadId: v2ThreadId,
+          host: "github.com",
+          repository: "pingdotgg/t3code",
+          number: 7,
+          request: { type: "stop", loopId: "loop-live" },
+        },
+      ]);
+    }).pipe(Effect.provide(layerTestCrypto)),
+  );
+
+  it.effect("Stop in an idle review thread stops its loop on the source thread", () =>
+    Effect.gen(function* () {
+      const sourceThreadId = ThreadId.make("thread-source");
+      const projection: OrchestrationV2ThreadProjection = {
+        ...v2Projection,
+        thread: {
+          ...v2Projection.thread,
+          pullRequests: [
+            {
+              host: "github.com",
+              repository: "pingdotgg/t3code",
+              number: 7,
+              url: "https://github.com/pingdotgg/t3code/pull/7",
+              source: "agent",
+              linkedAt: "2026-10-05T00:00:00.000Z",
+              snapshot: null,
+              stack: null,
+              reviewLoop: { role: "reviewer", id: ReviewLoopId.make("loop-1"), sourceThreadId },
+            },
+          ],
+        },
+      };
+      const commands: OrchestrationV2Command[] = [];
+      const supervisor = yield* makeSupervisor({ commands, projects: [], projection });
+
+      yield* interruptThreadTurn({ threadId: v2ThreadId }).pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+      );
+
+      expect(commands).toEqual([
+        {
+          type: "thread.pull-request.review-loop",
+          commandId: expect.any(String),
+          createdBy: "user",
+          creationSource: "web",
+          threadId: sourceThreadId,
+          host: "github.com",
+          repository: "pingdotgg/t3code",
+          number: 7,
+          request: { type: "stop", loopId: "loop-1" },
         },
       ]);
     }).pipe(Effect.provide(layerTestCrypto)),

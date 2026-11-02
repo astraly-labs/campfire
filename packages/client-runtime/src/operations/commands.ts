@@ -34,10 +34,12 @@ import {
   type RuntimeRequestId,
   type ThreadId,
   type ThreadEnvMode,
+  type ThreadPullRequestLink,
   type UploadChatAttachment,
 } from "@t3tools/contracts";
 import { modelSelectionCommandType } from "@t3tools/shared/model";
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import { liveAuthorLoop, reviewerMarker } from "@t3tools/shared/pullRequestReviewLoop";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -804,8 +806,9 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
 
 /**
  * Stop for the thread's latest work: interrupts the active run, or the settled run whose
- * background work still runs. With no run to stop, it ends the thread's pull request
- * watches, the only background work that has no run.
+ * background work still runs. With no run to stop, it ends the thread's pull request watches
+ * and review loops, the background work that has no run. In a review thread, that stops the
+ * loop on its source thread.
  */
 export const interruptThreadTurn = Effect.fn("EnvironmentCommands.interruptThreadTurn")(function* (
   input: InterruptThreadTurnInput,
@@ -849,16 +852,25 @@ export const interruptThreadTurn = Effect.fn("EnvironmentCommands.interruptThrea
     if (runId === undefined) {
       let result = { sequence: 0 };
       for (const link of visibleThreadPullRequests(projection.thread.pullRequests ?? [])) {
-        if (link.watch === undefined) continue;
-        result = yield* dispatch({
-          type: "thread.pull-request.watch",
-          commandId: yield* allocateCommandId(result.sequence === 0 ? input : {}),
-          threadId: input.threadId,
-          host: link.host,
-          repository: link.repository,
-          number: link.number,
-          watching: false,
-        });
+        if (link.watch !== undefined) {
+          result = yield* dispatch({
+            type: "thread.pull-request.watch",
+            commandId: yield* allocateCommandId(result.sequence === 0 ? input : {}),
+            threadId: input.threadId,
+            host: link.host,
+            repository: link.repository,
+            number: link.number,
+            watching: false,
+          });
+        }
+        const stop = reviewLoopStopInput(input.threadId, link);
+        if (stop !== undefined) {
+          result = yield* reviewLoopThreadPullRequest({
+            ...stop,
+            commandId: yield* allocateCommandId(result.sequence === 0 ? input : {}),
+            ...(input.creationSource === undefined ? {} : { creationSource: input.creationSource }),
+          });
+        }
       }
       return result;
     }
@@ -1120,6 +1132,44 @@ export const watchThreadPullRequest = Effect.fn("EnvironmentCommands.watchThread
     });
   },
 );
+export type ReviewLoopThreadPullRequestInput = Omit<
+  Extract<OrchestrationV2Command, { type: "thread.pull-request.review-loop" }>,
+  "type" | "commandId" | "createdBy" | "creationSource" | "collaborationUser"
+> &
+  CommandMetadata;
+export const reviewLoopThreadPullRequest = Effect.fn(
+  "EnvironmentCommands.reviewLoopThreadPullRequest",
+)(function* (input: ReviewLoopThreadPullRequestInput) {
+  return yield* dispatch({
+    type: "thread.pull-request.review-loop",
+    commandId: yield* allocateCommandId(input),
+    createdBy: "user",
+    creationSource: input.creationSource ?? "web",
+    threadId: input.threadId,
+    host: input.host,
+    repository: input.repository,
+    number: input.number,
+    request: input.request,
+  });
+});
+
+/**
+ * The stop for the review loop on one of this thread's links, if Stop can end one there. A live
+ * author loop stops on this thread. A reviewer marker stops its loop on the source thread.
+ */
+export function reviewLoopStopInput(
+  threadId: ThreadId,
+  link: ThreadPullRequestLink,
+): ReviewLoopThreadPullRequestInput | undefined {
+  const key = { host: link.host, repository: link.repository, number: link.number };
+  const author = liveAuthorLoop(link);
+  if (author !== undefined)
+    return { ...key, threadId, request: { type: "stop", loopId: author.id } };
+  const marker = reviewerMarker(link);
+  return marker === undefined
+    ? undefined
+    : { ...key, threadId: marker.sourceThreadId, request: { type: "stop", loopId: marker.id } };
+}
 export const unlinkThreadPullRequest = Effect.fn("EnvironmentCommands.unlinkThreadPullRequest")(
   function* (input: UnlinkThreadPullRequestInput) {
     return yield* dispatch({
