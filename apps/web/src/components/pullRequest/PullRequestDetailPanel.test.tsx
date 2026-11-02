@@ -111,6 +111,7 @@ vi.mock("./PullRequestMarkdown", () => ({
 }));
 vi.mock("~/browser/useOpenLink", () => ({ useOpenLink: () => vi.fn() }));
 vi.mock("./PullRequestThreadLinks", () => ({ PullRequestThreadLinks: () => null }));
+vi.mock("./ReviewLoopControl", () => ({ ReviewLoopControl: () => null }));
 vi.mock("./PullRequestSummaryTab", () => ({
   PullRequestSummaryTab: ({
     onFixFinding,
