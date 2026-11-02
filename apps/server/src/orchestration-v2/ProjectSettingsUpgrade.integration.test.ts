@@ -169,7 +169,7 @@ const layerRuntime = (dbPath: string) => {
     ),
     Layer.provide(
       Layer.mock(GitWorkflow.GitWorkflowService)({
-        pruneWorktrees: () => Effect.void,
+        removeWorktree: () => Effect.void,
       }),
     ),
     Layer.provide(layerPlatform),
