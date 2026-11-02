@@ -18,6 +18,12 @@ import {
   legacyThreadPullRequestKey,
 } from "@t3tools/shared/threadPullRequests";
 import {
+  liveAuthorLoop,
+  reviewerMarker,
+  reviewLoopPhaseKey,
+  reviewsFinishedBefore,
+} from "@t3tools/shared/pullRequestReviewLoop";
+import {
   ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE,
   type ChatAttachment,
   CommandId,
@@ -56,10 +62,12 @@ import {
   ProviderInteractionMode,
   resolveProviderInstanceEnabled,
   type ProviderSessionId,
+  type ReviewLoopEndedPhase,
   RunId,
   RuntimeMode,
   ThreadLinkedPullRequest,
   ThreadId,
+  type ThreadPullRequestReviewLoopAuthor,
   type TurnItemId,
 } from "@t3tools/contracts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
@@ -132,6 +140,13 @@ import {
   ThreadForkServiceV2,
 } from "./ThreadForkService.ts";
 import { planThreadDeletion } from "./ThreadDeletion.ts";
+import {
+  isReviewLoopStep,
+  makeReviewThread,
+  reviewRequestText,
+  type ReviewLoopPullRequest,
+  withoutReviewLoop,
+} from "./pullRequestReviewLoop.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ServerSettings from "../serverSettings.ts";
 
@@ -578,6 +593,32 @@ function legacyPullRequestLink(
     },
     threadPullRequestsOf(thread).find((link) => threadPullRequestKeysEqual(link, key))?.watch,
   );
+}
+
+/** What a review loop's texts say about its pull request: the link's head branch, else the thread's. */
+export function reviewLoopPullRequest(
+  thread: Pick<OrchestrationV2AppThread, "branch">,
+  link: ThreadPullRequestLink,
+): ReviewLoopPullRequest {
+  return {
+    number: link.number,
+    url: link.url,
+    branch: link.snapshot?.headBranch ?? thread.branch,
+    state: link.snapshot?.state ?? null,
+  };
+}
+
+/**
+ * The dispatch locks, outermost first. A review loop step that posts into the review thread takes
+ * that thread's lock inside its source thread's, the parent-then-child order follow-up intake
+ * already uses. It cannot invert: a review thread is top-level, so no command holds its lock and
+ * then takes its source thread's.
+ */
+function commandLockThreadIds(command: OrchestrationV2ServerCommand): ReadonlyArray<ThreadId> {
+  return command.type === "thread.pull-request-review-loop.advance" &&
+    command.post?.target === "review"
+    ? [command.threadId, command.reviewThreadId]
+    : [commandThreadId(command)];
 }
 
 function delegatedCompletionWakeDetail(taskIds: ReadonlyArray<string>): string {
@@ -2420,6 +2461,382 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       );
     },
   );
+
+  /**
+   * Starts or stops a review loop on the source thread's link. A start records the loop, creates
+   * the review thread, and sends review request 1 in this one transaction, like a delegated task:
+   * the review thread's id is derived from this command, so nothing else can write it yet.
+   */
+  const dispatchPullRequestReviewLoop = Effect.fn("orchestrationV2.dispatch.pullRequestReviewLoop")(
+    function* (
+      command: Extract<
+        OrchestrationV2ServerCommand,
+        { readonly type: "thread.pull-request.review-loop" }
+      >,
+      events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+      effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+    ) {
+      const reject = (cause: string) =>
+        new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause,
+        });
+      const source = yield* projectionStore
+        .getThread(command.threadId)
+        .pipe(
+          Effect.mapError(
+            (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+          ),
+        );
+      if (source.deletedAt !== null) return yield* reject(`Thread ${source.id} is deleted.`);
+      const key = normalizeThreadPullRequestKey(command);
+      const links = threadPullRequestsOf(source);
+      const linked = links.find(
+        (link) => link.source !== "stack-dismissed" && threadPullRequestKeysEqual(link, key),
+      );
+      const now = yield* DateTime.now;
+      const emitEvent = emit(events, command);
+      const request = command.request;
+
+      if (request.type === "stop") {
+        const loop = linked === undefined ? undefined : liveAuthorLoop(linked);
+        if (loop === undefined || loop.id !== request.loopId) {
+          return yield* reject(`The review loop on #${key.number} is not running.`);
+        }
+        const phase: ReviewLoopEndedPhase = {
+          status: "ended",
+          reason: "stopped",
+          reviews: reviewsFinishedBefore(loop.phase),
+          endedAt: DateTime.formatIso(now),
+        };
+        yield* emitEvent({
+          type: "thread.pull-request-synced",
+          threadId: source.id,
+          providerInstanceId: source.providerInstanceId,
+          occurredAt: now,
+          payload: {
+            ...source,
+            pullRequests: links.map((link) =>
+              link === linked ? { ...link, reviewLoop: { ...loop, phase } } : link,
+            ),
+            updatedAt: now,
+          },
+        });
+        return;
+      }
+
+      if (
+        source.archivedAt !== null ||
+        source.settledOverride === "settled" ||
+        source.settledAt !== null
+      ) {
+        return yield* reject(`Thread ${source.id} is archived or settled.`);
+      }
+      if (source.lineage.relationshipToParent === "subagent") {
+        return yield* reject(`Thread ${source.id} is a subagent; its parent thread owns the PR.`);
+      }
+      if (links.some((link) => reviewerMarker(link) !== undefined)) {
+        return yield* reject(
+          `Thread ${source.id} is the reviewer in another thread's review loop.`,
+        );
+      }
+      if (links.some((link) => liveAuthorLoop(link) !== undefined)) {
+        return yield* reject(`Thread ${source.id} already has a review loop running.`);
+      }
+      const link: ThreadPullRequestLink | undefined =
+        linked ??
+        (request.link === undefined
+          ? undefined
+          : {
+              ...key,
+              url: request.link.url,
+              source: request.link.source,
+              linkedAt: DateTime.formatIso(now),
+              snapshot: null,
+              stack: null,
+            });
+      if (link === undefined) {
+        return yield* reject(`Pull request #${key.number} is not linked to thread ${source.id}.`);
+      }
+      if (link.snapshot !== null && link.snapshot.state !== "open") {
+        return yield* reject(`Pull request #${key.number} is ${link.snapshot.state}.`);
+      }
+      if (
+        link.snapshot !== null &&
+        source.branch !== null &&
+        link.snapshot.headBranch !== source.branch
+      ) {
+        return yield* reject(
+          `Pull request #${key.number} is on ${link.snapshot.headBranch}, not on this thread's branch ${source.branch}.`,
+        );
+      }
+      const reviewer = request.reviewer;
+      const reviewerAdapter = yield* providerAdapters.get(reviewer.instanceId).pipe(
+        Effect.mapError(
+          (cause) =>
+            new OrchestratorProviderAdapterError({
+              commandId: command.commandId,
+              providerInstanceId: reviewer.instanceId,
+              cause,
+            }),
+        ),
+      );
+
+      const loopId = idAllocator.derive.reviewLoop({ commandId: command.commandId });
+      const reviewThreadId = idAllocator.derive.reviewLoopThread({ commandId: command.commandId });
+      const loop: ThreadPullRequestReviewLoopAuthor = {
+        role: "author",
+        id: loopId,
+        reviewThreadId,
+        prompt: request.prompt,
+        startedAt: DateTime.formatIso(now),
+        phase: { status: "reviewing", round: 1 },
+      };
+      yield* emitEvent({
+        type: "thread.pull-request-synced",
+        threadId: source.id,
+        providerInstanceId: source.providerInstanceId,
+        occurredAt: now,
+        payload: {
+          ...source,
+          pullRequests:
+            linked === undefined
+              ? [
+                  ...links.filter((entry) => !threadPullRequestKeysEqual(entry, key)),
+                  { ...link, reviewLoop: loop },
+                ]
+              : links.map((entry) => (entry === linked ? { ...link, reviewLoop: loop } : entry)),
+          updatedAt: now,
+        },
+      });
+      yield* emitEvent({
+        type: "thread.created",
+        threadId: reviewThreadId,
+        driver: reviewerAdapter.driver,
+        providerInstanceId: reviewer.instanceId,
+        occurredAt: now,
+        payload: makeReviewThread({
+          source,
+          reviewThreadId,
+          loopId,
+          link,
+          reviewer,
+          createdBy: command.createdBy,
+          creationSource: command.creationSource,
+          collaborationCreatedBy: command.collaborationUser ?? null,
+          now,
+        }),
+      });
+      yield* dispatchMessage(
+        {
+          type: "message.dispatch",
+          commandId: command.commandId,
+          threadId: reviewThreadId,
+          messageId: idAllocator.derive.reviewLoopMessage({ loopId, phase: loop.phase }),
+          text: reviewRequestText({
+            prompt: request.prompt,
+            round: 1,
+            pullRequest: reviewLoopPullRequest(source, link),
+            authorReply: null,
+          }),
+          attachments: [],
+          senderThreadId: source.id,
+          modelSelection: reviewer,
+          dispatchMode: { type: "start_immediately" },
+          createdBy: "agent",
+          creationSource: "server",
+        },
+        events,
+        effects,
+      );
+    },
+  );
+
+  /**
+   * Records one step of a live review loop on the source thread's link and sends the step's
+   * message in the same transaction, like a watch's wake. Only a step out of the phase the loop
+   * is in now commits, so a repeated or stale step changes nothing.
+   */
+  const dispatchPullRequestReviewLoopAdvance = Effect.fn(
+    "orchestrationV2.dispatch.pullRequestReviewLoopAdvance",
+  )(function* (
+    command: Extract<
+      OrchestrationV2ServerCommand,
+      { readonly type: "thread.pull-request-review-loop.advance" }
+    >,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+  ) {
+    const reject = (cause: string) =>
+      new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause,
+      });
+    const source = yield* projectionStore
+      .getThread(command.threadId)
+      .pipe(
+        Effect.mapError(
+          (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+        ),
+      );
+    const key = normalizeThreadPullRequestKey(command);
+    const links = threadPullRequestsOf(source);
+    const link = links.find(
+      (candidate) =>
+        candidate.source !== "stack-dismissed" && threadPullRequestKeysEqual(candidate, key),
+    );
+    const loop = link === undefined ? undefined : liveAuthorLoop(link);
+    if (source.deletedAt !== null || source.archivedAt !== null) {
+      return yield* reject(`Thread ${source.id} is deleted or archived.`);
+    }
+    if (
+      link === undefined ||
+      loop === undefined ||
+      loop.id !== command.loopId ||
+      loop.reviewThreadId !== command.reviewThreadId ||
+      reviewLoopPhaseKey(loop.phase) !== reviewLoopPhaseKey(command.from)
+    ) {
+      return yield* reject("The review loop moved on before this step.");
+    }
+    if (!isReviewLoopStep(command.from, command.to)) {
+      return yield* reject(
+        `A review loop cannot step from ${reviewLoopPhaseKey(command.from)} to ${reviewLoopPhaseKey(command.to)}.`,
+      );
+    }
+    const postTarget = command.post?.target;
+    if (
+      command.to.status === "ended"
+        ? postTarget === "review"
+        : postTarget !== (command.to.status === "fixing" ? "source" : "review")
+    ) {
+      return yield* reject(
+        `A step to ${reviewLoopPhaseKey(command.to)} posts to the wrong thread.`,
+      );
+    }
+    if (postTarget === "review") {
+      const review = yield* projectionStore
+        .getThread(command.reviewThreadId)
+        .pipe(
+          Effect.mapError(
+            (cause) => new OrchestratorProjectionError({ threadId: command.reviewThreadId, cause }),
+          ),
+        );
+      const holdsMarker = threadPullRequestsOf(review).some(
+        (candidate) =>
+          threadPullRequestKeysEqual(candidate, key) &&
+          reviewerMarker(candidate)?.id === command.loopId,
+      );
+      if (review.deletedAt !== null || review.archivedAt !== null || !holdsMarker) {
+        return yield* reject(`Review thread ${review.id} no longer reviews this loop.`);
+      }
+    }
+    const now = yield* DateTime.now;
+    yield* emit(
+      events,
+      command,
+    )({
+      type: "thread.pull-request-synced",
+      threadId: source.id,
+      providerInstanceId: source.providerInstanceId,
+      occurredAt: now,
+      payload: {
+        ...source,
+        pullRequests: links.map((candidate) =>
+          candidate === link ? { ...link, reviewLoop: { ...loop, phase: command.to } } : candidate,
+        ),
+      },
+    });
+    if (command.post === undefined) return;
+    const intoSource = command.post.target === "source";
+    yield* dispatchMessage(
+      {
+        type: "message.dispatch",
+        commandId: command.commandId,
+        threadId: intoSource ? source.id : command.reviewThreadId,
+        messageId: command.post.messageId,
+        text: command.post.text,
+        attachments: [],
+        senderThreadId: intoSource ? command.reviewThreadId : source.id,
+        dispatchMode: { type: "queue_after_active" },
+        createdBy: "agent",
+        creationSource: "server",
+      },
+      events,
+      effects,
+    );
+  });
+
+  /**
+   * Removes a review thread's reviewer marker once its loop is no longer live. Allowed on an
+   * archived review thread, so unarchiving it never brings back a held thread.
+   */
+  const dispatchPullRequestReviewLoopRelease = Effect.fn(
+    "orchestrationV2.dispatch.pullRequestReviewLoopRelease",
+  )(function* (
+    command: Extract<
+      OrchestrationV2ServerCommand,
+      { readonly type: "thread.pull-request-review-loop.release" }
+    >,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+  ) {
+    const reject = (cause: string) =>
+      new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause,
+      });
+    const review = yield* projectionStore
+      .getThread(command.threadId)
+      .pipe(
+        Effect.mapError(
+          (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+        ),
+      );
+    const key = normalizeThreadPullRequestKey(command);
+    const links = threadPullRequestsOf(review);
+    const link = links.find(
+      (candidate) =>
+        threadPullRequestKeysEqual(candidate, key) &&
+        reviewerMarker(candidate)?.id === command.loopId,
+    );
+    const marker = link === undefined ? undefined : reviewerMarker(link);
+    if (review.deletedAt !== null || marker === undefined) {
+      return yield* reject(`Thread ${review.id} holds no marker for this review loop.`);
+    }
+    const source = yield* projectionStore.getThread(marker.sourceThreadId).pipe(
+      Effect.asSome,
+      Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeedNone }),
+      Effect.mapError(
+        (cause) => new OrchestratorProjectionError({ threadId: marker.sourceThreadId, cause }),
+      ),
+    );
+    const live =
+      Option.isSome(source) &&
+      source.value.deletedAt === null &&
+      threadPullRequestsOf(source.value).some(
+        (candidate) =>
+          threadPullRequestKeysEqual(candidate, key) &&
+          liveAuthorLoop(candidate)?.id === command.loopId,
+      );
+    if (live) return yield* reject("The review loop is still running.");
+    yield* emit(
+      events,
+      command,
+    )({
+      type: "thread.pull-request-synced",
+      threadId: review.id,
+      providerInstanceId: review.providerInstanceId,
+      occurredAt: yield* DateTime.now,
+      payload: {
+        ...review,
+        pullRequests: links.map((candidate) =>
+          candidate === link ? withoutReviewLoop(candidate) : candidate,
+        ),
+      },
+    });
+  });
 
   const dispatchThreadMutation = Effect.fn("orchestrationV2.dispatch.threadMutation")(function* (
     command: Extract<
@@ -10829,6 +11246,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.pull-request-watch.sync":
         yield* dispatchPullRequestWatchSync(command, events, effects);
         break;
+      case "thread.pull-request.review-loop":
+        yield* dispatchPullRequestReviewLoop(command, events, effects);
+        break;
+      case "thread.pull-request-review-loop.advance":
+        yield* dispatchPullRequestReviewLoopAdvance(command, events, effects);
+        break;
+      case "thread.pull-request-review-loop.release":
+        yield* dispatchPullRequestReviewLoopRelease(command, events);
+        break;
       case "provider-session.detach":
         yield* dispatchProviderSessionDetach(command, events, effects);
         break;
@@ -11217,8 +11643,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
   const dispatchWithReceipt = (command: OrchestrationV2ServerCommand) =>
     Effect.gen(function* () {
-      const dispatch = threadDispatch.withLock(
-        commandThreadId(command),
+      const dispatch = commandLockThreadIds(command).reduceRight(
+        (locked, threadId) => threadDispatch.withLock(threadId, locked),
         dispatchWithReceiptEffect(command),
       );
       if (

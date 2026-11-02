@@ -15,12 +15,16 @@ import {
   ProviderThreadId,
   ProviderTurnId,
   RawEventId,
+  ReviewLoopId,
+  type ReviewLoopLivePhase,
+  type ReviewLoopPhase,
   RunAttemptId,
   RunId,
   RuntimeRequestId,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
+import { reviewLoopPhaseKey } from "@t3tools/shared/pullRequestReviewLoop";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -135,6 +139,24 @@ export interface IdAllocatorV2Derive {
   readonly delegatedTaskMessage: (input: { readonly commandId: CommandId }) => MessageId;
   readonly delegatedTaskTurnItem: (input: { readonly commandId: CommandId }) => TurnItemId;
   readonly createdThreadTurnItem: (input: { readonly commandId: CommandId }) => TurnItemId;
+  /** From the start command, so a retried start replays instead of starting a second loop. */
+  readonly reviewLoop: (input: { readonly commandId: CommandId }) => ReviewLoopId;
+  readonly reviewLoopThread: (input: { readonly commandId: CommandId }) => ThreadId;
+  /** The message a step posts on entering `phase`. A live phase waits for its own message. */
+  readonly reviewLoopMessage: (input: {
+    readonly loopId: ReviewLoopId;
+    readonly phase: ReviewLoopPhase;
+  }) => MessageId;
+  /**
+   * One id per step and end reason. Only one step out of a phase commits, and a rejected step
+   * burns only its own id, so the loop can still end from that phase with another reason.
+   */
+  readonly reviewLoopTransition: (input: {
+    readonly loopId: ReviewLoopId;
+    readonly from: ReviewLoopLivePhase;
+    readonly to: ReviewLoopPhase;
+  }) => CommandId;
+  readonly reviewLoopRelease: (input: { readonly loopId: ReviewLoopId }) => CommandId;
   readonly threadFromProviderThread: (input: {
     readonly driver: ProviderDriverKind;
     readonly nativeThreadId: string;
@@ -266,6 +288,23 @@ export const derive: IdAllocatorV2Derive = {
     TurnItemId.make(joinId("turn-item", "delegated-task", input.commandId)),
   createdThreadTurnItem: (input) =>
     TurnItemId.make(joinId("turn-item", "created-thread", input.commandId)),
+  reviewLoop: (input) => ReviewLoopId.make(joinId("review-loop", input.commandId)),
+  reviewLoopThread: (input) => ThreadId.make(joinId("thread", "review-loop", input.commandId)),
+  reviewLoopMessage: (input) =>
+    MessageId.make(joinId("message", "review-loop", input.loopId, reviewLoopPhaseKey(input.phase))),
+  reviewLoopTransition: (input) =>
+    CommandId.make(
+      joinId(
+        "command",
+        "review-loop",
+        input.loopId,
+        reviewLoopPhaseKey(input.from),
+        reviewLoopPhaseKey(input.to),
+        ...(input.to.status === "ended" ? [input.to.reason] : []),
+      ),
+    ),
+  reviewLoopRelease: (input) =>
+    CommandId.make(joinId("command", "review-loop", input.loopId, "release")),
   threadFromProviderThread: deriveThreadFromProviderThread,
   run: (input) => RunId.make(joinId("run", "thread", input.threadId, "ordinal", input.ordinal)),
   runAttempt: (input) =>

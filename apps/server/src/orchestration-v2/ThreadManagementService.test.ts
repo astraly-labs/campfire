@@ -71,6 +71,34 @@ it("stamps authoritative provenance on commands that create threads or messages"
   });
 });
 
+it("stamps authoritative provenance on a review loop, whose start creates a thread", () => {
+  const command: OrchestrationV2Command = {
+    type: "thread.pull-request.review-loop",
+    createdBy: "agent",
+    creationSource: "mcp",
+    commandId: CommandId.make("command:thread-management:review-loop"),
+    threadId: ThreadId.make("thread:thread-management:review-loop"),
+    host: "github.com",
+    repository: "pingdotgg/t3code",
+    number: 42,
+    request: {
+      type: "start",
+      reviewer: { instanceId: ProviderInstanceId.make("cursor"), model: "composer-1" },
+      prompt: "/review #42",
+    },
+  };
+
+  expect(
+    ThreadManagementService.withCreationProvenance(command, {
+      createdBy: "user",
+      creationSource: "web",
+    }),
+  ).toMatchObject({
+    createdBy: "user",
+    creationSource: "web",
+  });
+});
+
 it("leaves commands that do not create durable authored content unchanged", () => {
   const command: OrchestrationV2Command = {
     type: "run.interrupt",
