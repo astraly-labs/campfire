@@ -9,11 +9,13 @@ import {
 } from "@t3tools/shared/threadPullRequests";
 import {
   ArrowUpRightIcon,
+  CircleStopIcon,
   EyeIcon,
   EyeOffIcon,
   LinkIcon,
   MoreHorizontalIcon,
   PlusIcon,
+  RepeatIcon,
 } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 
@@ -49,6 +51,11 @@ import {
 import { PullRequestGlyph } from "./pullRequestIcons";
 import { pullRequestQuickActions } from "./pullRequestList.logic";
 import { PullRequestSpeedActions } from "./PullRequestSpeedActions";
+import {
+  ReviewLoopStatusChip,
+  reviewLoopOtherThreadLabel,
+  useReviewLoop,
+} from "./ReviewLoopControl";
 
 const SOURCE_LABELS: Record<ThreadPullRequestLink["source"], string> = {
   manual: "Linked by you",
@@ -108,6 +115,14 @@ function LinkRow({
   const snapshot = link.snapshot;
   const open = snapshot === null || snapshot.state === "open";
   const watching = link.watch !== undefined;
+  const reviewLoop = useReviewLoop(threadRef, {
+    host: link.host,
+    repository: link.repository,
+    number: link.number,
+    url: link.url,
+    state: snapshot?.state ?? null,
+    headBranch: snapshot?.headBranch ?? null,
+  });
   // A link carries no host summary, so the host's own definition says what it can do.
   const linkHostActions = (
     sourceControlClients.findByChangeRequestUrl(link.url) ?? UNKNOWN_SOURCE_CONTROL_CLIENT
@@ -185,6 +200,14 @@ function LinkRow({
                       Watching: the agent wakes when checks finish, someone comments, or the branch
                       conflicts
                     </TooltipPopup>
+                  </Tooltip>
+                ) : null}
+                {reviewLoop.chip !== null ? (
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={<ReviewLoopStatusChip chip={reviewLoop.chip} size="sm" />}
+                    />
+                    <TooltipPopup>{reviewLoop.chip.detail}</TooltipPopup>
                   </Tooltip>
                 ) : null}
                 {snapshot?.checksState ? <ChecksGlyph state={snapshot.checksState} /> : null}
@@ -315,6 +338,24 @@ function LinkRow({
                 {watching ? "Stop watching" : "Watch for changes"}
               </MenuItem>
             ) : null}
+            {reviewLoop.canStart ? (
+              <MenuItem onClick={reviewLoop.openStartDialog}>
+                <RepeatIcon className="size-3.5" />
+                Start review loop...
+              </MenuItem>
+            ) : null}
+            {reviewLoop.chip !== null ? (
+              <MenuItem onClick={reviewLoop.openOtherThread}>
+                <ArrowUpRightIcon className="size-3.5" />
+                {reviewLoopOtherThreadLabel(reviewLoop.chip)}
+              </MenuItem>
+            ) : null}
+            {reviewLoop.canStop ? (
+              <MenuItem onClick={reviewLoop.stop}>
+                <CircleStopIcon className="size-3.5" />
+                Stop review loop
+              </MenuItem>
+            ) : null}
             <MenuItem onClick={() => onUnlink(link)}>
               <PullRequestGlyph.unlink className="size-3.5" />
               {link.source === "stack" ? "Dismiss from thread" : "Unlink from thread"}
@@ -322,6 +363,7 @@ function LinkRow({
           </MenuPopup>
         </Menu>
       </span>
+      {reviewLoop.dialog}
     </div>
   );
 }

@@ -94,6 +94,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { PullRequestStackMenu } from "./PullRequestStackMenu";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { PullRequestThreadLinks } from "./PullRequestThreadLinks";
+import { ReviewLoopControl } from "./ReviewLoopControl";
 import { vcsEnvironment } from "~/state/vcs";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 import { useUiStateStore } from "~/uiStateStore";
@@ -1718,6 +1719,21 @@ export function PullRequestDetailPanel({
       </Menu>
     ) : null;
 
+  const reviewLoopControl =
+    handoffSummary === null ? null : (
+      <ReviewLoopControl
+        threadRef={threadRef}
+        pullRequest={{
+          host: reference.host,
+          repository: reference.repository,
+          number: reference.number,
+          url: handoffSummary.url,
+          state: handoffSummary.state,
+          headBranch: handoffSummary.headBranch,
+        }}
+      />
+    );
+
   const resolveConflictsControl = (
     <Tooltip>
       <TooltipTrigger
@@ -1764,6 +1780,7 @@ export function PullRequestDetailPanel({
               {handoffSummary.state === "open" && handoffSummary.mergeability === "conflicting"
                 ? resolveConflictsControl
                 : null}
+              {reviewLoopControl}
               {checkoutControl}
             </TooltipProvider>
           ) : undefined
@@ -2158,6 +2175,7 @@ export function PullRequestDetailPanel({
                   </span>
                 </Badge>
               ) : null}
+              {reviewLoopControl}
               {/* Keep checkout beside the menu so host actions arriving on its left cannot
                   move a different action under the reader's pointer. */}
               {checkoutControl}
