@@ -8,6 +8,7 @@ import type {
 } from "@t3tools/contracts";
 import { isOrchestrationV2WorkActive } from "@t3tools/contracts";
 
+import { reviewLoopMonitorTasks } from "./pullRequestReviewLoop.ts";
 import { threadPullRequestKeyOf } from "./threadPullRequests.ts";
 
 const BACKGROUND_TURN_ITEM_TYPES = new Set<OrchestrationV2TurnItem["type"]>([
@@ -91,7 +92,7 @@ type PendingBackgroundWorkRun = Pick<OrchestrationV2Run, "id" | "ordinal" | "sta
 
 type PendingBackgroundWorkPullRequest = Pick<
   ThreadPullRequestLink,
-  "host" | "repository" | "number" | "url" | "source" | "watch"
+  "host" | "repository" | "number" | "url" | "source" | "watch" | "reviewLoop"
 >;
 
 type PendingBackgroundWorkProviderThread = Pick<
@@ -208,10 +209,10 @@ export function pendingBackgroundTurnItems<Item extends PendingBackgroundWorkTur
  * Sources:
  * - Provider-thread roster (Claude SDK background tasks)
  * - Active command_execution / dynamic_tool / subagent turn items
- * - Pull request watches, as monitors: a watch wakes the agent, so the thread
- *   stays working between wakes instead of returning to the inbox. Callers
- *   that pick a run to interrupt leave `pullRequests` out; Stop ends watches
- *   on its own.
+ * - Pull request watches and review loops, as monitors: each wakes the agent,
+ *   so the thread stays working between wakes instead of returning to the
+ *   inbox. Callers that pick a run to interrupt leave `pullRequests` out; Stop
+ *   ends watches and loops on its own.
  *
  * Gated on latest root run settlement. Dedupes by native task ID. Excludes
  * the roster while any interruptible foreground run remains active. Excludes
@@ -243,9 +244,9 @@ export function derivePendingBackgroundWork(input: {
   if (hasActiveRun) {
     return [];
   }
-  // A thread that never ran waits on nothing else, but a watch started on it still wakes it.
+  // A thread that never ran waits on nothing else, but a watch or loop on it still wakes it.
   if (input.latestRun == null) {
-    return pullRequestWatchTasks(input.pullRequests);
+    return pullRequestMonitorTasks(input.pullRequests);
   }
   if (!isLatestRunSettledForBackgroundWait(input.latestRun)) {
     return [];
@@ -281,16 +282,16 @@ export function derivePendingBackgroundWork(input: {
     byTaskId.set(taskId, pendingTaskFromTurnItem(taskId, item));
   }
 
-  for (const task of pullRequestWatchTasks(input.pullRequests)) byTaskId.set(task.taskId, task);
+  for (const task of pullRequestMonitorTasks(input.pullRequests)) byTaskId.set(task.taskId, task);
 
   return Array.from(byTaskId.values());
 }
 
-function pullRequestWatchTasks(
+function pullRequestMonitorTasks(
   pullRequests: ReadonlyArray<PendingBackgroundWorkPullRequest> | undefined,
 ): Array<PendingBackgroundWorkTask> {
-  return (pullRequests ?? []).flatMap((link) =>
-    link.watch === undefined || link.source === "stack-dismissed"
+  return (pullRequests ?? []).flatMap((link) => [
+    ...(link.watch === undefined || link.source === "stack-dismissed"
       ? []
       : [
           {
@@ -298,6 +299,7 @@ function pullRequestWatchTasks(
             description: `Watching pull request #${link.number}`,
             kind: "monitor" as const,
           },
-        ],
-  );
+        ]),
+    ...reviewLoopMonitorTasks(link),
+  ]);
 }

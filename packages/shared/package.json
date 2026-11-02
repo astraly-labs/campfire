@@ -399,6 +399,10 @@
       "types": "./src/orchestrationV2PendingBackgroundWork.ts",
       "import": "./src/orchestrationV2PendingBackgroundWork.ts"
     },
+    "./pullRequestReviewLoop": {
+      "types": "./src/pullRequestReviewLoop.ts",
+      "import": "./src/pullRequestReviewLoop.ts"
+    },
     "./hostClassification": {
       "types": "./src/hostClassification.ts",
       "import": "./src/hostClassification.ts"
