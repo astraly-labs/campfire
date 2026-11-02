@@ -12271,9 +12271,6 @@ export default function ChatView(props: ChatViewProps) {
         key={routeThreadKey}
         thread={activeThread}
         projection={isServerThread ? serverProjection : null}
-        project={activeProject}
-        providers={serverConfig?.providers ?? []}
-        settings={settings}
         cwd={activeWorkspaceRoot ?? undefined}
       >
         {content}

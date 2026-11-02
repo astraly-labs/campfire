@@ -1,4 +1,3 @@
-import { useThreadCollaboration } from "../collaboration/threadCollaborationContext";
 import {
   CodexInlineVisualization,
   splitCodexInlineVisualizations,
@@ -2915,7 +2914,6 @@ const CHAT_MARKDOWN_COMPONENTS = {
     );
   },
   a: function MarkdownAnchor({ node, href, children, title: _title, ...props }) {
-    const collaboration = useThreadCollaboration();
     const {
       canOperateHost,
       canOperatePreview,
@@ -3142,29 +3140,11 @@ const CHAT_MARKDOWN_COMPONENTS = {
           )}
         </a>
       );
-      const reviewLink = href ? parseChangeRequestUrl(href) : null;
-      const reviewNumber = reviewLink?.host === "github.com" ? reviewLink.number : null;
-      const withReview = (content: ReactNode) =>
-        collaboration && reviewNumber !== null ? (
-          <span className="inline-flex max-w-full items-center gap-1 align-baseline">
-            {content}
-            <Button
-              size="xs"
-              variant="outline"
-              aria-label={`Review pull request #${reviewNumber}`}
-              onClick={() => collaboration.review(reviewNumber)}
-            >
-              Review
-            </Button>
-          </span>
-        ) : (
-          content
-        );
       if (!faviconHost || !href) {
-        return withReview(link);
+        return link;
       }
       if (pullRequestPreviewTarget !== null) {
-        return withReview(
+        return (
           <PullRequestLinkPreview
             link={link}
             originalUrl={href}
@@ -3184,14 +3164,14 @@ const CHAT_MARKDOWN_COMPONENTS = {
               )
             }
             onOpenFallback={openDeferredMarkdownLink}
-          />,
+          />
         );
       }
-      return withReview(
+      return (
         <Tooltip>
           <TooltipTrigger render={link} />
           <TooltipPopup side="top">{href}</TooltipPopup>
-        </Tooltip>,
+        </Tooltip>
       );
     }
 
