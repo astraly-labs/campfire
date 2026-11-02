@@ -69,6 +69,7 @@ export function withCreationProvenance(
     case "thread.fork":
     case "thread.merge_back":
     case "delegated_task.request":
+    case "thread.pull-request.review-loop":
       return { ...command, ...provenance };
     default:
       return command;
@@ -309,9 +310,10 @@ export interface ThreadManagementServiceShape {
   ) => Effect.Effect<void, LegacyV1ThreadImporter.LegacyV1ThreadImportError>;
   /**
    * The single chokepoint for commands that can start or wake provider work:
-   * `message.dispatch` and `delegated_task.request` are refused here when the
-   * resolved instance is off for the project, except a command id that
-   * already has a receipt, which only replays its recorded result.
+   * `message.dispatch`, `delegated_task.request`, and a review loop's start
+   * and steps are refused here when the resolved instance is off for the
+   * project, except a command id that already has a receipt, which only
+   * replays its recorded result.
    */
   readonly dispatch: (
     command: OrchestrationV2ServerCommand,
@@ -646,6 +648,38 @@ const make = Effect.gen(function* () {
             }),
           ),
         );
+      case "thread.pull-request.review-loop": {
+        const request = command.request;
+        if (request.type !== "start") return Effect.void;
+        return orchestrator.getThreadRecords(command.threadId, []).pipe(
+          Effect.flatMap((source) =>
+            assertProviderInstanceEnabled({
+              projectId: source.thread.projectId,
+              commandId: command.commandId,
+              instanceId: request.reviewer.instanceId,
+            }),
+          ),
+        );
+      }
+      // Like message.dispatch: the target thread's own model takes the step's message.
+      case "thread.pull-request-review-loop.advance": {
+        const post = command.post;
+        if (post === undefined) return Effect.void;
+        return orchestrator
+          .getThreadRecords(
+            post.target === "review" ? command.reviewThreadId : command.threadId,
+            [],
+          )
+          .pipe(
+            Effect.flatMap((target) =>
+              assertProviderInstanceEnabled({
+                projectId: target.thread.projectId,
+                commandId: command.commandId,
+                instanceId: target.thread.modelSelection.instanceId,
+              }),
+            ),
+          );
+      }
       default:
         return Effect.void;
     }
