@@ -2,10 +2,13 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import {
+  ForwardCompatibleOptional,
   IsoDateTime,
   NonNegativeInt,
   PositiveInt,
   ProjectId,
+  ReviewLoopId,
+  ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 import {
@@ -124,6 +127,113 @@ export const ThreadPullRequestWatch = Schema.Struct({
 });
 export type ThreadPullRequestWatch = typeof ThreadPullRequestWatch.Type;
 
+/** Review 3 is the last review, so a fourth review cannot be written down. */
+export const ReviewLoopReviewRound = Schema.Literals([1, 2, 3]);
+export type ReviewLoopReviewRound = typeof ReviewLoopReviewRound.Type;
+
+/** Fix 2 is the last fix, so a third fix cannot be written down. */
+export const ReviewLoopFixRound = Schema.Literals([1, 2]);
+export type ReviewLoopFixRound = typeof ReviewLoopFixRound.Type;
+
+/**
+ * Why a review loop ended. Clients derive the outcome they show from it
+ * (`@t3tools/shared/pullRequestReviewLoop`), so the outcome is never stored beside it.
+ */
+export const ReviewLoopEndReason = Schema.Literals([
+  /** A review ended with the clean verdict line. */
+  "clean",
+  /** Review 3 was not clean. */
+  "needs_human",
+  /** The user stopped the loop, or stopped, archived, settled, or unlinked the source thread. */
+  "stopped",
+  /** The review run stopped, its queue is paused, or the review thread is gone. */
+  "review_stopped",
+  /** The review run failed, ended without a message, or its provider is off. */
+  "review_failed",
+  /** The fix run stopped, or its queue is paused. */
+  "fix_stopped",
+  /** The fix run failed, or its provider is off. */
+  "fix_failed",
+  "pr_merged",
+  "pr_closed",
+  /** A step could not commit. The server log has the cause. */
+  "aborted",
+]);
+export type ReviewLoopEndReason = typeof ReviewLoopEndReason.Type;
+
+const ReviewLoopReviewing = Schema.Struct({
+  status: Schema.Literal("reviewing"),
+  round: ReviewLoopReviewRound,
+});
+const ReviewLoopFixing = Schema.Struct({
+  status: Schema.Literal("fixing"),
+  round: ReviewLoopFixRound,
+});
+
+export const ReviewLoopLivePhase = Schema.Union([ReviewLoopReviewing, ReviewLoopFixing]);
+export type ReviewLoopLivePhase = typeof ReviewLoopLivePhase.Type;
+
+export const ReviewLoopEndedPhase = Schema.Struct({
+  status: Schema.Literal("ended"),
+  reason: ReviewLoopEndReason,
+  /** Reviews that finished before the end. */
+  reviews: Schema.Literals([0, 1, 2, 3]),
+  /** Why, in a few words, such as the failed run's error. */
+  detail: Schema.optional(TrimmedNonEmptyString),
+  endedAt: IsoDateTime,
+});
+export type ReviewLoopEndedPhase = typeof ReviewLoopEndedPhase.Type;
+
+/**
+ * The loop's state machine:
+ *
+ *   reviewing 1 -> fixing 1 -> reviewing 2 -> fixing 2 -> reviewing 3
+ *
+ * Any live phase can end. A clean review ends the loop at any round, and review 3 always ends
+ * it. The message a live phase waits for derives from the loop id and the phase, so it is
+ * never stored.
+ */
+export const ReviewLoopPhase = Schema.Union([
+  ReviewLoopReviewing,
+  ReviewLoopFixing,
+  ReviewLoopEndedPhase,
+]);
+export type ReviewLoopPhase = typeof ReviewLoopPhase.Type;
+
+/** What the user confirmed in the start dialog. Every review request starts with it. */
+export const ReviewLoopPrompt = TrimmedNonEmptyString.check(Schema.isMaxLength(2000));
+
+/**
+ * The whole loop state, on the source thread's link. An ended record stays until the next loop
+ * on this link replaces it, so clients can show the outcome.
+ */
+export const ThreadPullRequestReviewLoopAuthor = Schema.Struct({
+  role: Schema.Literal("author"),
+  id: ReviewLoopId,
+  reviewThreadId: ThreadId,
+  prompt: ReviewLoopPrompt,
+  startedAt: IsoDateTime,
+  phase: ReviewLoopPhase,
+});
+export type ThreadPullRequestReviewLoopAuthor = typeof ThreadPullRequestReviewLoopAuthor.Type;
+
+/**
+ * On the review thread's link to the same pull request while its loop is live. It holds no
+ * state: it keeps the review thread waiting between reviews and points back to the loop.
+ */
+export const ThreadPullRequestReviewLoopReviewer = Schema.Struct({
+  role: Schema.Literal("reviewer"),
+  id: ReviewLoopId,
+  sourceThreadId: ThreadId,
+});
+export type ThreadPullRequestReviewLoopReviewer = typeof ThreadPullRequestReviewLoopReviewer.Type;
+
+export const ThreadPullRequestReviewLoop = Schema.Union([
+  ThreadPullRequestReviewLoopAuthor,
+  ThreadPullRequestReviewLoopReviewer,
+]);
+export type ThreadPullRequestReviewLoop = typeof ThreadPullRequestReviewLoop.Type;
+
 export const ThreadPullRequestLink = Schema.Struct({
   ...ThreadPullRequestKey.fields,
   url: TrimmedNonEmptyString,
@@ -132,5 +242,7 @@ export const ThreadPullRequestLink = Schema.Struct({
   snapshot: Schema.NullOr(ThreadPullRequestSnapshot),
   stack: Schema.NullOr(ThreadPullRequestStack),
   watch: Schema.optional(ThreadPullRequestWatch),
+  /** A loop shape this build does not know decodes as absent instead of failing the thread. */
+  reviewLoop: ForwardCompatibleOptional(ThreadPullRequestReviewLoop),
 });
 export type ThreadPullRequestLink = typeof ThreadPullRequestLink.Type;
