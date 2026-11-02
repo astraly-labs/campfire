@@ -15,7 +15,6 @@ import {
 
 import { getTriggerDisplayModelName } from "../chat/providerIconUtils";
 
-/** The pull request a review loop control acts on. Null fields are ones the host has not sent. */
 export interface ReviewLoopPullRequest {
   readonly host: string | undefined;
   readonly repository: string;
@@ -25,7 +24,6 @@ export interface ReviewLoopPullRequest {
   readonly headBranch: string | null;
 }
 
-/** The thread's own link to the pull request, which holds its review loop. */
 export function findReviewLoopLink(
   links: ReadonlyArray<ThreadPullRequestLink>,
   pullRequest: Pick<ReviewLoopPullRequest, "host" | "repository" | "number">,
@@ -40,12 +38,7 @@ export function findReviewLoopLink(
   );
 }
 
-/**
- * Whether the user can start a review loop on this pull request from this thread. The server
- * checks again when the loop starts.
- */
 export function canStartReviewLoop(input: {
-  /** The server has the pullRequestReviewLoop capability. */
   readonly supported: boolean;
   readonly canOperate: boolean;
   readonly thread: {
@@ -69,12 +62,6 @@ export function canStartReviewLoop(input: {
   );
 }
 
-/**
- * The reviewer the start dialog offers first: the project's review model when its instance is
- * ready, else the first ready instance whose driver differs from the source thread's, so the code
- * gets a second opinion from another provider. `selection` is the model and options to keep, or
- * null for the instance's default model.
- */
 export function defaultReviewLoopReviewer(input: {
   readonly projectReviewer: ModelSelection | null;
   readonly source: ModelSelection;
@@ -99,7 +86,6 @@ export function defaultReviewLoopReviewer(input: {
   return first === undefined ? null : { instanceId: first.instanceId, selection: null };
 }
 
-/** "Cursor · composer-1": the instance and model a thread runs, as the loop chip names them. */
 export function modelSelectionLabel(
   providers: ReadonlyArray<ServerProvider>,
   selection: ModelSelection,

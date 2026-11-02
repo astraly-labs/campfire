@@ -661,7 +661,6 @@ const make = Effect.gen(function* () {
           ),
         );
       }
-      // Like message.dispatch: the target thread's own model takes the step's message.
       case "thread.pull-request-review-loop.advance": {
         const post = command.post;
         if (post === undefined) return Effect.void;

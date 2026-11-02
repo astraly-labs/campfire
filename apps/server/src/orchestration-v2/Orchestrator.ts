@@ -597,7 +597,6 @@ function legacyPullRequestLink(
   );
 }
 
-/** What a review loop's texts say about its pull request: the link's head branch, else the thread's. */
 export function reviewLoopPullRequest(
   thread: Pick<OrchestrationV2AppThread, "branch">,
   link: ThreadPullRequestLink,

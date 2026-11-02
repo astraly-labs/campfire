@@ -5697,7 +5697,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       sql<{ readonly thread_id: string }>`
         SELECT thread_id FROM orchestration_v2_projection_threads AS thread
         WHERE deleted_at IS NULL
-          -- A substring test skips parsing the payloads of threads that never had a loop.
           AND instr(payload_json, '"reviewLoop"') > 0
           AND CASE WHEN json_valid(payload_json) THEN EXISTS (
             SELECT 1 FROM json_each(thread.payload_json, '$.pullRequests') AS link

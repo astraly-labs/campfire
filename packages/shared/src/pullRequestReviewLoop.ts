@@ -17,7 +17,6 @@ import { ReviewLoopFixRound, ReviewLoopReviewRound } from "@t3tools/contracts";
 export const REVIEW_LOOP_MAX_REVIEWS = ReviewLoopReviewRound.literals.length;
 const REVIEW_LOOP_MAX_FIXES = ReviewLoopFixRound.literals.length;
 
-/** The start dialog's prompt until the user edits it. */
 export function defaultReviewLoopPrompt(pullRequestNumber: number): string {
   return `/review #${pullRequestNumber}`;
 }
@@ -133,7 +132,6 @@ export function reviewLoopMonitorTasks(
 export interface ReviewLoopChip {
   readonly tone: "working" | "success" | "warning" | "muted" | "error";
   readonly label: string;
-  /** One sentence for the chip's menu. */
   readonly detail: string;
   readonly loopId: ReviewLoopId;
   readonly live: boolean;

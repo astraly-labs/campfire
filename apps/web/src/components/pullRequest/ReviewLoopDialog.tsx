@@ -54,11 +54,7 @@ import {
 const EMPTY_PROVIDERS: ReadonlyArray<ServerProvider> = [];
 const isReviewLoopPrompt = Schema.is(ReviewLoopPrompt);
 
-/**
- * Picks the reviewer and the prompt, then starts the loop from this thread. Mount it only while
- * it is open, so each open starts from the defaults. A pick always wins over the default, which
- * can change while the source thread streams.
- */
+/** A pick always wins over the default reviewer, which can change while the source thread streams. */
 export function ReviewLoopDialog({
   threadRef,
   pullRequest,
@@ -69,7 +65,6 @@ export function ReviewLoopDialog({
   readonly pullRequest: Pick<ReviewLoopPullRequest, "repository" | "number" | "url"> & {
     readonly host: string;
   };
-  /** False when the thread has not linked the pull request; the start links it. */
   readonly linked: boolean;
   readonly onClose: () => void;
 }) {

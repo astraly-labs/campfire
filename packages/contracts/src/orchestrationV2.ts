@@ -3328,8 +3328,7 @@ const OrchestrationV2InternalCommand = Schema.Union([
   /**
    * Moves review loop `loopId` on this source thread's link from `from` to `to` and sends `post`
    * in the same transaction. Rejected unless the loop is live in `from` and the step is legal,
-   * so a repeated or stale step changes nothing. A post into the review thread also takes that
-   * thread's lock, after this one, so `reviewThreadId` rides on the command.
+   * so a repeated or stale step changes nothing.
    */
   Schema.Struct({
     type: Schema.Literal("thread.pull-request-review-loop.advance"),
