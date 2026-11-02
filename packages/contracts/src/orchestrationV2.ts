@@ -41,6 +41,7 @@ import {
   ProviderThreadId,
   ProviderTurnId,
   RawEventId,
+  ReviewLoopId,
   RunAttemptId,
   RunId,
   RuntimeRequestId,
@@ -58,6 +59,9 @@ import {
 } from "./checkpointDiff.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import {
+  ReviewLoopLivePhase,
+  ReviewLoopPhase,
+  ReviewLoopPrompt,
   ThreadLinkedPullRequest,
   ThreadPullRequestLink,
   ThreadPullRequestKey,
@@ -2980,6 +2984,36 @@ export const OrchestrationV2Command = Schema.Union([
       Schema.Struct({ url: TrimmedNonEmptyString, source: ThreadPullRequestLinkSource }),
     ),
   }),
+  /**
+   * Start or stop a review loop: another model reviews the pull request in a review thread, and
+   * this thread's agent works on each review, up to three reviews.
+   *
+   * `start` records the loop on this thread's link, creates the review thread, and sends review
+   * request 1, in one transaction. It links the pull request first when `link` is set, like a
+   * watch. It is rejected while this thread has a live loop or is a live reviewer; when the
+   * thread is archived, settled, or a subagent; and when the pull request is merged or closed,
+   * or its head branch is not this thread's branch.
+   * `stop` ends the live loop `loopId` on this link with reason `stopped`.
+   */
+  Schema.Struct({
+    type: Schema.Literal("thread.pull-request.review-loop"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    ...ThreadPullRequestKey.fields,
+    ...OrchestrationV2CreationFields,
+    collaborationUser: Schema.optional(Schema.NullOr(CollaborationUser)),
+    request: Schema.Union([
+      Schema.Struct({
+        type: Schema.Literal("start"),
+        reviewer: ModelSelection,
+        prompt: ReviewLoopPrompt,
+        link: Schema.optional(
+          Schema.Struct({ url: TrimmedNonEmptyString, source: ThreadPullRequestLinkSource }),
+        ),
+      }),
+      Schema.Struct({ type: Schema.Literal("stop"), loopId: ReviewLoopId }),
+    ]),
+  }),
   Schema.Struct({
     type: Schema.Literal("thread.pull-request.sync"),
     commandId: CommandId,
@@ -3257,6 +3291,13 @@ export const OrchestrationV2Command = Schema.Union([
 ]);
 export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
 
+export const ReviewLoopPost = Schema.Struct({
+  target: Schema.Literals(["source", "review"]),
+  messageId: MessageId,
+  text: Schema.String,
+});
+export type ReviewLoopPost = typeof ReviewLoopPost.Type;
+
 /**
  * Commands only the server dispatches. They stay out of
  * `OrchestrationV2Command`, the `dispatchCommand` payload, so no client can
@@ -3283,6 +3324,34 @@ const OrchestrationV2InternalCommand = Schema.Union([
         notification: OrchestrationV2Notification,
       }),
     ),
+  }),
+  /**
+   * Moves review loop `loopId` on this source thread's link from `from` to `to` and sends `post`
+   * in the same transaction. Rejected unless the loop is live in `from` and the step is legal,
+   * so a repeated or stale step changes nothing. A post into the review thread also takes that
+   * thread's lock, after this one, so `reviewThreadId` rides on the command.
+   */
+  Schema.Struct({
+    type: Schema.Literal("thread.pull-request-review-loop.advance"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    ...ThreadPullRequestKey.fields,
+    loopId: ReviewLoopId,
+    reviewThreadId: ThreadId,
+    from: ReviewLoopLivePhase,
+    to: ReviewLoopPhase,
+    post: Schema.optional(ReviewLoopPost),
+  }),
+  /**
+   * Removes the reviewer marker for `loopId` from this review thread's link once that loop is no
+   * longer live on its source thread.
+   */
+  Schema.Struct({
+    type: Schema.Literal("thread.pull-request-review-loop.release"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    ...ThreadPullRequestKey.fields,
+    loopId: ReviewLoopId,
   }),
   /** Records that the provider rollback `requestId` failed for good. */
   Schema.Struct({

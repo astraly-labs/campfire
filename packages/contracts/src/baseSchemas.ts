@@ -313,6 +313,8 @@ const makeEntityId = <Brand extends string>(brand: Parameters<typeof Schema.bran
 
 export const ThreadId = makeEntityId("ThreadId");
 export type ThreadId = typeof ThreadId.Type;
+export const ReviewLoopId = makeEntityId("ReviewLoopId");
+export type ReviewLoopId = typeof ReviewLoopId.Type;
 export const ProjectId = makeEntityId("ProjectId");
 export type ProjectId = typeof ProjectId.Type;
 export const EnvironmentId = makeEntityId("EnvironmentId");
