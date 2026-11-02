@@ -6,6 +6,8 @@ import * as Semaphore from "effect/Semaphore";
 import * as StorageCleanup from "./storageCleanup.ts";
 import * as PullRequestSyncReactor from "./orchestration-v2/PullRequestSyncReactor.ts";
 import * as PullRequestWatchReactor from "./orchestration-v2/PullRequestWatchReactor.ts";
+import * as PullRequestReviewLoopService from "./orchestration-v2/PullRequestReviewLoopService.ts";
+import * as EffectOutbox from "./orchestration-v2/EffectOutbox.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeHttp from "node:http";
 
@@ -575,6 +577,15 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
     Layer.provide(PullRequestWatchReactor.layer),
     Layer.provide(layerPullRequestService),
     Layer.provide(ProjectionStoreV2.layer),
+  ),
+  Layer.effectDiscard(
+    Effect.gen(function* () {
+      const service = yield* PullRequestReviewLoopService.PullRequestReviewLoopService;
+      yield* service.start();
+    }),
+  ).pipe(
+    Layer.provide(PullRequestReviewLoopService.layer),
+    Layer.provide(Layer.merge(ProjectionStoreV2.layer, EffectOutbox.layer)),
   ),
   // Subscribes to `account.rate-limits.updated` so usage bars track live
   // telemetry instead of waiting for the next status probe.
