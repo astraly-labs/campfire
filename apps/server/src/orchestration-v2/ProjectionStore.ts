@@ -15,6 +15,7 @@ import {
   usageLimitRunPresentedAsLatest,
 } from "@t3tools/shared/orchestrationV2ThreadError";
 import { threadPullRequestsOf } from "@t3tools/shared/threadPullRequests";
+import { liveAuthorLoop, reviewerMarker } from "@t3tools/shared/pullRequestReviewLoop";
 import type {
   OrchestrationV2AppThread,
   OrchestrationV2CheckpointScope,
@@ -416,6 +417,14 @@ export interface ProjectionStoreV2Shape {
   readonly getThreadsWithPullRequests: (
     threadId?: ThreadId,
   ) => Effect.Effect<ReadonlyArray<ProjectionThreadPullRequests>, ProjectionStoreV2Error>;
+  /**
+   * Threads with a link in a live review loop: a live author record or a reviewer marker.
+   * Archived threads count, so a marker on an archived review thread is still released.
+   */
+  readonly getReviewLoopThreadIds: () => Effect.Effect<
+    ReadonlyArray<ThreadId>,
+    ProjectionStoreV2Error
+  >;
   readonly getTurnStartContext: (
     threadId: ThreadId,
     runId: RunId,
@@ -5684,6 +5693,26 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         );
       }).pipe(Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })));
 
+    const getReviewLoopThreadIds: ProjectionStoreV2Shape["getReviewLoopThreadIds"] = () =>
+      sql<{ readonly thread_id: string }>`
+        SELECT thread_id FROM orchestration_v2_projection_threads AS thread
+        WHERE deleted_at IS NULL
+          -- A substring test skips parsing the payloads of threads that never had a loop.
+          AND instr(payload_json, '"reviewLoop"') > 0
+          AND CASE WHEN json_valid(payload_json) THEN EXISTS (
+            SELECT 1 FROM json_each(thread.payload_json, '$.pullRequests') AS link
+            WHERE json_extract(link.value, '$.reviewLoop.role') = 'reviewer'
+              OR (
+                json_extract(link.value, '$.reviewLoop.role') = 'author'
+                AND json_extract(link.value, '$.reviewLoop.phase.status') <> 'ended'
+              )
+          ) ELSE 0 END
+        ORDER BY thread_id
+      `.pipe(
+        Effect.map((rows) => rows.map((row) => ThreadId.make(row.thread_id))),
+        Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
+      );
+
     const shellThreadStateFromRow = (input: {
       readonly row: ShellThreadRow;
       readonly runOrdinalsByThreadId: ReadonlyMap<ThreadId, Map<RunId, number>>;
@@ -6024,6 +6053,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getThread,
       getSettlementCandidates,
       getThreadsWithPullRequests,
+      getReviewLoopThreadIds,
       getThreadProjection,
       getTurnStartContext,
       getTurnStartHistory,
@@ -6197,6 +6227,23 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                 settledAt: thread.settledAt,
                 pullRequests: thread.pullRequests ?? [],
               })),
+          ),
+        ),
+      getReviewLoopThreadIds: () =>
+        Ref.get(replayState).pipe(
+          Effect.map((state) =>
+            [...state.projections.values()]
+              .map(({ thread }) => thread)
+              .filter(
+                (thread) =>
+                  thread.deletedAt === null &&
+                  (thread.pullRequests ?? []).some(
+                    (link) =>
+                      liveAuthorLoop(link) !== undefined || reviewerMarker(link) !== undefined,
+                  ),
+              )
+              .map((thread) => thread.id)
+              .toSorted(),
           ),
         ),
       getLimitRecoveryCandidates: (options) =>

@@ -17,6 +17,7 @@ import {
   ProviderSessionId,
   ProviderThreadId,
   ProviderTurnId,
+  ReviewLoopId,
   RuntimeRequestId,
   RunAttemptId,
   RunId,
@@ -5479,3 +5480,104 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
     }),
   );
 });
+
+it.effect("finds the threads in a live review loop, archived ones too, and no deleted ones", () =>
+  Effect.gen(function* () {
+    for (const layer of [layerTest, ProjectionStore.layerMemory]) {
+      const ids = yield* Effect.gen(function* () {
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const link = (reviewLoop?: ThreadPullRequestLink["reviewLoop"]): ThreadPullRequestLink => ({
+          host: "github.com",
+          repository: "pingdotgg/t3code",
+          number: 42,
+          url: "https://github.com/pingdotgg/t3code/pull/42",
+          source: "created",
+          linkedAt: "2026-11-02T10:00:00.000Z",
+          snapshot: null,
+          stack: null,
+          ...(reviewLoop === undefined ? {} : { reviewLoop }),
+        });
+        const author = (status: "reviewing" | "ended"): ThreadPullRequestLink["reviewLoop"] => ({
+          role: "author",
+          id: ReviewLoopId.make(`review-loop:${status}`),
+          reviewThreadId: ThreadId.make("thread:review-loop:reviewer"),
+          prompt: "/review #42",
+          startedAt: "2026-11-02T10:00:00.000Z",
+          phase:
+            status === "reviewing"
+              ? { status, round: 1 }
+              : { status, reason: "clean", reviews: 1, endedAt: "2026-11-02T10:05:00.000Z" },
+        });
+        const marker: ThreadPullRequestLink["reviewLoop"] = {
+          role: "reviewer",
+          id: ReviewLoopId.make("review-loop:reviewing"),
+          sourceThreadId: ThreadId.make("thread:review-loop:live"),
+        };
+        const seed = (
+          name: string,
+          pullRequests: ReadonlyArray<ThreadPullRequestLink>,
+          end?: "thread.archived" | "thread.deleted",
+        ) =>
+          Effect.gen(function* () {
+            const threadId = ThreadId.make(`thread:review-loop:${name}`);
+            const thread = {
+              createdBy: "user" as const,
+              creationSource: "web" as const,
+              id: threadId,
+              projectId: ProjectId.make("project:review-loop"),
+              title: name,
+              providerInstanceId,
+              modelSelection,
+              runtimeMode: "full-access" as const,
+              interactionMode: "default" as const,
+              branch: null,
+              worktreePath: null,
+              pullRequests,
+              activeProviderThreadId: null,
+              lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+              forkedFrom: null,
+              createdAt: now,
+              updatedAt: now,
+              archivedAt: null,
+              settledOverride: null,
+              settledAt: null,
+              lastVisitedAt: null,
+              deletedAt: null,
+            };
+            yield* projectionStore.apply({
+              id: EventId.make(`event:review-loop:${name}:created`),
+              type: "thread.created",
+              threadId,
+              occurredAt: now,
+              payload: thread,
+            });
+            if (end === undefined) return;
+            yield* projectionStore.apply({
+              id: EventId.make(`event:review-loop:${name}:${end}`),
+              type: end,
+              threadId,
+              occurredAt: now,
+              payload: {
+                ...thread,
+                ...(end === "thread.archived" ? { archivedAt: now } : { deletedAt: now }),
+              },
+            });
+          });
+        yield* seed("live", [link(author("reviewing"))]);
+        yield* seed("ended", [link(author("ended"))]);
+        yield* seed("reviewer", [link(marker)]);
+        yield* seed("archived-reviewer", [link(marker)], "thread.archived");
+        yield* seed("deleted", [link(author("reviewing"))], "thread.deleted");
+        yield* seed("watch-only", [link()]);
+        return yield* projectionStore.getReviewLoopThreadIds();
+      }).pipe(Effect.provide(layer));
+
+      assert.deepEqual(ids, [
+        ThreadId.make("thread:review-loop:archived-reviewer"),
+        ThreadId.make("thread:review-loop:live"),
+        ThreadId.make("thread:review-loop:reviewer"),
+      ]);
+    }
+  }),
+);
