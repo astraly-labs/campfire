@@ -294,6 +294,30 @@ returns to your inbox.
 Cross-repository links use a project on the same host. Azure DevOps reviews require a project checked
 out from the matching organization and repository.
 
+## Review loop
+
+A review loop lets a second model review a thread's pull request while the thread's agent fixes
+the findings. For example, Cursor can review code that Claude wrote.
+
+To start, open the thread's pull request in the side panel and click **Review loop**. You can also
+use **Start review loop...** in a row menu of the **Linked pull requests** panel. Pick a reviewer
+and, if you want, edit the prompt, which starts as `/review #<number>`. The pull request must be
+open and on the thread's branch. T3 Code remembers the reviewer for the project.
+
+The reviewer works in its own review thread. T3 Code posts each review into your thread for you.
+Your agent fixes what it agrees with, says why it skips the rest, and pushes. Then T3 Code asks
+the reviewer for the next review. Click **Sent by T3 Code** above a loop message to open the other
+thread.
+
+A loop runs at most 3 reviews, with a fix round after each of the first 2. It ends early when a
+review finds nothing to change. If the third review still has findings, the loop stops, and your
+agent tells you what remains for you to decide. You get a notification when the loop ends. Until
+then, the thread stays in **Working**.
+
+To stop the loop, click its status in the pull request header and choose **Stop loop**, or choose
+**Stop review loop** in the row menu. Both let a running turn finish. Stop in the composer of either
+thread also ends the loop, and it interrupts a running turn as usual.
+
 ## GitHub stacks
 
 The Pull Requests page shows each PR's position in its GitHub stack. Open the stack badge in a
