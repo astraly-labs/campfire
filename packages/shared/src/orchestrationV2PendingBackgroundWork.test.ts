@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
-import type { OrchestrationV2PendingBackgroundTask } from "@t3tools/contracts";
+import type {
+  OrchestrationV2PendingBackgroundTask,
+  OrchestrationV2Run,
+  ThreadPullRequestReviewLoop,
+} from "@t3tools/contracts";
+import { ReviewLoopId, ThreadId } from "@t3tools/contracts";
 import {
   backgroundWorkHoldsCompletion,
   derivePendingBackgroundWork,
@@ -518,18 +523,19 @@ describe("derivePendingBackgroundWork kinds", () => {
     ]);
   });
 
+  const watch = {
+    startedAt: "2026-10-05T00:00:00.000Z",
+    headSha: null,
+    failedChecks: [],
+    passed: false,
+    passedChecks: [],
+    remarksThrough: "2026-10-05T00:00:00.000Z",
+    remarkIds: [],
+    conflicting: false,
+    wakes: 0,
+  };
+
   describe("pull request watches", () => {
-    const watch = {
-      startedAt: "2026-10-05T00:00:00.000Z",
-      headSha: null,
-      failedChecks: [],
-      passed: false,
-      passedChecks: [],
-      remarksThrough: "2026-10-05T00:00:00.000Z",
-      remarkIds: [],
-      conflicting: false,
-      wakes: 0,
-    };
     const link = (
       number: number,
       extra: { source?: "agent" | "stack-dismissed"; watched?: boolean },
@@ -584,6 +590,79 @@ describe("derivePendingBackgroundWork kinds", () => {
           pullRequests,
         }),
       ).toEqual([]);
+    });
+  });
+
+  describe("review loops", () => {
+    const startedAt = "2026-10-05T00:00:00.000Z";
+    const author = (phase: Extract<ThreadPullRequestReviewLoop, { role: "author" }>["phase"]) => ({
+      role: "author" as const,
+      id: ReviewLoopId.make("loop-1"),
+      reviewThreadId: ThreadId.make("thread:review"),
+      prompt: "/review #7",
+      startedAt,
+      phase,
+    });
+    const link = (
+      reviewLoop: ThreadPullRequestReviewLoop,
+      source: "agent" | "stack-dismissed" = "agent",
+    ) => ({
+      host: "github.com",
+      repository: "acme/app",
+      number: 7,
+      url: "https://github.com/acme/app/pull/7",
+      source,
+      reviewLoop,
+    });
+    const reviewing = author({ status: "reviewing", round: 2 });
+
+    it.each([
+      ["idle, a live author loop", true, "completed", link(reviewing)],
+      [
+        "idle, an ended author loop",
+        false,
+        "completed",
+        link(author({ status: "ended", reason: "clean", reviews: 1, endedAt: startedAt })),
+      ],
+      [
+        "idle, a reviewer marker",
+        true,
+        "completed",
+        link({
+          role: "reviewer",
+          id: ReviewLoopId.make("loop-1"),
+          sourceThreadId: ThreadId.make("thread:source"),
+        }),
+      ],
+      [
+        "idle, the loop's link is dismissed",
+        false,
+        "completed",
+        link(reviewing, "stack-dismissed"),
+      ],
+      ["a run is active", false, "running", link(reviewing)],
+      ["never ran, a live author loop", true, null, link(reviewing)],
+    ] as const)("%s, holds the thread: %s", (_case, holds, status, pullRequest) => {
+      const latestRun: Pick<OrchestrationV2Run, "id" | "ordinal" | "status"> | null =
+        status === null ? null : { id: "run-1" as never, ordinal: 1, status };
+      const tasks = derivePendingBackgroundWork({
+        latestRun,
+        providerThreads: [],
+        turnItems: [],
+        pullRequests: [pullRequest],
+      });
+      expect(tasks.map((task) => task.kind)).toEqual(holds ? ["monitor"] : []);
+      expect(backgroundWorkHoldsCompletion(tasks)).toBe(holds);
+    });
+
+    it("keeps a watch and a loop on the same link as two monitors", () => {
+      const tasks = derivePendingBackgroundWork({
+        latestRun: { id: "run-1" as never, ordinal: 1, status: "completed" },
+        providerThreads: [],
+        turnItems: [],
+        pullRequests: [{ ...link(reviewing), watch }],
+      });
+      expect(tasks.map((task) => task.kind)).toEqual(["monitor", "monitor"]);
     });
   });
 });
