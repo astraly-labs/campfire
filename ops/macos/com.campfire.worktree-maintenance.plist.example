@@ -4,8 +4,16 @@
 <dict>
   <key>Label</key>
   <string>com.campfire.worktree-maintenance</string>
+  <!--
+    Worktrees on an external drive: macOS only lets binaries holding the removable-volumes
+    permission read it, and launchd's /bin/sh does not, so start the script through Campfire's
+    node. Without it the job exits 74 and logs each folder it cannot list.
+  -->
   <key>ProgramArguments</key>
   <array>
+    <string>/Users/example/services/campfire/runtimes/node-v24.14.1-darwin-arm64/bin/node</string>
+    <string>-e</string>
+    <string>const r=require("child_process").spawnSync(process.argv[1],process.argv.slice(2),{stdio:"inherit"});process.exit(r.status??1)</string>
     <string>/Users/example/.local/libexec/campfire-worktree-maintenance.sh</string>
     <string>/Users/example/Library/Application Support/Campfire-staging</string>
     <string>7</string>

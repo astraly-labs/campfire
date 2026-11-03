@@ -66,6 +66,7 @@ campfire_removed=0
 campfire_skipped_active=0
 campfire_skipped_dirty=0
 campfire_skipped_unresponsive=0
+campfire_unreadable_roots=0
 
 sql_quote() {
   printf '%s' "$1" | sed "s/'/''/g"
@@ -147,6 +148,18 @@ list_worktree_roots() {
     fail "could not read worktree directories from $campfire_settings"
 }
 
+# A denied listing leaves a glob literal, which looks exactly like an empty folder.
+# On an external drive, macOS denies it unless launchd starts this script through a
+# binary holding the removable-volumes permission (see the plist example).
+# A folder that does not exist, such as an unplugged drive, is a quiet skip.
+can_list_root() {
+  [ -d "$1" ] || return 1
+  ls -A "$1" >/dev/null && return 0
+  campfire_unreadable_roots=$((campfire_unreadable_roots + 1))
+  echo "Campfire worktree maintenance skipped a folder it cannot list: $1" >&2
+  return 1
+}
+
 # Agents also create and use worktrees by hand, so no thread vouches for those.
 newest_mtime() {
   campfire_newest=0
@@ -182,7 +195,7 @@ while IFS= read -r campfire_root <&3; do
     '~/'*) campfire_root="$HOME/${campfire_root#'~/'}" ;;
   esac
   case "$campfire_root" in
-    /?*) [ -d "$campfire_root" ] || continue ;;
+    /?*) can_list_root "$campfire_root" || continue ;;
     *) continue ;;
   esac
   for campfire_worktree in "$campfire_root"/*/*; do
@@ -258,6 +271,7 @@ while [ -n "$campfire_roots_left" ]; do
     *:*) campfire_roots_left=${campfire_roots_left#*:} ;;
     *) campfire_roots_left= ;;
   esac
+  can_list_root "$campfire_root" || continue
   for campfire_target in "$campfire_root"/*; do
     # Cargo leaves these markers, so nothing else in the folder can be mistaken for a cache.
     [ -f "$campfire_target/CACHEDIR.TAG" ] || [ -f "$campfire_target/.rustc_info.json" ] || continue
@@ -276,7 +290,11 @@ while [ -n "$campfire_roots_left" ]; do
   done
 done
 
-printf '{"status":"ok","dryRun":%s,"cleaned":%s,"removed":%s,"skippedActive":%s,"skippedDirty":%s,"skippedUnresponsive":%s}\n' \
+campfire_status=ok
+[ "$campfire_unreadable_roots" -eq 0 ] || campfire_status=partial
+printf '{"status":"%s","dryRun":%s,"cleaned":%s,"removed":%s,"skippedActive":%s,"skippedDirty":%s,"skippedUnresponsive":%s,"unreadableRoots":%s}\n' \
+  "$campfire_status" \
   "$(if [ "$campfire_dry_run" = "--dry-run" ]; then echo true; else echo false; fi)" \
   "$campfire_cleaned" "$campfire_removed" "$campfire_skipped_active" "$campfire_skipped_dirty" \
-  "$campfire_skipped_unresponsive"
+  "$campfire_skipped_unresponsive" "$campfire_unreadable_roots"
+[ "$campfire_unreadable_roots" -eq 0 ] || exit 74
