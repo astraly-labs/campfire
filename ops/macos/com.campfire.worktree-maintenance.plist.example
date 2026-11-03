@@ -10,6 +10,13 @@
     <string>/Users/example/Library/Application Support/Campfire-staging</string>
     <string>7</string>
   </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>CAMPFIRE_TARGET_RETENTION_DAYS</key>
+    <string>3</string>
+    <key>CAMPFIRE_CARGO_TARGET_ROOTS</key>
+    <string>/Volumes/Example/cargo-targets</string>
+  </dict>
   <key>StartInterval</key>
   <integer>900</integer>
   <key>RunAtLoad</key>
