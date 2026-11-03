@@ -24,7 +24,7 @@ import {
   SmilePlusIcon,
   XIcon,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 
 import { useAssetUrls } from "~/assets/assetUrls";
 import { randomUUID } from "~/lib/utils";
@@ -76,6 +76,30 @@ function MessageTime(props: {
         {label}
       </TooltipTrigger>
       <TooltipPopup>{title}</TooltipPopup>
+    </Tooltip>
+  );
+}
+
+function MessageAction(props: {
+  readonly label: string;
+  readonly onClick: () => void;
+  readonly children: ReactNode;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            aria-label={props.label}
+            className="rounded-full p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+            onClick={props.onClick}
+          />
+        }
+      >
+        {props.children}
+      </TooltipTrigger>
+      <TooltipPopup>{props.label}</TooltipPopup>
     </Tooltip>
   );
 }
@@ -313,7 +337,7 @@ export function SideThreadDrawer(props: {
           </SheetHeader>
         </div>
         <div data-slot="sheet-panel" className="flex min-h-0 flex-1 flex-col gap-3 px-6 py-4">
-          <div className="flex min-h-32 flex-1 flex-col gap-3 overflow-y-auto pr-1">
+          <div className="flex min-h-32 flex-1 flex-col gap-3 overflow-y-auto pt-5 pr-1">
             {!sideThread ? (
               <p className="text-sm text-muted-foreground">Opening discussion…</p>
             ) : sideThread.messages.length === 0 ? (
@@ -336,7 +360,8 @@ export function SideThreadDrawer(props: {
                 return (
                   <div
                     key={message.id}
-                    className={`group border bg-muted/25 p-3 ${
+                    tabIndex={-1}
+                    className={`group/message relative border outline-none bg-muted/25 p-3 ${
                       continuesPrevious ? "-mt-3 border-t-0 pt-1" : "rounded-t-xl"
                     } ${continuesNext ? "" : "rounded-b-xl"}`}
                   >
@@ -406,76 +431,86 @@ export function SideThreadDrawer(props: {
                         </span>
                       </Button>
                     ) : null}
-                    <div className="mt-2 flex flex-wrap items-center gap-1 opacity-70 transition-opacity group-hover:opacity-100">
-                      {(message.reactions ?? []).map((reaction) => {
-                        const reactors = reaction.users.map((user) => user.displayName).join(", ");
-                        return (
-                          <Tooltip key={reaction.emoji}>
-                            <TooltipTrigger
-                              render={
-                                <button
-                                  type="button"
-                                  className="rounded-full border bg-background px-2 py-0.5 text-xs"
-                                  aria-label={`${reaction.emoji} from ${reactors}`}
-                                  onClick={() =>
-                                    void react({
-                                      environmentId,
-                                      input: {
-                                        threadId,
-                                        sideThreadId,
-                                        messageId: message.id,
-                                        emoji: reaction.emoji,
-                                      },
-                                    })
-                                  }
-                                />
-                              }
-                            >
-                              {reaction.emoji} {reaction.users.length}
-                            </TooltipTrigger>
-                            <TooltipPopup>{reactors}</TooltipPopup>
-                          </Tooltip>
-                        );
-                      })}
-                      <span className="inline-flex items-center gap-0.5">
-                        {QUICK_REACTIONS.map((emoji) => (
-                          <button
-                            key={emoji}
-                            type="button"
-                            className="rounded p-0.5 text-xs hover:bg-accent"
-                            onClick={() =>
-                              void react({
-                                environmentId,
-                                input: { threadId, sideThreadId, messageId: message.id, emoji },
-                              })
-                            }
-                          >
-                            {emoji}
-                          </button>
-                        ))}
-                      </span>
-                      <button
-                        type="button"
-                        className="ml-auto inline-flex items-center gap-1 text-3xs text-muted-foreground hover:text-foreground"
+                    {message.reactions?.length ? (
+                      <div className="mt-2 flex flex-wrap gap-1">
+                        {message.reactions.map((reaction) => {
+                          const reactors = reaction.users
+                            .map((user) => user.displayName)
+                            .join(", ");
+                          const mine = reaction.users.some(
+                            (user) => user.subject === currentSubject,
+                          );
+                          return (
+                            <Tooltip key={reaction.emoji}>
+                              <TooltipTrigger
+                                render={
+                                  <button
+                                    type="button"
+                                    className={`rounded-full border px-2 py-0.5 text-xs ${
+                                      mine ? "border-primary/40 bg-primary/10" : "bg-background"
+                                    }`}
+                                    aria-label={`${reaction.emoji} from ${reactors}`}
+                                    onClick={() =>
+                                      void react({
+                                        environmentId,
+                                        input: {
+                                          threadId,
+                                          sideThreadId,
+                                          messageId: message.id,
+                                          emoji: reaction.emoji,
+                                        },
+                                      })
+                                    }
+                                  />
+                                }
+                              >
+                                {reaction.emoji} {reaction.users.length}
+                              </TooltipTrigger>
+                              <TooltipPopup>{reactors}</TooltipPopup>
+                            </Tooltip>
+                          );
+                        })}
+                      </div>
+                    ) : null}
+                    {/* Shown only on the hovered or focused message, so a quiet thread reads as
+                        text. Touch screens cannot hover, so a tap focuses the message instead. */}
+                    <div className="pointer-events-none absolute -top-5 right-3 flex items-center gap-0.5 rounded-full border bg-popover p-px opacity-0 shadow-sm transition-opacity group-hover/message:pointer-events-auto group-hover/message:opacity-100 group-focus-within/message:pointer-events-auto group-focus-within/message:opacity-100">
+                      {QUICK_REACTIONS.map((emoji) => (
+                        <button
+                          key={emoji}
+                          type="button"
+                          aria-label={`React with ${emoji}`}
+                          className="rounded-full px-1 py-0.5 text-xs hover:bg-accent"
+                          onClick={() =>
+                            void react({
+                              environmentId,
+                              input: { threadId, sideThreadId, messageId: message.id, emoji },
+                            })
+                          }
+                        >
+                          {emoji}
+                        </button>
+                      ))}
+                      <MessageAction
+                        label="Reply"
                         onClick={() => {
                           setReplyToId(message.id);
                           setEditingId(null);
                         }}
                       >
-                        <CornerUpLeftIcon className="size-3" /> Reply
-                      </button>
+                        <CornerUpLeftIcon className="size-3" />
+                      </MessageAction>
                       {own ? (
-                        <button
-                          type="button"
-                          className="inline-flex items-center gap-1 text-3xs text-muted-foreground hover:text-foreground"
+                        <MessageAction
+                          label="Edit"
                           onClick={() => {
                             setEditingId(message.id);
                             setReplyToId(null);
                             setDraft(message.text);
                           }}
                         >
-                          <PencilIcon className="size-3" /> Edit
-                        </button>
+                          <PencilIcon className="size-3" />
+                        </MessageAction>
                       ) : null}
                     </div>
                   </div>
