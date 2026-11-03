@@ -308,6 +308,50 @@ export function codexModelFamily(slug: string): string {
   return slug.startsWith("openai.gpt-") ? slug.slice("openai.".length) : slug;
 }
 
+/** The version of a GPT Sol slug, such as [6, 1] for "gpt-6.1-sol" or "openai.gpt-6.1-sol". */
+export function solModelVersion(slug: string): ReadonlyArray<number> | null {
+  const version = /^gpt-(\d+(?:\.\d+)*)-sol$/.exec(codexModelFamily(slug))?.[1];
+  return version === undefined ? null : version.split(".").map(Number);
+}
+
+function compareSolVersions(left: ReadonlyArray<number>, right: ReadonlyArray<number>): number {
+  for (let part = 0; part < Math.max(left.length, right.length); part++) {
+    const difference = (left[part] ?? 0) - (right[part] ?? 0);
+    if (difference !== 0) return difference;
+  }
+  return 0;
+}
+
+/**
+ * The newest GPT Sol in `models`, so no caller hardcodes a Sol id. Custom models never count. A
+ * model that is not legacy beats a legacy one, then the higher version wins, and a tie keeps the
+ * catalog order.
+ */
+export function latestSolModel<
+  Model extends {
+    readonly slug: string;
+    readonly isCustom: boolean;
+    readonly isLegacy?: boolean | undefined;
+  },
+>(models: ReadonlyArray<Model>): Model | null {
+  let latest: {
+    readonly model: Model;
+    readonly legacy: boolean;
+    readonly version: ReadonlyArray<number>;
+  } | null = null;
+  for (const model of models) {
+    const version = model.isCustom ? null : solModelVersion(model.slug);
+    if (version === null) continue;
+    const legacy = model.isLegacy === true;
+    const newer =
+      latest === null ||
+      (latest.legacy && !legacy) ||
+      (latest.legacy === legacy && compareSolVersions(version, latest.version) > 0);
+    if (newer) latest = { model, legacy, version };
+  }
+  return latest?.model ?? null;
+}
+
 export function formatCodexModelName(name: string): string {
   return name.replace(/^gpt/i, "GPT").replace(/-([a-z])/g, (_, c) => "-" + c.toUpperCase());
 }

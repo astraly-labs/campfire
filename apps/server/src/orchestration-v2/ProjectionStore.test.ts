@@ -5502,12 +5502,17 @@ it.effect("finds the threads in a live review loop, archived ones too, and no de
           role: "author",
           id: ReviewLoopId.make(`review-loop:${status}`),
           reviewThreadId: ThreadId.make("thread:review-loop:reviewer"),
-          prompt: "/review #42",
           startedAt: "2026-11-02T10:00:00.000Z",
           phase:
             status === "reviewing"
-              ? { status, round: 1 }
-              : { status, reason: "clean", reviews: 1, endedAt: "2026-11-02T10:05:00.000Z" },
+              ? { status, budget: 3, round: 1 }
+              : {
+                  status,
+                  reason: "approved",
+                  reviews: 1,
+                  budget: 3,
+                  endedAt: "2026-11-02T10:05:00.000Z",
+                },
         });
         const marker: ThreadPullRequestLink["reviewLoop"] = {
           role: "reviewer",

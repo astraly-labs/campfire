@@ -1,15 +1,19 @@
 import { describe, expect, it } from "vite-plus/test";
-import type { ReviewLoopEndedPhase, ReviewLoopPhase } from "@t3tools/contracts";
-import { ReviewLoopId, ThreadId } from "@t3tools/contracts";
+import type {
+  ReviewLoopBudget,
+  ReviewLoopEndedPhase,
+  ReviewLoopFindingSeverity,
+  ReviewLoopPhase,
+} from "@t3tools/contracts";
+import { ReviewLoopFindingId, ReviewLoopId, ThreadId } from "@t3tools/contracts";
 
 import {
-  defaultReviewLoopPrompt,
   liveAuthorLoop,
   reviewerMarker,
   reviewLoopChip,
+  reviewLoopMonitorTasks,
   reviewLoopOutcome,
   reviewLoopPhaseKey,
-  reviewsFinishedBefore,
 } from "./pullRequestReviewLoop.ts";
 
 const at = "2026-10-05T00:00:00.000Z";
@@ -20,56 +24,56 @@ const author = (phase: ReviewLoopPhase) => ({
   role: "author" as const,
   id: loopId,
   reviewThreadId,
-  prompt: "/review #7",
   startedAt: at,
   phase,
 });
 const reviewer = { role: "reviewer" as const, id: loopId, sourceThreadId };
+const ref = (id: string, severity: ReviewLoopFindingSeverity) => ({
+  id: ReviewLoopFindingId.make(id),
+  severity,
+});
 const ended = (
   reason: ReviewLoopEndedPhase["reason"],
   reviews: ReviewLoopEndedPhase["reviews"],
+  budget: ReviewLoopBudget = 3,
   detail?: string,
 ): ReviewLoopEndedPhase => ({
   status: "ended",
   reason,
   reviews,
+  budget,
   ...(detail === undefined ? {} : { detail }),
   endedAt: at,
 });
 
-describe("defaultReviewLoopPrompt", () => {
-  it("asks for a review of the pull request by number", () => {
-    expect(defaultReviewLoopPrompt(42)).toBe("/review #42");
-  });
-});
-
-describe("loop phases", () => {
+describe("reviewLoopPhaseKey", () => {
   it.each([
-    [{ status: "reviewing", round: 1 }, "reviewing-1", 0],
-    [{ status: "fixing", round: 1 }, "fixing-1", 1],
-    [{ status: "reviewing", round: 2 }, "reviewing-2", 1],
-    [{ status: "fixing", round: 2 }, "fixing-2", 2],
-    [{ status: "reviewing", round: 3 }, "reviewing-3", 2],
-  ] as const)("%o is keyed %s and follows %s finished reviews", (phase, key, reviews) => {
+    [{ status: "scoping", budget: 3 }, "scoping"],
+    [{ status: "reviewing", budget: 3, round: 1 }, "reviewing-1"],
+    [{ status: "fixing", budget: 3, round: 2, open: [] }, "fixing-2"],
+    [{ status: "reviewing", budget: 5, round: 3 }, "reviewing-3"],
+    [{ status: "fixing", budget: 5, round: 3, open: [] }, "fixing-3"],
+    [{ status: "reviewing", budget: 5, round: 4 }, "reviewing-4"],
+  ] as const)("keys %o as %s, whatever its budget", (phase, key) => {
     expect(reviewLoopPhaseKey(phase)).toBe(key);
-    expect(reviewsFinishedBefore(phase)).toBe(reviews);
   });
 
   it("keys every ended phase the same", () => {
-    expect(reviewLoopPhaseKey(ended("clean", 1))).toBe("ended");
-    expect(reviewLoopPhaseKey(ended("stopped", 0))).toBe("ended");
+    expect(reviewLoopPhaseKey(ended("approved", 1))).toBe("ended");
+    expect(reviewLoopPhaseKey(ended("stopped", 0, 5))).toBe("ended");
   });
 });
 
 describe("reviewLoopOutcome", () => {
   it.each([
-    ["clean", "clean"],
-    ["needs_human", "needs_human"],
+    ["approved", "approved"],
+    ["budget_ended", "needs_human"],
+    ["stuck", "needs_human"],
     ["stopped", "stopped"],
     ["review_stopped", "stopped"],
-    ["fix_stopped", "stopped"],
+    ["author_stopped", "stopped"],
     ["review_failed", "failed"],
-    ["fix_failed", "failed"],
+    ["author_failed", "failed"],
     ["aborted", "failed"],
     ["pr_merged", "merged"],
     ["pr_closed", "closed"],
@@ -79,10 +83,12 @@ describe("reviewLoopOutcome", () => {
 });
 
 describe("liveAuthorLoop and reviewerMarker", () => {
-  it("finds a live author loop, but not an ended one", () => {
-    const live = author({ status: "fixing", round: 1 });
+  it("finds a live author loop, the brief included, but not an ended one", () => {
+    const live = author({ status: "fixing", budget: 3, round: 1, open: [] });
+    const briefing = author({ status: "scoping", budget: 5 });
     expect(liveAuthorLoop({ reviewLoop: live })).toBe(live);
-    expect(liveAuthorLoop({ reviewLoop: author(ended("clean", 2)) })).toBeUndefined();
+    expect(liveAuthorLoop({ reviewLoop: briefing })).toBe(briefing);
+    expect(liveAuthorLoop({ reviewLoop: author(ended("approved", 2)) })).toBeUndefined();
     expect(liveAuthorLoop({ reviewLoop: reviewer })).toBeUndefined();
     expect(liveAuthorLoop({})).toBeUndefined();
   });
@@ -90,9 +96,34 @@ describe("liveAuthorLoop and reviewerMarker", () => {
   it("finds a reviewer marker only on the review thread's link", () => {
     expect(reviewerMarker({ reviewLoop: reviewer })).toBe(reviewer);
     expect(
-      reviewerMarker({ reviewLoop: author({ status: "reviewing", round: 1 }) }),
+      reviewerMarker({ reviewLoop: author({ status: "reviewing", budget: 3, round: 1 }) }),
     ).toBeUndefined();
     expect(reviewerMarker({})).toBeUndefined();
+  });
+});
+
+describe("reviewLoopMonitorTasks", () => {
+  const link = (reviewLoop: Parameters<typeof reviewLoopMonitorTasks>[0]["reviewLoop"]) => ({
+    number: 7,
+    source: "agent" as const,
+    reviewLoop,
+  });
+
+  it.each([
+    [{ status: "reviewing", budget: 5, round: 2 }, "Waiting for review 2 of 5 on pull request #7"],
+    [{ status: "reviewing", budget: 3, round: 3 }, "Waiting for review 3 of 3 on pull request #7"],
+    [{ status: "scoping", budget: 3 }, "Review loop on pull request #7"],
+    [{ status: "fixing", budget: 5, round: 3, open: [] }, "Review loop on pull request #7"],
+  ] as const)("holds the source thread in %o with %s", (phase, description) => {
+    expect(reviewLoopMonitorTasks(link(author(phase))).map((task) => task.description)).toEqual([
+      description,
+    ]);
+  });
+
+  it("holds the review thread while the author works", () => {
+    expect(reviewLoopMonitorTasks(link(reviewer)).map((task) => task.description)).toEqual([
+      "Waiting for the author on pull request #7",
+    ]);
   });
 });
 
@@ -100,7 +131,7 @@ describe("reviewLoopChip", () => {
   const chipFor = (phase: ReviewLoopPhase) =>
     reviewLoopChip({
       link: { number: 7, reviewLoop: author(phase) },
-      reviewerLabel: "Cursor · composer-1",
+      reviewerLabel: "Codex · GPT-6.1-Sol",
     });
 
   it("shows nothing for a link without a loop", () => {
@@ -108,8 +139,37 @@ describe("reviewLoopChip", () => {
   });
 
   it.each([
-    [{ status: "reviewing", round: 2 }, "Review 2/3", "Cursor · composer-1 is on review 2 of 3."],
-    [{ status: "fixing", round: 1 }, "Fix 1/2", "This thread's agent is working on review 1."],
+    [{ status: "scoping", budget: 3 }, "Brief", "This thread's agent is writing the review brief."],
+    [
+      { status: "reviewing", budget: 3, round: 2 },
+      "Review 2/3",
+      "Codex · GPT-6.1-Sol is on review 2 of 3.",
+    ],
+    [
+      { status: "reviewing", budget: 5, round: 5 },
+      "Review 5/5",
+      "Codex · GPT-6.1-Sol is on review 5 of 5.",
+    ],
+    [
+      { status: "fixing", budget: 3, round: 1, open: [] },
+      "Fix 1/2",
+      "This thread's agent is answering review 1.",
+    ],
+    [
+      { status: "fixing", budget: 3, round: 2, open: [ref("S3", "nit")] },
+      "Fix 2/2",
+      "This thread's agent is answering review 2.",
+    ],
+    [
+      {
+        status: "fixing",
+        budget: 5,
+        round: 3,
+        open: [ref("S1", "blocker"), ref("S2", "should"), ref("S4", "nit"), ref("S5", "unknown")],
+      },
+      "Fix 3/4",
+      "This thread's agent is answering review 3. Open: S1 [blocker], S2 [should], S5 [unknown].",
+    ],
   ] as const)("shows the live phase %o as %s", (phase, label, detail) => {
     expect(chipFor(phase)).toEqual({
       tone: "working",
@@ -123,27 +183,60 @@ describe("reviewLoopChip", () => {
   });
 
   it.each([
-    [ended("clean", 2), "success", "Clean", "Clean after 2 reviews."],
-    [ended("needs_human", 3), "warning", "Needs you", "Review 3 of 3 still has findings."],
-    [ended("stopped", 1), "muted", "Stopped", "Stopped after 1 review."],
+    [ended("approved", 2), "success", "Approved", "Approved at review 2 of 3."],
     [
-      ended("review_stopped", 0, "the review thread was archived"),
+      ended("approved", 2, 3, "this thread's provider is off"),
+      "success",
+      "Approved",
+      "Approved at review 2 of 3. Not pushed: this thread's provider is off.",
+    ],
+    [ended("budget_ended", 3), "warning", "Needs you", "No approval after 3 of 3 reviews."],
+    [ended("budget_ended", 5, 5), "warning", "Needs you", "No approval after 5 of 5 reviews."],
+    [
+      ended("budget_ended", 3, 3, "this thread's provider is off"),
+      "warning",
+      "Needs you",
+      "No approval after 3 of 3 reviews. This thread's provider is off.",
+    ],
+    [ended("stuck", 2, 3, "S2"), "warning", "Needs you", "S2 stays disputed after review 2."],
+    [
+      ended("stuck", 3, 5, "S2, S7"),
+      "warning",
+      "Needs you",
+      "S2, S7 stay disputed after review 3.",
+    ],
+    [ended("stopped", 1), "muted", "Stopped", "Stopped after 1 review."],
+    [ended("stopped", 0), "muted", "Stopped", "Stopped after 0 reviews."],
+    [
+      ended("review_stopped", 1, 3, "the review thread was archived"),
       "muted",
       "Stopped",
-      "Review 1 stopped: the review thread was archived.",
+      "Review 2 stopped: the review thread was archived.",
     ],
     [
-      ended("review_failed", 1, "rate limited"),
+      ended("review_failed", 1, 3, "rate limited"),
       "error",
       "Failed",
       "Review 2 failed: rate limited.",
     ],
-    [ended("fix_stopped", 2), "muted", "Stopped", "Fix 2 stopped."],
-    [ended("fix_failed", 1, "rate limited"), "error", "Failed", "Fix 1 failed: rate limited."],
+    [ended("author_stopped", 0), "muted", "Stopped", "The brief stopped."],
+    [ended("author_stopped", 1), "muted", "Stopped", "Fix 1 stopped."],
+    [
+      ended("author_failed", 0, 3, "rate limited"),
+      "error",
+      "Failed",
+      "The brief failed: rate limited.",
+    ],
+    [
+      ended("author_failed", 2, 3, "rate limited"),
+      "error",
+      "Failed",
+      "Fix 2 failed: rate limited.",
+    ],
     [ended("pr_merged", 1), "muted", "Merged", "The pull request was merged."],
     [ended("pr_closed", 0), "muted", "Closed", "The pull request was closed."],
     [
-      ended("aborted", 1, "the awaited message is gone"),
+      ended("aborted", 1, 3, "the awaited message is gone"),
       "error",
       "Failed",
       "The loop stopped on an error: the awaited message is gone.",
@@ -152,7 +245,7 @@ describe("reviewLoopChip", () => {
     expect(chipFor(phase)).toMatchObject({ tone, label, detail, live: false });
   });
 
-  it("shows a reviewer marker with the phase from the source thread", () => {
+  it("shows a reviewer marker with the phase and budget from the source thread", () => {
     const chip = (phase: ReviewLoopPhase) =>
       reviewLoopChip({
         link: { number: 7, reviewLoop: reviewer },
@@ -175,19 +268,23 @@ describe("reviewLoopChip", () => {
         reviewerLabel: null,
       });
 
-    expect(chip({ status: "fixing", round: 2 })).toEqual({
+    expect(chip({ status: "fixing", budget: 3, round: 2, open: [] })).toEqual({
       tone: "working",
       label: "Reviewer",
-      detail: `Reviews #7 for "Fix login". The author's agent is working on review 2.`,
+      detail: `Reviews #7 for "Fix login". The author's agent is answering review 2.`,
       loopId,
       live: true,
       otherThreadId: sourceThreadId,
       role: "reviewer",
     });
-    expect(chip({ status: "reviewing", round: 3 })?.detail).toBe(
-      `Reviews #7 for "Fix login". This thread is on review 3 of 3.`,
+    expect(chip({ status: "scoping", budget: 3 })?.detail).toBe(
+      `Reviews #7 for "Fix login". The author's agent is writing the review brief.`,
     );
-    expect(chip(ended("clean", 3))).toMatchObject({ tone: "success", live: false });
+    expect(chip({ status: "reviewing", budget: 5, round: 4 })?.detail).toBe(
+      `Reviews #7 for "Fix login". This thread is on review 4 of 5.`,
+    );
+    expect(chip(ended("approved", 3))).toMatchObject({ tone: "success", live: false });
+    expect(chip(ended("stuck", 2, 3, "S2"))).toMatchObject({ tone: "warning", live: false });
   });
 
   it("shows a reviewer marker as live while the source thread is not loaded", () => {

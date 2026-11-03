@@ -21,7 +21,6 @@ import {
   liveAuthorLoop,
   reviewerMarker,
   reviewLoopPhaseKey,
-  reviewsFinishedBefore,
 } from "@t3tools/shared/pullRequestReviewLoop";
 import {
   ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE,
@@ -62,7 +61,6 @@ import {
   ProviderInteractionMode,
   resolveProviderInstanceEnabled,
   type ProviderSessionId,
-  type ReviewLoopEndedPhase,
   RunId,
   RuntimeMode,
   ThreadLinkedPullRequest,
@@ -142,6 +140,7 @@ import {
 import { planThreadDeletion } from "./ThreadDeletion.ts";
 import {
   carryLinkAutomation,
+  endedReviewLoopPhase,
   endLinkAutomation,
   isReviewLoopStep,
   makeReviewThread,
@@ -605,6 +604,7 @@ export function reviewLoopPullRequest(
     number: link.number,
     url: link.url,
     branch: link.snapshot?.headBranch ?? thread.branch,
+    baseBranch: link.snapshot?.baseBranch ?? null,
     state: link.snapshot?.state ?? null,
   };
 }
@@ -2505,12 +2505,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         if (loop === undefined || loop.id !== request.loopId) {
           return yield* reject(`The review loop on #${key.number} is not running.`);
         }
-        const phase: ReviewLoopEndedPhase = {
-          status: "ended",
-          reason: "stopped",
-          reviews: reviewsFinishedBefore(loop.phase),
-          endedAt: DateTime.formatIso(now),
-        };
+        const phase = endedReviewLoopPhase(loop.phase, "stopped", DateTime.formatIso(now));
         yield* emitEvent({
           type: "thread.pull-request-synced",
           threadId: source.id,
@@ -2590,9 +2585,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         role: "author",
         id: loopId,
         reviewThreadId,
-        prompt: request.prompt,
+        ...(request.note === undefined ? {} : { note: request.note }),
         startedAt: DateTime.formatIso(now),
-        phase: { status: "reviewing", round: 1 },
+        phase:
+          request.budget === 3
+            ? { status: "reviewing", budget: 3, round: 1 }
+            : { status: "reviewing", budget: 5, round: 1 },
       };
       yield* emitEvent({
         type: "thread.pull-request-synced",
@@ -2636,10 +2634,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           threadId: reviewThreadId,
           messageId: idAllocator.derive.reviewLoopMessage({ loopId, phase: loop.phase }),
           text: reviewRequestText({
-            prompt: request.prompt,
-            round: 1,
+            from: { status: "scoping", budget: request.budget },
             pullRequest: reviewLoopPullRequest(source, link),
             authorReply: null,
+            note: request.note ?? null,
           }),
           attachments: [],
           senderThreadId: source.id,
@@ -2701,7 +2699,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     ) {
       return yield* reject("The review loop moved on before this step.");
     }
-    if (!isReviewLoopStep(command.from, command.to)) {
+    if (!isReviewLoopStep(loop.phase, command.to)) {
       return yield* reject(
         `A review loop cannot step from ${reviewLoopPhaseKey(command.from)} to ${reviewLoopPhaseKey(command.to)}.`,
       );

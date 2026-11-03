@@ -646,7 +646,6 @@ describe("V2 environment commands", () => {
       const author = {
         role: "author" as const,
         reviewThreadId: ThreadId.make("thread-review"),
-        prompt: "/review #7",
         startedAt: "2026-10-05T00:00:00.000Z",
       };
       const projection: OrchestrationV2ThreadProjection = {
@@ -660,7 +659,7 @@ describe("V2 environment commands", () => {
               reviewLoop: {
                 ...author,
                 id: ReviewLoopId.make("loop-live"),
-                phase: { status: "reviewing", round: 2 },
+                phase: { status: "reviewing", budget: 3, round: 2 },
               },
             },
             {
@@ -671,8 +670,9 @@ describe("V2 environment commands", () => {
                 id: ReviewLoopId.make("loop-ended"),
                 phase: {
                   status: "ended",
-                  reason: "clean",
+                  reason: "approved",
                   reviews: 1,
+                  budget: 3,
                   endedAt: "2026-10-05T01:00:00.000Z",
                 },
               },

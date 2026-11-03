@@ -169,7 +169,7 @@ const start = (
   ...pullRequest,
   createdBy: "user",
   creationSource: "web",
-  request: { type: "start", reviewer: reviewerModel, prompt: "/review #42", ...request },
+  request: { type: "start", reviewer: reviewerModel, budget: 3, ...request },
 });
 
 const stop = (
@@ -246,10 +246,15 @@ const release = (
   loopId,
 });
 
-const ended = (reason: "stopped" | "clean", reviews: 0 | 1 | 2 | 3): ReviewLoopPhase => ({
+const ended = (
+  reason: "stopped" | "approved",
+  reviews: 0 | 1 | 2 | 3,
+  budget: 3 | 5 = 3,
+): ReviewLoopPhase => ({
   status: "ended",
   reason,
   reviews,
+  budget,
   endedAt: "2026-11-02T10:00:00.000Z",
 });
 
@@ -266,8 +271,7 @@ it.layer(layerTest)("review loop commands", (it) => {
         const loop = liveAuthorLoop((yield* linkOf(sourceId))!);
         assert.deepInclude(loop, {
           role: "author",
-          prompt: "/review #42",
-          phase: { status: "reviewing", round: 1 },
+          phase: { status: "reviewing", budget: 3, round: 1 },
         });
         const review = yield* threadOf(loop!.reviewThreadId);
         assert.deepInclude(review.thread, {
@@ -295,7 +299,11 @@ it.layer(layerTest)("review loop commands", (it) => {
           creationSource: "server",
           senderThreadId: sourceId,
         });
-        assert.isTrue(request!.text.startsWith("/review #42\n"));
+        assert.isTrue(
+          request!.text.startsWith(
+            "T3 Code review loop: review 1 of 3 for pull request #42 (https://github.com/pingdotgg/t3code/pull/42).",
+          ),
+        );
         assert.notEqual(review.runs[0]?.status, "queued");
 
         const committed = result.storedEvents.map(({ event }) => `${event.type} ${event.threadId}`);
@@ -500,7 +508,7 @@ it.layer(layerTest)("review loop commands", (it) => {
       const sourceId = ThreadId.make("thread:loop:advance");
       yield* createSource(sourceId);
       const loop = yield* startLoop(sourceId, "advance");
-      const fixing = { status: "fixing", round: 1 } as const;
+      const fixing = { status: "fixing", budget: 3, round: 1, open: [] } as const;
 
       const result = yield* dispatch(
         advance(sourceId, loop, loop.phase, fixing, { target: "source", text: "Review 1 of 3" }),
@@ -525,7 +533,7 @@ it.layer(layerTest)("review loop commands", (it) => {
           sourceId,
           loop,
           fixing,
-          { status: "reviewing", round: 2 },
+          { status: "reviewing", budget: 3, round: 2 },
           {
             target: "review",
             text: "Review 2 of 3",
@@ -544,9 +552,10 @@ it.layer(layerTest)("review loop commands", (it) => {
       const sourceId = ThreadId.make("thread:loop:advance-guards");
       yield* createSource(sourceId);
       const loop = yield* startLoop(sourceId, "advance-guards");
-      const reviewing1 = { status: "reviewing", round: 1 } as const;
-      const fixing1 = { status: "fixing", round: 1 } as const;
-      const reviewing2 = { status: "reviewing", round: 2 } as const;
+      const reviewing1 = { status: "reviewing", budget: 3, round: 1 } as const;
+      const fixing1 = { status: "fixing", budget: 3, round: 1, open: [] } as const;
+      const reviewing2 = { status: "reviewing", budget: 3, round: 2 } as const;
+      const fixing1Of5 = { status: "fixing", budget: 5, round: 1, open: [] } as const;
 
       for (const [name, command] of [
         ["stale", advance(sourceId, loop, fixing1, reviewing2, { target: "review", text: "x" })],
@@ -561,8 +570,23 @@ it.layer(layerTest)("review loop commands", (it) => {
         ["delivery with no message", advance(sourceId, loop, reviewing1, fixing1)],
         [
           "end note into the review thread",
-          advance(sourceId, loop, reviewing1, ended("clean", 1), { target: "review", text: "x" }),
+          advance(sourceId, loop, reviewing1, ended("approved", 1), {
+            target: "review",
+            text: "x",
+          }),
         ],
+        [
+          "a budget raise before review 3",
+          advance(sourceId, loop, reviewing1, fixing1Of5, { target: "source", text: "x" }),
+        ],
+        [
+          "a from that claims budget 5",
+          advance(sourceId, loop, { ...reviewing1, budget: 5 }, fixing1Of5, {
+            target: "source",
+            text: "x",
+          }),
+        ],
+        ["an end in another budget", advance(sourceId, loop, reviewing1, ended("stopped", 0, 5))],
       ] as const) {
         assert.equal(
           yield* refusal({ ...command, commandId: CommandId.make(`advance-guard:${name}`) }),
@@ -624,7 +648,7 @@ it.layer(layerTest)("review loop commands", (it) => {
         const sourceId = ThreadId.make("thread:loop:lock-order");
         yield* createSource(sourceId);
         const loop = yield* startLoop(sourceId, "lock-order");
-        const fixing1 = { status: "fixing", round: 1 } as const;
+        const fixing1 = { status: "fixing", budget: 3, round: 1, open: [] } as const;
         yield* dispatch(
           advance(sourceId, loop, loop.phase, fixing1, { target: "source", text: "Review 1" }),
         );
@@ -643,7 +667,7 @@ it.layer(layerTest)("review loop commands", (it) => {
             sourceId,
             loop,
             fixing1,
-            { status: "reviewing", round: 2 },
+            { status: "reviewing", budget: 3, round: 2 },
             {
               target: "review",
               text: "Review 2",
@@ -659,6 +683,7 @@ it.layer(layerTest)("review loop commands", (it) => {
         yield* Fiber.join(step);
         assert.deepEqual(liveAuthorLoop((yield* linkOf(sourceId))!)?.phase, {
           status: "reviewing",
+          budget: 3,
           round: 2,
         });
       }),

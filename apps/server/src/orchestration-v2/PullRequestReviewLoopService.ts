@@ -5,7 +5,6 @@ import type {
   OrchestrationV2DomainEvent,
   OrchestrationV2Run,
   OrchestrationV2ServerCommand,
-  ReviewLoopEndedPhase,
   ReviewLoopId,
   RunId,
   ThreadId,
@@ -18,7 +17,6 @@ import {
   type LiveReviewLoopAuthor,
   liveAuthorLoop,
   reviewerMarker,
-  reviewsFinishedBefore,
 } from "@t3tools/shared/pullRequestReviewLoop";
 import {
   normalizeThreadPullRequestKey,
@@ -43,9 +41,11 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import {
   awaitedThread,
   decideReviewLoop,
+  endedReviewLoopPhase,
   type ReviewLoopDecision,
   reviewLoopEndText,
   reviewLoopStepProgress,
+  type ReviewThreadFacts,
 } from "./pullRequestReviewLoop.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 
@@ -232,60 +232,71 @@ export const make = Effect.gen(function* () {
     loop: LiveReviewLoopAuthor,
   ) {
     const review = yield* readThread(loop.reviewThreadId);
-    const reviewThread = Option.match(review, {
-      onNone: () => "missing" as const,
-      onSome: (thread) =>
-        thread.deletedAt !== null
-          ? ("deleted" as const)
+    const thread = Option.getOrUndefined(review);
+    const reviewThread: ReviewThreadFacts =
+      thread === undefined
+        ? { status: "missing" }
+        : thread.deletedAt !== null
+          ? { status: "deleted" }
           : thread.archivedAt !== null
-            ? ("archived" as const)
-            : holdsMarker(thread, link, loop.id)
-              ? ("live" as const)
-              : ("missing" as const),
-    });
+            ? { status: "archived" }
+            : !holdsMarker(thread, link, loop.id)
+              ? { status: "missing" }
+              : {
+                  status: "live",
+                  reviewerLabel: yield* reviewerLabel(thread.modelSelection),
+                  reviewerModel: thread.modelSelection.model,
+                };
     const target = awaitedThread(loop, source.id);
     const awaited =
-      target === loop.reviewThreadId && Option.isNone(review)
+      target === loop.reviewThreadId && thread === undefined
         ? { progress: { kind: "missing" as const }, resultText: null }
         : yield* readStep(
             target,
             IdAllocator.derive.reviewLoopMessage({ loopId: loop.id, phase: loop.phase }),
           );
-    const facts = {
-      reviewerLabel: Option.isSome(review)
-        ? yield* reviewerLabel(review.value.modelSelection)
-        : "The reviewer",
-      pullRequest: Orchestrator.reviewLoopPullRequest(source, link),
-      now: DateTime.formatIso(yield* DateTime.now),
-    };
-    const end = <Reason extends ReviewLoopEndedPhase["reason"]>(
-      reason: Reason,
-      reviews: ReviewLoopEndedPhase["reviews"],
-      detail?: string,
-    ): ReviewLoopEndedPhase & { readonly reason: Reason } => ({
-      status: "ended",
-      reason,
-      reviews,
-      ...(detail === undefined ? {} : { detail }),
-      endedAt: facts.now,
-    });
+    const pullRequest = Orchestrator.reviewLoopPullRequest(source, link);
+    const now = DateTime.formatIso(yield* DateTime.now);
+    // The end's own note cannot reach the author, so an approval or a budget end says so on the
+    // chip, where the user still sees it.
     const withProviderOff = (step: Step): Step => {
-      if (step.to.status === "ended") return { kind: "advance", to: step.to };
+      if (step.to.status === "ended") {
+        const { reason, endedAt, detail } = step.to;
+        return {
+          kind: "advance",
+          to:
+            (reason === "approved" || reason === "budget_ended") && detail === undefined
+              ? endedReviewLoopPhase(loop.phase, reason, endedAt, "this thread's provider is off")
+              : step.to,
+        };
+      }
       if (step.to.status === "fixing") {
         return {
           kind: "advance",
-          to: end("fix_failed", step.to.round, "this thread's provider is off for this project"),
+          to: endedReviewLoopPhase(
+            loop.phase,
+            "author_failed",
+            now,
+            "this thread's provider is off for this project",
+          ),
         };
       }
-      const to = end(
+      const to = endedReviewLoopPhase(
+        loop.phase,
         "review_failed",
-        reviewsFinishedBefore(loop.phase),
+        now,
         "the reviewer's provider is off for this project",
       );
       return {
         kind: "advance",
         to,
-        post: { target: "source", text: reviewLoopEndText({ ...facts, to, reviewText: null }) },
+        post: {
+          target: "source",
+          text: reviewLoopEndText(
+            { reason: "review_failed", detail: to.detail ?? null },
+            { ended: to, pullRequest },
+          ),
+        },
       };
     };
     const commit = (
@@ -302,12 +313,12 @@ export const make = Effect.gen(function* () {
           OrchestratorCommandPreviouslyRejectedError: (error) =>
             step.to.status === "ended" && step.to.reason === "aborted"
               ? Effect.fail(error)
-              : commit({ kind: "advance", to: end("aborted", reviewsFinishedBefore(loop.phase)) }),
+              : commit({ kind: "advance", to: endedReviewLoopPhase(loop.phase, "aborted", now) }),
           // Refused before the orchestrator, so no id was burned.
           ThreadManagementProviderInstanceDisabledError: () => commit(withProviderOff(step)),
         }),
       );
-    const decision = decideReviewLoop({ ...facts, ...awaited, loop, reviewThread });
+    const decision = decideReviewLoop({ ...awaited, loop, pullRequest, reviewThread, now });
     return decision.kind === "wait" ? false : yield* commit(decision);
   });
 

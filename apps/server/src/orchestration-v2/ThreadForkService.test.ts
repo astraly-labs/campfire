@@ -231,9 +231,8 @@ it.effect("a fork keeps its source's pull request watches but none of its review
             role: "author",
             id: loopId,
             reviewThreadId: ThreadId.make("thread:fork-source-review"),
-            prompt: "/review #42",
             startedAt: "2026-07-24T09:00:00.000Z",
-            phase: { status: "fixing", round: 1 },
+            phase: { status: "fixing", budget: 3, round: 1, open: [] },
           },
         },
         {

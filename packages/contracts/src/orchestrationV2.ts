@@ -59,9 +59,10 @@ import {
 } from "./checkpointDiff.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import {
+  ReviewLoopBudget,
   ReviewLoopLivePhase,
+  ReviewLoopNote,
   ReviewLoopPhase,
-  ReviewLoopPrompt,
   ThreadLinkedPullRequest,
   ThreadPullRequestLink,
   ThreadPullRequestKey,
@@ -2985,8 +2986,8 @@ export const OrchestrationV2Command = Schema.Union([
     ),
   }),
   /**
-   * Start or stop a review loop: another model reviews the pull request in a review thread, and
-   * this thread's agent works on each review, up to three reviews.
+   * Start or stop a review loop: another model reviews this thread's change in a review thread,
+   * and this thread's agent answers each review, up to `budget` reviews.
    *
    * `start` records the loop on this thread's link, creates the review thread, and sends review
    * request 1, in one transaction. It links the pull request first when `link` is set, like a
@@ -3006,7 +3007,9 @@ export const OrchestrationV2Command = Schema.Union([
       Schema.Struct({
         type: Schema.Literal("start"),
         reviewer: ModelSelection,
-        prompt: ReviewLoopPrompt,
+        /** 5 when the user allows up to 5 reviews. */
+        budget: ReviewLoopBudget,
+        note: Schema.optional(ReviewLoopNote),
         link: Schema.optional(
           Schema.Struct({ url: TrimmedNonEmptyString, source: ThreadPullRequestLinkSource }),
         ),
@@ -3327,8 +3330,8 @@ const OrchestrationV2InternalCommand = Schema.Union([
   }),
   /**
    * Moves review loop `loopId` on this source thread's link from `from` to `to` and sends `post`
-   * in the same transaction. Rejected unless the loop is live in `from` and the step is legal,
-   * so a repeated or stale step changes nothing.
+   * in the same transaction. Rejected unless the loop is live in `from` and `to` is a legal step
+   * from the phase the loop is in now, so a repeated, stale, or forged step changes nothing.
    */
   Schema.Struct({
     type: Schema.Literal("thread.pull-request-review-loop.advance"),
