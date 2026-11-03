@@ -313,9 +313,10 @@ Your agent makes the smallest fix it agrees with, gives evidence where it disagr
 locally, and does not push. Later reviews check only the open findings and the changed code. Click
 **Sent by T3 Code** above a loop message to open the other thread.
 
-A loop runs up to 3 reviews. It extends to 5 by itself when review 3 leaves a blocker or should
-about security, permissions, auth, data loss, or concurrency open. The loop ends as **Approved**
-when the reviewer approves with no blocker or should open. Your agent then pushes once, adds a
+A loop runs up to 3 reviews. It extends to 5 when review 3 still has a blocker or should that the
+reviewer tags as security, permissions, auth, data loss, or concurrency. The loop ends as
+**Approved** when the reviewer writes an approval with no blocker or should open. A review that
+reports only nits but no approval costs one more round. Your agent then pushes once, adds a
 `Reviewed with sol-loop` line to the pull request description, and reports what changed. The loop
 ends as **Needs you** when the reviews run out, or when your agent still disputes a finding that
 the reviewer keeps open. Your agent then shows both sides and does not push. You decide. You get a
