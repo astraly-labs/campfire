@@ -173,6 +173,7 @@ campfire_maintenance_orphan="$campfire_maintenance_home/worktrees/project/orphan
 campfire_maintenance_dirty="$campfire_maintenance_home/worktrees/project/dirty"
 campfire_maintenance_hung_head="$campfire_maintenance_home/worktrees/project/hung-head"
 campfire_maintenance_hung_status="$campfire_maintenance_home/worktrees/project/hung-status"
+campfire_maintenance_interrupted="$campfire_maintenance_home/worktrees/project/interrupted-status"
 campfire_maintenance_bin="$campfire_fixture/maintenance-bin"
 mkdir -p \
   "$campfire_maintenance_home/userdata" \
@@ -190,6 +191,7 @@ EOF
 chmod 700 "$campfire_maintenance_bin/cargo"
 # A git that wedges in two worktrees, like the one that stalled a staging pass for hours.
 # The HEAD read also ignores TERM, as a git stuck in an uninterruptible read would.
+# A failing drive makes status warn and exit 0 with no output, as if the worktree were clean.
 campfire_real_git=$(command -v git)
 export CAMPFIRE_TEST_REAL_GIT="$campfire_real_git"
 cat >"$campfire_maintenance_bin/git" <<'EOF'
@@ -197,6 +199,10 @@ cat >"$campfire_maintenance_bin/git" <<'EOF'
 case "${2:-}:${3:-}" in
   */hung-head:symbolic-ref) trap '' TERM; sleep 10; exit 0 ;;
   */hung-status:status) exec sleep 10 ;;
+  */interrupted-status:status)
+    echo "warning: could not open directory '.': Interrupted system call" >&2
+    exit 0
+    ;;
 esac
 exec "$CAMPFIRE_TEST_REAL_GIT" "$@"
 EOF
@@ -277,6 +283,7 @@ git -C "$campfire_maintenance_source" worktree add -qb orphan "$campfire_mainten
 git -C "$campfire_maintenance_source" worktree add -qb dirty "$campfire_maintenance_dirty"
 git -C "$campfire_maintenance_source" worktree add -qb hung-head "$campfire_maintenance_hung_head"
 git -C "$campfire_maintenance_source" worktree add -qb hung-status "$campfire_maintenance_hung_status"
+git -C "$campfire_maintenance_source" worktree add -qb interrupted-status "$campfire_maintenance_interrupted"
 echo dirty >"$campfire_maintenance_dirty/untracked.txt"
 
 PATH="$campfire_maintenance_bin:$PATH" CAMPFIRE_WORKTREE_GIT_TIMEOUT_SECONDS=1 \
@@ -299,8 +306,11 @@ PATH="$campfire_maintenance_bin:$PATH" CAMPFIRE_WORKTREE_GIT_TIMEOUT_SECONDS=1 \
 [ -d "$campfire_maintenance_dirty" ] || fail "dirty orphan worktree was removed"
 [ -d "$campfire_maintenance_hung_head" ] || fail "worktree with a wedged HEAD read was removed"
 [ -d "$campfire_maintenance_hung_status" ] || fail "worktree with a wedged status was removed"
-grep -q '"skippedUnresponsive":2' "$campfire_fixture/maintenance.stdout" ||
-  fail "summary does not count the two wedged worktrees"
+[ -d "$campfire_maintenance_interrupted" ] || fail "worktree with an interrupted status was removed"
+grep -q "Interrupted system call" "$campfire_fixture/maintenance.stdout" ||
+  fail "git warning did not reach the job log"
+grep -q '"skippedUnresponsive":3' "$campfire_fixture/maintenance.stdout" ||
+  fail "summary does not count the wedged and interrupted worktrees"
 
 # Worktrees kept on another drive, reached through the worktreesDirectory setting.
 campfire_external_root="$campfire_fixture/external-drive/worktrees"

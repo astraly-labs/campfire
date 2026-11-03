@@ -76,13 +76,14 @@ query_db() {
   sqlite3 -cmd '.timeout 5000' "$campfire_database" "$1"
 }
 
-# Runs git in a worktree with a deadline and leaves its stdout in $campfire_tmp/git.out.
+# Runs git in a worktree with a deadline, leaves its output in $campfire_tmp/git.out and
+# $campfire_tmp/git.err, and forwards the errors to the job log.
 # A wedged worktree is reported and skipped instead of stalling every worktree after it.
 run_git() {
   campfire_git_worktree=$1
   shift
-  rm -f "$campfire_tmp/git.out" "$campfire_tmp/git-timed-out"
-  git -C "$campfire_git_worktree" "$@" >"$campfire_tmp/git.out" &
+  rm -f "$campfire_tmp/git.out" "$campfire_tmp/git.err" "$campfire_tmp/git-timed-out"
+  git -C "$campfire_git_worktree" "$@" >"$campfire_tmp/git.out" 2>"$campfire_tmp/git.err" &
   campfire_git_pid=$!
   (
     trap 'kill "$campfire_sleep_pid" 2>/dev/null; exit 0' TERM
@@ -98,6 +99,7 @@ run_git() {
   wait "$campfire_git_pid" || campfire_git_status=$?
   kill -TERM "$campfire_watchdog_pid" 2>/dev/null || true
   wait "$campfire_watchdog_pid" 2>/dev/null || true
+  cat "$campfire_tmp/git.err" >&2
   if [ -e "$campfire_tmp/git-timed-out" ]; then
     campfire_skipped_unresponsive=$((campfire_skipped_unresponsive + 1))
     echo "kept unresponsive worktree: $campfire_git_worktree (git $1 timed out after ${campfire_git_timeout}s)"
@@ -248,6 +250,12 @@ for campfire_worktree in "$@"; do
   run_git "$campfire_worktree" symbolic-ref -q HEAD 2>/dev/null || continue
 
   run_git "$campfire_worktree" status --porcelain --untracked-files=all || continue
+  # A failing drive makes status warn and exit 0 with no output, which reads as clean.
+  if [ -s "$campfire_tmp/git.err" ]; then
+    campfire_skipped_unresponsive=$((campfire_skipped_unresponsive + 1))
+    echo "kept unreadable worktree: $campfire_worktree"
+    continue
+  fi
   if [ -s "$campfire_tmp/git.out" ]; then
     campfire_skipped_dirty=$((campfire_skipped_dirty + 1))
     echo "kept dirty worktree: $campfire_worktree"
