@@ -342,6 +342,8 @@ PATH="$campfire_maintenance_bin:$PATH" CAMPFIRE_TARGET_RETENTION_DAYS=1 \
 [ -d "$campfire_cache_root/old" ] || fail "dry-run removed an old cargo target"
 grep -q "would clean: $campfire_cache_root/old" "$campfire_fixture/maintenance-caches.stdout" ||
   fail "dry-run does not list the old cargo target"
+grep -q '"status":"ok".*"unreadableRoots":0' "$campfire_fixture/maintenance-caches.stdout" ||
+  fail "a folder on an unplugged drive was reported as unreadable"
 PATH="$campfire_maintenance_bin:$PATH" CAMPFIRE_TARGET_RETENTION_DAYS=1 \
   CAMPFIRE_CARGO_TARGET_ROOTS="$campfire_fixture/unplugged-drive/caches:$campfire_cache_root" \
   "$campfire_repo_root/ops/macos/campfire-worktree-maintenance.sh" \
@@ -362,6 +364,28 @@ PATH="$campfire_maintenance_bin:$PATH" \
 [ -d "$campfire_external_busy" ] || fail "worktree in use by a process was removed"
 kill "$campfire_external_busy_pid"
 wait "$campfire_external_busy_pid" 2>/dev/null || true
+
+# macOS privacy controls deny a listing the same way chmod 000 does, and a glob then matches nothing.
+campfire_readable_cache_root="$campfire_fixture/readable-drive/cargo-targets"
+mkdir -p "$campfire_readable_cache_root/old"
+touch "$campfire_readable_cache_root/old/CACHEDIR.TAG"
+touch -t 202001010000 "$campfire_readable_cache_root/old"
+chmod 000 "$campfire_external_root" "$campfire_cache_root"
+campfire_denied_status=0
+PATH="$campfire_maintenance_bin:$PATH" CAMPFIRE_TARGET_RETENTION_DAYS=1 \
+  CAMPFIRE_CARGO_TARGET_ROOTS="$campfire_cache_root:$campfire_readable_cache_root" \
+  "$campfire_repo_root/ops/macos/campfire-worktree-maintenance.sh" \
+  "$campfire_maintenance_home" 7 >"$campfire_fixture/maintenance-denied.stdout" \
+  2>"$campfire_fixture/maintenance-denied.stderr" || campfire_denied_status=$?
+chmod 700 "$campfire_external_root" "$campfire_cache_root"
+[ "$campfire_denied_status" -eq 74 ] || fail "an unreadable folder did not fail the pass ($campfire_denied_status)"
+grep -q '"status":"partial".*"unreadableRoots":2' "$campfire_fixture/maintenance-denied.stdout" ||
+  fail "summary does not count the unreadable folders"
+grep -Fq "$campfire_external_root" "$campfire_fixture/maintenance-denied.stderr" ||
+  fail "unreadable worktree folder is not named"
+grep -Fq "$campfire_cache_root" "$campfire_fixture/maintenance-denied.stderr" ||
+  fail "unreadable cache folder is not named"
+[ ! -e "$campfire_readable_cache_root/old" ] || fail "an unreadable folder stopped the rest of the pass"
 
 expect_failure sh "$campfire_repo_root/scripts/campfire-soak.sh" 0
 plutil -lint "$campfire_repo_root/ops/macos/com.campfire.server.plist.example" >/dev/null
