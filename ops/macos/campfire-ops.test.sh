@@ -302,6 +302,67 @@ PATH="$campfire_maintenance_bin:$PATH" CAMPFIRE_WORKTREE_GIT_TIMEOUT_SECONDS=1 \
 grep -q '"skippedUnresponsive":2' "$campfire_fixture/maintenance.stdout" ||
   fail "summary does not count the two wedged worktrees"
 
+# Worktrees kept on another drive, reached through the worktreesDirectory setting.
+campfire_external_root="$campfire_fixture/external-drive/worktrees"
+campfire_external_orphan="$campfire_external_root/repo/orphan"
+campfire_external_recent="$campfire_external_root/repo/recent"
+campfire_external_busy="$campfire_external_root/repo/busy"
+campfire_external_stale_build="$campfire_external_root/repo/stale-build"
+campfire_cache_root="$campfire_fixture/external-drive/cargo-targets"
+mkdir -p "$campfire_external_root/repo"
+cat >"$campfire_maintenance_home/userdata/settings.json" <<EOF
+{"worktreesDirectory":"$campfire_external_root","previousWorktreesDirectories":["$campfire_fixture/unplugged-drive"]}
+EOF
+git -C "$campfire_maintenance_source" worktree add -qb external-orphan "$campfire_external_orphan"
+git -C "$campfire_maintenance_source" worktree add -qb external-recent "$campfire_external_recent"
+git -C "$campfire_maintenance_source" worktree add -qb external-busy "$campfire_external_busy"
+git -C "$campfire_maintenance_source" worktree add -qb external-stale-build "$campfire_external_stale_build"
+mkdir -p "$campfire_external_stale_build/target" "$campfire_cache_root/old" "$campfire_cache_root/fresh" \
+  "$campfire_cache_root/notes" "$campfire_cache_root/recent-build/debug/deps"
+touch "$campfire_cache_root/old/CACHEDIR.TAG" "$campfire_cache_root/fresh/CACHEDIR.TAG" \
+  "$campfire_cache_root/recent-build/.rustc_info.json"
+touch -t 202001010000 "$campfire_external_stale_build/target" "$campfire_cache_root/old" \
+  "$campfire_cache_root/notes" "$campfire_cache_root/recent-build" "$campfire_cache_root/recent-build/debug"
+mkdir "$campfire_external_recent/target" "$campfire_external_busy/target"
+echo recent >"$campfire_external_recent/target/proof.txt"
+echo busy >"$campfire_external_busy/target/proof.txt"
+(cd "$campfire_external_busy" && exec sleep 60) &
+campfire_external_busy_pid=$!
+
+PATH="$campfire_maintenance_bin:$PATH" \
+  "$campfire_repo_root/ops/macos/campfire-worktree-maintenance.sh" \
+  "$campfire_maintenance_home" 7 >/dev/null 2>&1
+[ -f "$campfire_external_recent/target/proof.txt" ] || fail "target of a recent worktree was cleaned"
+[ -d "$campfire_external_orphan" ] || fail "recent orphan worktree was removed"
+
+PATH="$campfire_maintenance_bin:$PATH" CAMPFIRE_TARGET_RETENTION_DAYS=1 \
+  CAMPFIRE_CARGO_TARGET_ROOTS="$campfire_fixture/unplugged-drive/caches:$campfire_cache_root" \
+  "$campfire_repo_root/ops/macos/campfire-worktree-maintenance.sh" \
+  "$campfire_maintenance_home" 7 --dry-run >"$campfire_fixture/maintenance-caches.stdout" 2>&1
+[ -d "$campfire_cache_root/old" ] || fail "dry-run removed an old cargo target"
+grep -q "would clean: $campfire_cache_root/old" "$campfire_fixture/maintenance-caches.stdout" ||
+  fail "dry-run does not list the old cargo target"
+PATH="$campfire_maintenance_bin:$PATH" CAMPFIRE_TARGET_RETENTION_DAYS=1 \
+  CAMPFIRE_CARGO_TARGET_ROOTS="$campfire_fixture/unplugged-drive/caches:$campfire_cache_root" \
+  "$campfire_repo_root/ops/macos/campfire-worktree-maintenance.sh" \
+  "$campfire_maintenance_home" 7 >/dev/null 2>&1
+[ ! -e "$campfire_external_stale_build/target" ] || fail "old target of a recent worktree was not cleaned"
+[ -d "$campfire_external_stale_build" ] || fail "recent worktree was removed with its old target"
+[ ! -e "$campfire_cache_root/old" ] || fail "old cargo target was not cleaned"
+[ -d "$campfire_cache_root/fresh" ] || fail "fresh cargo target was cleaned"
+[ -d "$campfire_cache_root/notes" ] || fail "folder without a cargo marker was cleaned"
+[ -d "$campfire_cache_root/recent-build" ] || fail "cargo target with a recent build was cleaned"
+
+PATH="$campfire_maintenance_bin:$PATH" \
+  "$campfire_repo_root/ops/macos/campfire-worktree-maintenance.sh" \
+  "$campfire_maintenance_home" 0 >/dev/null 2>&1
+[ ! -e "$campfire_external_orphan" ] || fail "orphan worktree on the configured drive was not removed"
+[ ! -e "$campfire_external_recent/target" ] || fail "old target on the configured drive was not cleaned"
+[ -f "$campfire_external_busy/target/proof.txt" ] || fail "target of a worktree in use by a process was cleaned"
+[ -d "$campfire_external_busy" ] || fail "worktree in use by a process was removed"
+kill "$campfire_external_busy_pid"
+wait "$campfire_external_busy_pid" 2>/dev/null || true
+
 expect_failure sh "$campfire_repo_root/scripts/campfire-soak.sh" 0
 plutil -lint "$campfire_repo_root/ops/macos/com.campfire.server.plist.example" >/dev/null
 plutil -lint "$campfire_repo_root/ops/macos/com.campfire.provider-host.plist.example" >/dev/null

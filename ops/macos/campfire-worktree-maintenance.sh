@@ -15,6 +15,10 @@ fi
 campfire_home=$1
 campfire_retention_days=$2
 campfire_dry_run=${3:-}
+# Build caches regrow on the next build, so they can expire sooner than worktrees.
+campfire_target_retention_days=${CAMPFIRE_TARGET_RETENTION_DAYS:-$campfire_retention_days}
+# Colon-separated folders whose direct children are Cargo target directories.
+campfire_cargo_target_roots=${CAMPFIRE_CARGO_TARGET_ROOTS:-}
 # Seconds one git command may run before its worktree is skipped for this pass.
 campfire_git_timeout=${CAMPFIRE_WORKTREE_GIT_TIMEOUT_SECONDS:-60}
 case "$campfire_home:$campfire_retention_days:$campfire_dry_run" in
@@ -24,17 +28,20 @@ esac
 case "$campfire_retention_days" in
   ''|*[!0-9]*) fail "retention-days must be a non-negative integer" ;;
 esac
+case "$campfire_target_retention_days" in
+  ''|*[!0-9]*) fail "CAMPFIRE_TARGET_RETENTION_DAYS must be a non-negative integer" ;;
+esac
 case "$campfire_git_timeout" in
   ''|*[!0-9]*|0) fail "CAMPFIRE_WORKTREE_GIT_TIMEOUT_SECONDS must be a positive integer" ;;
 esac
 
 campfire_database="$campfire_home/userdata/statev2.sqlite"
-campfire_worktree_root="$campfire_home/worktrees"
+campfire_settings="$campfire_home/userdata/settings.json"
 campfire_lock="$campfire_home/userdata/.worktree-maintenance.lock"
 [ -f "$campfire_database" ] || fail "database not found: $campfire_database"
-[ -d "$campfire_worktree_root" ] || exit 0
 command -v sqlite3 >/dev/null 2>&1 || fail "sqlite3 is required"
 command -v git >/dev/null 2>&1 || fail "git is required"
+command -v lsof >/dev/null 2>&1 || fail "lsof is required"
 # Never take index.lock in an agent's worktree, so a git killed on timeout leaves nothing behind.
 export GIT_OPTIONAL_LOCKS=0
 
@@ -53,6 +60,7 @@ trap ':' USR1
 
 campfire_now=$(date +%s)
 campfire_cutoff=$((campfire_now - campfire_retention_days * 86400))
+campfire_target_cutoff=$((campfire_now - campfire_target_retention_days * 86400))
 campfire_cleaned=0
 campfire_removed=0
 campfire_skipped_active=0
@@ -126,16 +134,70 @@ is_active_worktree() {
   [ "$campfire_active_count" -gt 0 ]
 }
 
-for campfire_worktree in "$campfire_worktree_root"/*/*; do
-  [ -d "$campfire_worktree" ] || continue
+# Every directory holding managed worktrees, as the server's managedWorktreesDirectories
+# reads them. A drive that is not mounted only skips its own worktrees.
+list_worktree_roots() {
+  echo "$campfire_home/worktrees"
+  [ -f "$campfire_settings" ] || return 0
+  campfire_settings_sql=$(sql_quote "$campfire_settings")
+  sqlite3 :memory: "
+    SELECT json_extract(readfile('$campfire_settings_sql'), '\$.worktreesDirectory')
+    UNION ALL
+    SELECT value FROM json_each(readfile('$campfire_settings_sql'), '\$.previousWorktreesDirectories');" ||
+    fail "could not read worktree directories from $campfire_settings"
+}
 
-  if is_active_worktree "$campfire_worktree"; then
+# Agents also create and use worktrees by hand, so no thread vouches for those.
+newest_mtime() {
+  campfire_newest=0
+  for campfire_path in "$@"; do
+    [ -e "$campfire_path" ] || continue
+    campfire_mtime=$(stat -f '%m' "$campfire_path" 2>/dev/null || stat -c '%Y' "$campfire_path")
+    [ "$campfire_mtime" -le "$campfire_newest" ] || campfire_newest=$campfire_mtime
+  done
+  echo "$campfire_newest"
+}
+
+# A build rewrites these folders; the target's own top level can stay untouched for days.
+target_is_stale() {
+  [ "$(newest_mtime "$1" "$1/debug" "$1/debug/deps" "$1/debug/.fingerprint" \
+    "$1/release" "$1/release/deps" "$1/release/.fingerprint")" -le "$campfire_target_cutoff" ]
+}
+
+# Anything a process runs from, such as a long QA run or a build in a hand-made worktree.
+is_process_cwd() {
+  campfire_real_worktree=$(cd "$1" && pwd -P) || return 0
+  grep -Fq "n$campfire_real_worktree/" "$campfire_tmp/process-cwds"
+}
+
+lsof -b -w -d cwd -Fn 2>/dev/null | sed -n 's|^\(n/.*\)$|\1/|p' >"$campfire_tmp/process-cwds" || true
+# This pass has a cwd of its own: an empty list means lsof failed, not that nothing runs.
+[ -s "$campfire_tmp/process-cwds" ] || fail "could not list process working directories"
+
+list_worktree_roots >"$campfire_tmp/roots"
+set --
+while IFS= read -r campfire_root <&3; do
+  case "$campfire_root" in
+    '~') campfire_root=$HOME ;;
+    '~/'*) campfire_root="$HOME/${campfire_root#'~/'}" ;;
+  esac
+  case "$campfire_root" in
+    /?*) [ -d "$campfire_root" ] || continue ;;
+    *) continue ;;
+  esac
+  for campfire_worktree in "$campfire_root"/*/*; do
+    [ -d "$campfire_worktree" ] && set -- "$@" "$campfire_worktree"
+  done
+done 3<"$campfire_tmp/roots"
+
+for campfire_worktree in "$@"; do
+  if is_active_worktree "$campfire_worktree" || is_process_cwd "$campfire_worktree"; then
     campfire_skipped_active=$((campfire_skipped_active + 1))
     continue
   fi
 
   campfire_target="$campfire_worktree/target"
-  if [ -d "$campfire_target" ]; then
+  if [ -d "$campfire_target" ] && target_is_stale "$campfire_target"; then
     if [ "$campfire_dry_run" = "--dry-run" ]; then
       echo "would clean: $campfire_target"
     elif [ -f "$campfire_worktree/Cargo.toml" ] &&
@@ -160,12 +222,15 @@ for campfire_worktree in "$campfire_worktree_root"/*/*; do
   campfire_last_activity=${campfire_thread_metadata#*|}
   campfire_live_threads=${campfire_live_threads:-0}
   campfire_last_activity=${campfire_last_activity:-0}
-  [ "$campfire_live_threads" -eq 0 ] || continue
 
-  if [ "$campfire_last_activity" -eq 0 ]; then
-    campfire_last_activity=$(stat -f '%m' "$campfire_worktree" 2>/dev/null || stat -c '%Y' "$campfire_worktree")
-  fi
+  campfire_gitdir=$(sed -n 's/^gitdir: //p' "$campfire_worktree/.git" 2>/dev/null || true)
+  campfire_disk_activity=$(newest_mtime "$campfire_worktree" \
+    "$campfire_gitdir/index" "$campfire_gitdir/HEAD" "$campfire_gitdir/logs/HEAD")
+  [ "$campfire_disk_activity" -le "$campfire_last_activity" ] ||
+    campfire_last_activity=$campfire_disk_activity
   [ "$campfire_last_activity" -le "$campfire_cutoff" ] || continue
+
+  [ "$campfire_live_threads" -eq 0 ] || continue
   [ -e "$campfire_worktree/.git" ] || continue
   run_git "$campfire_worktree" symbolic-ref -q HEAD 2>/dev/null || continue
 
@@ -184,6 +249,31 @@ for campfire_worktree in "$campfire_worktree_root"/*/*; do
     continue
   fi
   campfire_removed=$((campfire_removed + 1))
+done
+
+campfire_roots_left=$campfire_cargo_target_roots
+while [ -n "$campfire_roots_left" ]; do
+  campfire_root=${campfire_roots_left%%:*}
+  case "$campfire_roots_left" in
+    *:*) campfire_roots_left=${campfire_roots_left#*:} ;;
+    *) campfire_roots_left= ;;
+  esac
+  for campfire_target in "$campfire_root"/*; do
+    # Cargo leaves these markers, so nothing else in the folder can be mistaken for a cache.
+    [ -f "$campfire_target/CACHEDIR.TAG" ] || [ -f "$campfire_target/.rustc_info.json" ] || continue
+    if is_process_cwd "$campfire_target"; then
+      campfire_skipped_active=$((campfire_skipped_active + 1))
+      continue
+    fi
+    target_is_stale "$campfire_target" || continue
+    if [ "$campfire_dry_run" = "--dry-run" ]; then
+      echo "would clean: $campfire_target"
+    else
+      rm -rf "$campfire_target"
+      echo "cleaned: $campfire_target"
+    fi
+    campfire_cleaned=$((campfire_cleaned + 1))
+  done
 done
 
 printf '{"status":"ok","dryRun":%s,"cleaned":%s,"removed":%s,"skippedActive":%s,"skippedDirty":%s,"skippedUnresponsive":%s}\n' \
