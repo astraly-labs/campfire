@@ -651,13 +651,20 @@ const make = Effect.gen(function* () {
       case "thread.pull-request.review-loop": {
         const request = command.request;
         if (request.type !== "start") return Effect.void;
+        // The start posts the brief request into the source thread, and review 1 runs on the
+        // reviewer's instance, so a loop that cannot run both never starts.
         return orchestrator.getThreadRecords(command.threadId, []).pipe(
           Effect.flatMap((source) =>
-            assertProviderInstanceEnabled({
-              projectId: source.thread.projectId,
-              commandId: command.commandId,
-              instanceId: request.reviewer.instanceId,
-            }),
+            Effect.forEach(
+              [request.reviewer.instanceId, source.thread.modelSelection.instanceId],
+              (instanceId) =>
+                assertProviderInstanceEnabled({
+                  projectId: source.thread.projectId,
+                  commandId: command.commandId,
+                  instanceId,
+                }),
+              { discard: true },
+            ),
           ),
         );
       }

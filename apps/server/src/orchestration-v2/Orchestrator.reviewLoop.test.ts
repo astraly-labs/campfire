@@ -9,6 +9,7 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  ReviewLoopFindingId,
   type ReviewLoopLivePhase,
   type ReviewLoopPhase,
   ThreadId,
@@ -46,6 +47,7 @@ const reviewerModel = {
 } satisfies ModelSelection;
 const projectId = ProjectId.make("project:review-loop");
 const reviewerOffProjectId = ProjectId.make("project:review-loop:reviewer-off");
+const authorOffProjectId = ProjectId.make("project:review-loop:author-off");
 const pullRequest = { host: "github.com", repository: "pingdotgg/t3code", number: 42 };
 const pullRequestUrl = "https://github.com/pingdotgg/t3code/pull/42";
 
@@ -80,6 +82,9 @@ const layerTest = ThreadManagementService.layer.pipe(
       projectSettingsOverrides: {
         [reviewerOffProjectId]: {
           providerInstances: { [reviewerModel.instanceId]: { enabled: false } },
+        },
+        [authorOffProjectId]: {
+          providerInstances: { [authorModel.instanceId]: { enabled: false } },
         },
       },
     }),
@@ -198,6 +203,20 @@ const linkOf = (threadId: ThreadId) =>
       projection.thread.pullRequests?.find((link) => link.number === pullRequest.number) ?? null,
   );
 
+const loopMessages = (threadId: ThreadId) =>
+  Effect.map(threadOf(threadId), (projection) =>
+    projection.messages.filter(
+      (message) =>
+        message.role === "user" &&
+        message.createdBy === "agent" &&
+        message.creationSource === "server",
+    ),
+  );
+
+const scoping = { status: "scoping", budget: 3 } as const;
+const reviewing1 = { status: "reviewing", budget: 3, round: 1 } as const;
+const openS1 = [{ id: ReviewLoopFindingId.make("S1"), severity: "should" }] as const;
+
 const startLoop = (threadId: ThreadId, name: string) =>
   Effect.gen(function* () {
     yield* dispatch(start(threadId, name));
@@ -260,7 +279,7 @@ const ended = (
 
 it.layer(layerTest)("review loop commands", (it) => {
   it.effect(
-    "a start records the loop, creates the review thread, and sends review request 1 in one commit",
+    "a start records the brief turn, creates the review thread, and asks this thread for the brief in one commit",
     () =>
       Effect.gen(function* () {
         const sourceId = ThreadId.make("thread:loop:start");
@@ -269,10 +288,8 @@ it.layer(layerTest)("review loop commands", (it) => {
         const result = yield* dispatch(command);
 
         const loop = liveAuthorLoop((yield* linkOf(sourceId))!);
-        assert.deepInclude(loop, {
-          role: "author",
-          phase: { status: "reviewing", budget: 3, round: 1 },
-        });
+        assert.deepInclude(loop, { role: "author", phase: scoping });
+        assert.notProperty(loop, "note");
         const review = yield* threadOf(loop!.reviewThreadId);
         assert.deepInclude(review.thread, {
           kind: "review",
@@ -292,31 +309,54 @@ it.layer(layerTest)("review loop commands", (it) => {
           id: loop!.id,
           sourceThreadId: sourceId,
         });
-        const request = review.messages.find((message) => message.role === "user");
-        assert.deepInclude(request, {
-          id: IdAllocator.derive.reviewLoopMessage({ loopId: loop!.id, phase: loop!.phase }),
-          createdBy: "agent",
-          creationSource: "server",
-          senderThreadId: sourceId,
+        assert.lengthOf(review.messages, 0);
+        const [brief] = yield* loopMessages(sourceId);
+        assert.deepInclude(brief, {
+          id: IdAllocator.derive.reviewLoopMessage({ loopId: loop!.id, phase: scoping }),
+          senderThreadId: loop!.reviewThreadId,
         });
-        assert.isTrue(
-          request!.text.startsWith(
-            "T3 Code review loop: review 1 of 3 for pull request #42 (https://github.com/pingdotgg/t3code/pull/42).",
-          ),
+        assert.isTrue(brief!.id.endsWith(":scoping"));
+        assert.strictEqual(
+          brief!.text.split("\n")[0],
+          "**Review loop started** for #42. Composer 1 reviews this change, up to 3 reviews.",
         );
-        assert.notEqual(review.runs[0]?.status, "queued");
+        assert.include(brief!.text, "`git merge-base HEAD origin/<default branch>`");
 
         const committed = result.storedEvents.map(({ event }) => `${event.type} ${event.threadId}`);
         assert.includeMembers(committed, [
           `thread.pull-request-synced ${sourceId}`,
           `thread.created ${loop!.reviewThreadId}`,
-          `message.updated ${loop!.reviewThreadId}`,
+          `message.updated ${sourceId}`,
         ]);
 
         const replay = yield* dispatch(command);
         assert.equal(replay.sequence, result.sequence);
-        assert.lengthOf((yield* threadOf(loop!.reviewThreadId)).messages, 1);
+        assert.lengthOf(yield* loopMessages(sourceId), 1);
+        assert.lengthOf((yield* threadOf(loop!.reviewThreadId)).messages, 0);
         assert.deepEqual(liveAuthorLoop((yield* linkOf(sourceId))!), loop);
+      }),
+  );
+
+  it.effect(
+    "a start keeps the budget and the note, and the brief request leaves the note out",
+    () =>
+      Effect.gen(function* () {
+        const sourceId = ThreadId.make("thread:loop:start-five");
+        yield* createSource(sourceId);
+        yield* syncSnapshot(sourceId, {});
+        yield* dispatch(
+          start(sourceId, "start-five", { budget: 5, note: "Look hard at the retry path." }),
+        );
+
+        const loop = liveAuthorLoop((yield* linkOf(sourceId))!);
+        assert.deepInclude(loop, {
+          note: "Look hard at the retry path.",
+          phase: { status: "scoping", budget: 5 },
+        });
+        const [brief] = yield* loopMessages(sourceId);
+        assert.include(brief!.text.split("\n")[0], "up to 5 reviews.");
+        assert.include(brief!.text, "`git merge-base HEAD origin/main`");
+        assert.notInclude(brief!.text, "Look hard at the retry path.");
       }),
   );
 
@@ -451,17 +491,29 @@ it.layer(layerTest)("review loop commands", (it) => {
     }),
   );
 
-  it.effect("a start is refused before the orchestrator when the reviewer's provider is off", () =>
-    Effect.gen(function* () {
-      const threads = yield* ThreadManagementService.ThreadManagementService;
-      const sourceId = ThreadId.make("thread:loop:reviewer-off");
-      yield* createSource(sourceId, { projectId: reviewerOffProjectId });
-      const command = start(sourceId, "reviewer-off");
+  it.effect(
+    "a start is refused before the orchestrator when the reviewer's or this thread's provider is off",
+    () =>
+      Effect.gen(function* () {
+        const threads = yield* ThreadManagementService.ThreadManagementService;
+        for (const [name, offProjectId] of [
+          ["reviewer-off", reviewerOffProjectId],
+          ["author-off", authorOffProjectId],
+        ] as const) {
+          const sourceId = ThreadId.make(`thread:loop:${name}`);
+          yield* createSource(sourceId, { projectId: offProjectId });
+          const command = start(sourceId, name);
 
-      assert.equal(yield* refusal(command), "ThreadManagementProviderInstanceDisabledError");
-      assert.isFalse(yield* threads.hasReceipt(command.commandId));
-      assert.isUndefined((yield* linkOf(sourceId))?.reviewLoop);
-    }),
+          assert.equal(
+            yield* refusal(command),
+            "ThreadManagementProviderInstanceDisabledError",
+            name,
+          );
+          assert.isFalse(yield* threads.hasReceipt(command.commandId), name);
+          assert.isUndefined((yield* linkOf(sourceId))?.reviewLoop, name);
+          assert.lengthOf(yield* loopMessages(sourceId), 0, name);
+        }
+      }),
   );
 
   it.effect("a stop ends the live loop and keeps the pull request watch", () =>
@@ -494,6 +546,7 @@ it.layer(layerTest)("review loop commands", (it) => {
         status: "ended",
         reason: "stopped",
         reviews: 0,
+        budget: 3,
       });
       assert.isDefined(link?.watch);
       assert.equal(
@@ -508,17 +561,35 @@ it.layer(layerTest)("review loop commands", (it) => {
       const sourceId = ThreadId.make("thread:loop:advance");
       yield* createSource(sourceId);
       const loop = yield* startLoop(sourceId, "advance");
-      const fixing = { status: "fixing", budget: 3, round: 1, open: [] } as const;
+      const fixing1 = { status: "fixing", budget: 3, round: 1, open: openS1 } as const;
 
-      const result = yield* dispatch(
-        advance(sourceId, loop, loop.phase, fixing, { target: "source", text: "Review 1 of 3" }),
+      yield* dispatch(
+        advance(sourceId, loop, loop.phase, reviewing1, {
+          target: "review",
+          text: "Review 1 of 3",
+        }),
       );
-      assert.deepEqual(liveAuthorLoop((yield* linkOf(sourceId))!)?.phase, fixing);
-      const delivery = (yield* threadOf(sourceId)).messages.find(
+      const request = (yield* threadOf(loop.reviewThreadId)).messages.find(
         (message) => message.text === "Review 1 of 3",
       );
+      assert.deepInclude(request, {
+        id: IdAllocator.derive.reviewLoopMessage({ loopId: loop.id, phase: reviewing1 }),
+        senderThreadId: sourceId,
+        createdBy: "agent",
+      });
+
+      const result = yield* dispatch(
+        advance(sourceId, loop, reviewing1, fixing1, {
+          target: "source",
+          text: "Review 1 relayed",
+        }),
+      );
+      assert.deepEqual(liveAuthorLoop((yield* linkOf(sourceId))!)?.phase, fixing1);
+      const delivery = (yield* threadOf(sourceId)).messages.find(
+        (message) => message.text === "Review 1 relayed",
+      );
       assert.deepInclude(delivery, {
-        id: IdAllocator.derive.reviewLoopMessage({ loopId: loop.id, phase: fixing }),
+        id: IdAllocator.derive.reviewLoopMessage({ loopId: loop.id, phase: fixing1 }),
         createdBy: "agent",
         creationSource: "server",
         senderThreadId: loop.reviewThreadId,
@@ -527,23 +598,31 @@ it.layer(layerTest)("review loop commands", (it) => {
         result.storedEvents.map(({ event }) => `${event.type} ${event.threadId}`),
         [`thread.pull-request-synced ${sourceId}`, `message.updated ${sourceId}`],
       );
+    }),
+  );
 
-      yield* dispatch(
-        advance(
-          sourceId,
-          loop,
-          fixing,
-          { status: "reviewing", budget: 3, round: 2 },
-          {
-            target: "review",
-            text: "Review 2 of 3",
-          },
-        ),
-      );
-      const request = (yield* threadOf(loop.reviewThreadId)).messages.find(
-        (message) => message.text === "Review 2 of 3",
-      );
-      assert.deepInclude(request, { senderThreadId: sourceId, createdBy: "agent" });
+  it.effect("an advance takes review 3 of 3 to fix 3 of 5, and the loop runs on to review 4", () =>
+    Effect.gen(function* () {
+      const sourceId = ThreadId.make("thread:loop:extension");
+      yield* createSource(sourceId);
+      const loop = yield* startLoop(sourceId, "extension");
+      const steps: ReadonlyArray<readonly [ReviewLoopLivePhase, "source" | "review"]> = [
+        [reviewing1, "review"],
+        [{ status: "fixing", budget: 3, round: 1, open: [] }, "source"],
+        [{ status: "reviewing", budget: 3, round: 2 }, "review"],
+        [{ status: "fixing", budget: 3, round: 2, open: [] }, "source"],
+        [{ status: "reviewing", budget: 3, round: 3 }, "review"],
+        [{ status: "fixing", budget: 5, round: 3, open: openS1 }, "source"],
+        [{ status: "reviewing", budget: 5, round: 4 }, "review"],
+      ];
+      let from: ReviewLoopLivePhase = loop.phase;
+      for (const [to, target] of steps) {
+        yield* dispatch(
+          advance(sourceId, loop, from, to, { target, text: `Step to ${to.status}` }),
+        );
+        assert.deepEqual(liveAuthorLoop((yield* linkOf(sourceId))!)?.phase, to);
+        from = to;
+      }
     }),
   );
 
@@ -552,8 +631,17 @@ it.layer(layerTest)("review loop commands", (it) => {
       const sourceId = ThreadId.make("thread:loop:advance-guards");
       yield* createSource(sourceId);
       const loop = yield* startLoop(sourceId, "advance-guards");
-      const reviewing1 = { status: "reviewing", budget: 3, round: 1 } as const;
       const fixing1 = { status: "fixing", budget: 3, round: 1, open: [] } as const;
+      assert.equal(
+        yield* refusal({
+          ...advance(sourceId, loop, scoping, fixing1, { target: "source", text: "x" }),
+          commandId: CommandId.make("advance-guard:skips review 1"),
+        }),
+        "OrchestratorDispatchError",
+      );
+      yield* dispatch(
+        advance(sourceId, loop, scoping, reviewing1, { target: "review", text: "Review 1" }),
+      );
       const reviewing2 = { status: "reviewing", budget: 3, round: 2 } as const;
       const fixing1Of5 = { status: "fixing", budget: 5, round: 1, open: [] } as const;
 
@@ -641,17 +729,13 @@ it.layer(layerTest)("review loop commands", (it) => {
   );
 
   it.effect(
-    "an advance into the review thread takes the source thread's lock before the review thread's",
+    "the step from the brief into review 1 takes the source thread's lock before the review thread's",
     () =>
       Effect.gen(function* () {
         const locks = yield* ThreadCommandExecutor.ThreadCommandExecutor;
         const sourceId = ThreadId.make("thread:loop:lock-order");
         yield* createSource(sourceId);
         const loop = yield* startLoop(sourceId, "lock-order");
-        const fixing1 = { status: "fixing", budget: 3, round: 1, open: [] } as const;
-        yield* dispatch(
-          advance(sourceId, loop, loop.phase, fixing1, { target: "source", text: "Review 1" }),
-        );
 
         const held = yield* Deferred.make<void>();
         const released = yield* Deferred.make<void>();
@@ -663,29 +747,16 @@ it.layer(layerTest)("review loop commands", (it) => {
           .pipe(Effect.forkChild);
         yield* Deferred.await(held);
         const step = yield* dispatch(
-          advance(
-            sourceId,
-            loop,
-            fixing1,
-            { status: "reviewing", budget: 3, round: 2 },
-            {
-              target: "review",
-              text: "Review 2",
-            },
-          ),
+          advance(sourceId, loop, scoping, reviewing1, { target: "review", text: "Review 1" }),
         ).pipe(Effect.forkChild);
         yield* Effect.yieldNow;
 
         assert.includeMembers([...(yield* locks.activeKeys)], [sourceId, loop.reviewThreadId]);
-        assert.deepEqual(liveAuthorLoop((yield* linkOf(sourceId))!)?.phase, fixing1);
+        assert.deepEqual(liveAuthorLoop((yield* linkOf(sourceId))!)?.phase, scoping);
         yield* Deferred.succeed(released, undefined);
         yield* Fiber.join(holder);
         yield* Fiber.join(step);
-        assert.deepEqual(liveAuthorLoop((yield* linkOf(sourceId))!)?.phase, {
-          status: "reviewing",
-          budget: 3,
-          round: 2,
-        });
+        assert.deepEqual(liveAuthorLoop((yield* linkOf(sourceId))!)?.phase, reviewing1);
       }),
   );
 
@@ -751,7 +822,7 @@ it.layer(layerTest)("review loop commands", (it) => {
   );
 
   it.effect(
-    "archive, settle, Stop, and a stack unlink end the source's loop as stopped and keep the marker",
+    "archive, Stop, and a stack unlink end the source's loop as stopped and keep the marker",
     () =>
       Effect.gen(function* () {
         const stack: ThreadPullRequestStack = {
@@ -765,7 +836,7 @@ it.layer(layerTest)("review loop commands", (it) => {
             { number: 42, headBranch: "feature/login", state: "open" },
           ],
         };
-        for (const name of ["archive", "settle", "stop", "stack-unlink"] as const) {
+        for (const name of ["archive", "stop", "stack-unlink"] as const) {
           const sourceId = ThreadId.make(`thread:loop:ends-on-${name}`);
           yield* createSource(sourceId);
           if (name === "stack-unlink") yield* syncSnapshot(sourceId, {}, stack);
@@ -774,16 +845,14 @@ it.layer(layerTest)("review loop commands", (it) => {
           yield* dispatch(
             name === "archive"
               ? { type: "thread.archive", commandId, threadId: sourceId }
-              : name === "settle"
-                ? { type: "thread.settle", commandId, threadId: sourceId }
-                : name === "stop"
-                  ? { type: "thread.stop", commandId, threadId: sourceId }
-                  : {
-                      type: "thread.pull-request.unlink",
-                      commandId,
-                      threadId: sourceId,
-                      ...pullRequest,
-                    },
+              : name === "stop"
+                ? { type: "thread.stop", commandId, threadId: sourceId }
+                : {
+                    type: "thread.pull-request.unlink",
+                    commandId,
+                    threadId: sourceId,
+                    ...pullRequest,
+                  },
           );
 
           const record = (yield* linkOf(sourceId))?.reviewLoop;
@@ -795,6 +864,24 @@ it.layer(layerTest)("review loop commands", (it) => {
           assert.equal(reviewerMarker((yield* linkOf(loop.reviewThreadId))!)?.id, loop.id, name);
         }
       }),
+  );
+
+  it.effect("settling is refused while the source writes the brief, and the loop stays live", () =>
+    Effect.gen(function* () {
+      const sourceId = ThreadId.make("thread:loop:settle-during-brief");
+      yield* createSource(sourceId);
+      const loop = yield* startLoop(sourceId, "settle-during-brief");
+
+      assert.equal(
+        yield* refusal({
+          type: "thread.settle",
+          commandId: CommandId.make("settle-during-brief"),
+          threadId: sourceId,
+        }),
+        "OrchestratorDispatchError",
+      );
+      assert.deepEqual(liveAuthorLoop((yield* linkOf(sourceId))!), loop);
+    }),
   );
 
   it.effect("Stop in the review thread keeps its marker and the source's loop", () =>
