@@ -41,7 +41,6 @@ const author = (phase: ReviewLoopPhase) =>
     role: "author",
     id: ReviewLoopId.make("loop-1"),
     reviewThreadId: ThreadId.make("thread-review"),
-    prompt: "/review #42",
     startedAt: STARTED_AT,
     phase,
   }) as const;
@@ -94,7 +93,9 @@ describe("canStartReviewLoop", () => {
   });
 
   it("hides the loop while one is live on any link of the thread", () => {
-    const live = link(41, { reviewLoop: author({ status: "fixing", round: 1 }) });
+    const live = link(41, {
+      reviewLoop: author({ status: "fixing", budget: 3, round: 1, open: [] }),
+    });
     expect(start({ thread: { branch: "fix-login", pullRequests: [live, link(42)] } })).toBe(false);
   });
 
@@ -111,7 +112,13 @@ describe("canStartReviewLoop", () => {
 
   it("offers a new loop once the last one ended", () => {
     const ended = link(42, {
-      reviewLoop: author({ status: "ended", reason: "clean", reviews: 2, endedAt: STARTED_AT }),
+      reviewLoop: author({
+        status: "ended",
+        reason: "approved",
+        reviews: 2,
+        budget: 3,
+        endedAt: STARTED_AT,
+      }),
     });
     expect(start({ thread: { branch: "fix-login", pullRequests: [ended] } })).toBe(true);
   });

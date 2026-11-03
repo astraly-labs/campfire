@@ -127,31 +127,53 @@ export const ThreadPullRequestWatch = Schema.Struct({
 });
 export type ThreadPullRequestWatch = typeof ThreadPullRequestWatch.Type;
 
-export const ReviewLoopReviewRound = Schema.Literals([1, 2, 3]);
-export type ReviewLoopReviewRound = typeof ReviewLoopReviewRound.Type;
+/**
+ * How many reviews a loop may run. 5 when the user allows it at start, or when review 3 of 3
+ * leaves a blocker or should with a risk area open.
+ */
+export const ReviewLoopBudget = Schema.Literals([3, 5]);
+export type ReviewLoopBudget = typeof ReviewLoopBudget.Type;
 
-export const ReviewLoopFixRound = Schema.Literals([1, 2]);
-export type ReviewLoopFixRound = typeof ReviewLoopFixRound.Type;
+/** A finding id as the reviewer numbers it, such as `S2`. */
+export const ReviewLoopFindingId = Schema.String.check(Schema.isPattern(/^S[1-9]\d*$/)).pipe(
+  Schema.brand("ReviewLoopFindingId"),
+);
+export type ReviewLoopFindingId = typeof ReviewLoopFindingId.Type;
+
+/** `unknown` is a severity the server could not read. It blocks approval like a should. */
+export const ReviewLoopFindingSeverity = Schema.Literals(["blocker", "should", "nit", "unknown"]);
+export type ReviewLoopFindingSeverity = typeof ReviewLoopFindingSeverity.Type;
+
+export const ReviewLoopFindingRef = Schema.Struct({
+  id: ReviewLoopFindingId,
+  severity: ReviewLoopFindingSeverity,
+});
+export type ReviewLoopFindingRef = typeof ReviewLoopFindingRef.Type;
+
+/** What the review being answered left open, nits included, in id order. */
+const ReviewLoopOpenFindings = Schema.Array(ReviewLoopFindingRef).check(Schema.isMaxLength(40));
 
 /**
  * Why a review loop ended. Clients derive the outcome they show from it
  * (`@t3tools/shared/pullRequestReviewLoop`), so the outcome is never stored beside it.
  */
 export const ReviewLoopEndReason = Schema.Literals([
-  /** A review ended with the clean verdict line. */
-  "clean",
-  /** Review 3 was not clean. */
-  "needs_human",
+  /** The reviewer wrote APPROVE and left no blocker or should open. */
+  "approved",
+  /** The last review of the budget was not approved. */
+  "budget_ended",
+  /** The author still disputes a finding that the reviewer kept open after its last reply. */
+  "stuck",
   /** The user stopped the loop, or stopped, archived, settled, or unlinked the source thread. */
   "stopped",
   /** The review run stopped, its queue is paused, or the review thread is gone. */
   "review_stopped",
   /** The review run failed, ended without a message, or its provider is off. */
   "review_failed",
-  /** The fix run stopped, or its queue is paused. */
-  "fix_stopped",
-  /** The fix run failed, or its provider is off. */
-  "fix_failed",
+  /** The brief or a fix stopped, or its queue is paused. */
+  "author_stopped",
+  /** The brief or a fix failed, or this thread's provider is off. */
+  "author_failed",
   "pr_merged",
   "pr_closed",
   /** A step could not commit, or the message the loop waited for is gone. */
@@ -159,45 +181,84 @@ export const ReviewLoopEndReason = Schema.Literals([
 ]);
 export type ReviewLoopEndReason = typeof ReviewLoopEndReason.Type;
 
-const ReviewLoopReviewing = Schema.Struct({
-  status: Schema.Literal("reviewing"),
-  round: ReviewLoopReviewRound,
+/** The author's turn before review 1, in which it writes the review brief. */
+const ReviewLoopScoping = Schema.Struct({
+  status: Schema.Literal("scoping"),
+  budget: ReviewLoopBudget,
 });
-const ReviewLoopFixing = Schema.Struct({
+// Each budget has its own rounds, so "review 4 of 3" neither compiles nor decodes.
+const ReviewLoopReviewingOf3 = Schema.Struct({
+  status: Schema.Literal("reviewing"),
+  budget: Schema.Literal(3),
+  round: Schema.Literals([1, 2, 3]),
+});
+const ReviewLoopReviewingOf5 = Schema.Struct({
+  status: Schema.Literal("reviewing"),
+  budget: Schema.Literal(5),
+  round: Schema.Literals([1, 2, 3, 4, 5]),
+});
+/** The author answers review `round`. The last review of a budget has no fix. */
+const ReviewLoopFixingOf3 = Schema.Struct({
   status: Schema.Literal("fixing"),
-  round: ReviewLoopFixRound,
+  budget: Schema.Literal(3),
+  round: Schema.Literals([1, 2]),
+  open: ReviewLoopOpenFindings,
+});
+const ReviewLoopFixingOf5 = Schema.Struct({
+  status: Schema.Literal("fixing"),
+  budget: Schema.Literal(5),
+  round: Schema.Literals([1, 2, 3, 4]),
+  open: ReviewLoopOpenFindings,
 });
 
-export const ReviewLoopLivePhase = Schema.Union([ReviewLoopReviewing, ReviewLoopFixing]);
+export const ReviewLoopLivePhase = Schema.Union([
+  ReviewLoopScoping,
+  ReviewLoopReviewingOf3,
+  ReviewLoopReviewingOf5,
+  ReviewLoopFixingOf3,
+  ReviewLoopFixingOf5,
+]);
 export type ReviewLoopLivePhase = typeof ReviewLoopLivePhase.Type;
+export type ReviewLoopScopingPhase = Extract<ReviewLoopLivePhase, { readonly status: "scoping" }>;
+export type ReviewLoopReviewingPhase = Extract<
+  ReviewLoopLivePhase,
+  { readonly status: "reviewing" }
+>;
+export type ReviewLoopFixingPhase = Extract<ReviewLoopLivePhase, { readonly status: "fixing" }>;
 
 export const ReviewLoopEndedPhase = Schema.Struct({
   status: Schema.Literal("ended"),
   reason: ReviewLoopEndReason,
   /** Reviews that finished before the end. */
-  reviews: Schema.Literals([0, 1, 2, 3]),
-  /** Why, in a few words, such as the failed run's error. */
+  reviews: Schema.Literals([0, 1, 2, 3, 4, 5]),
+  /** The budget the loop ran under at the end. */
+  budget: ReviewLoopBudget,
+  /** Why, in a few words, such as the failed run's error or the disputed ids. */
   detail: Schema.optional(TrimmedNonEmptyString),
   endedAt: IsoDateTime,
 });
 export type ReviewLoopEndedPhase = typeof ReviewLoopEndedPhase.Type;
 
 /**
- * The loop's state machine:
+ * The loop's state machine, where B is the budget:
  *
- *   reviewing 1 -> fixing 1 -> reviewing 2 -> fixing 2 -> reviewing 3
+ *   scoping -> reviewing 1 -> fixing 1 -> reviewing 2 -> ... -> reviewing B
  *
- * Any live phase can end. A clean review ends the loop at any round, and review 3 always ends it.
+ * Review 3 of 3 can also step to fixing 3 of 5, the only step that changes the budget. Any live
+ * phase can end.
  */
 export const ReviewLoopPhase = Schema.Union([
-  ReviewLoopReviewing,
-  ReviewLoopFixing,
+  ReviewLoopScoping,
+  ReviewLoopReviewingOf3,
+  ReviewLoopReviewingOf5,
+  ReviewLoopFixingOf3,
+  ReviewLoopFixingOf5,
   ReviewLoopEndedPhase,
 ]);
 export type ReviewLoopPhase = typeof ReviewLoopPhase.Type;
 
-/** Every review request starts with it. */
-export const ReviewLoopPrompt = TrimmedNonEmptyString.check(Schema.isMaxLength(2000));
+/** The user's optional note for the reviewer. Review request 1 quotes it after the brief. */
+export const ReviewLoopNote = TrimmedNonEmptyString.check(Schema.isMaxLength(2000));
 
 /**
  * The whole loop state, on the source thread's link. An ended record stays until the next loop
@@ -207,7 +268,7 @@ export const ThreadPullRequestReviewLoopAuthor = Schema.Struct({
   role: Schema.Literal("author"),
   id: ReviewLoopId,
   reviewThreadId: ThreadId,
-  prompt: ReviewLoopPrompt,
+  note: Schema.optional(ReviewLoopNote),
   startedAt: IsoDateTime,
   phase: ReviewLoopPhase,
 });

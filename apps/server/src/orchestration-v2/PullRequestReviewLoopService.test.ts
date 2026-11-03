@@ -334,7 +334,7 @@ const startLoop = (
       ...pullRequest,
       createdBy: "user",
       creationSource: "web",
-      request: { type: "start", reviewer: reviewerModel, prompt: "/review #42" },
+      request: { type: "start", reviewer: reviewerModel, budget: 3 },
     });
     const link = yield* linkOf(sourceId);
     const loop = link === null ? undefined : liveAuthorLoop(link);
@@ -374,25 +374,25 @@ const stepRepeatedly = (
     yield* reactor.sweep;
   });
 
-const reviewing = (round: 1 | 2 | 3) => ({ status: "reviewing", round }) as const;
-const fixing = (round: 1 | 2) => ({ status: "fixing", round }) as const;
-const changes = (finding: string): Reply => ({ text: `${finding}\nREVIEW-LOOP: CHANGES` });
+const reviewing = (round: 1 | 2 | 3) => ({ status: "reviewing", budget: 3, round }) as const;
+const fixing = (round: 1 | 2) => ({ status: "fixing", budget: 3, round, open: [] }) as const;
+const changes = (finding: string): Reply => ({ text: `VERDICT: CHANGES\n${finding}` });
 
 it.live(
-  "a loop that is clean at review 2 posts each step once and then frees both threads",
+  "a loop approved at review 2 posts each step once and then frees both threads",
   () =>
     runWith(
       {
         reviews: [
           changes("src/login.ts:12 skips the token check."),
-          { text: "The token check is fixed.\nREVIEW-LOOP: CLEAN" },
+          { text: "VERDICT: APPROVE\nThe token check is fixed." },
         ],
-        fixes: [{ text: "Fixed the token check and pushed." }, { text: "The review is clean." }],
+        fixes: [{ text: "Fixed the token check." }, { text: "Pushed once and reported." }],
       },
       Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
         const reactor = yield* PullRequestReviewLoopService.make;
-        const sourceId = ThreadId.make("thread:loop:clean");
+        const sourceId = ThreadId.make("thread:loop:approved");
         const loop = yield* startLoop(sourceId);
         assert.deepEqual(
           (yield* orchestrator.getThreadShell(sourceId))?.pendingBackgroundTasks?.map(
@@ -406,8 +406,9 @@ it.live(
         assert.deepEqual(yield* phaseOf(sourceId), fixing(1));
         const delivered = yield* loopMessages(sourceId);
         assert.lengthOf(delivered, 1);
-        assert.isTrue(
-          delivered[0]!.startsWith("**Review 1 of 3** from Cursor · composer-1 on #42\n"),
+        assert.strictEqual(
+          delivered[0]!.split("\n")[0],
+          "**Review 1 of 3** from Cursor · composer-1 on #42: changes. The reviewer did not tag its findings with ids.",
         );
         assert.include(delivered[0], "src/login.ts:12 skips the token check.");
 
@@ -416,15 +417,15 @@ it.live(
         assert.deepEqual(yield* phaseOf(sourceId), reviewing(2));
         const requests = yield* loopMessages(loop.reviewThreadId);
         assert.lengthOf(requests, 2);
-        assert.include(requests[1], "> Fixed the token check and pushed.");
+        assert.include(requests[1], "> Fixed the token check.");
 
         yield* awaitTurn(loop.reviewThreadId, loop, reviewing(2));
         yield* stepRepeatedly(reactor, loop.reviewThreadId);
         const phase = yield* phaseOf(sourceId);
-        assert.deepInclude(phase, { status: "ended", reason: "clean", reviews: 2 });
+        assert.deepInclude(phase, { status: "ended", reason: "approved", reviews: 2, budget: 3 });
         const told = yield* loopMessages(sourceId);
         assert.lengthOf(told, 2);
-        assert.isTrue(told[1]!.startsWith("**Review loop done: clean.** Review 2 of 3"));
+        assert.isTrue(told[1]!.startsWith("**Review loop approved.** Review 2 of 3"));
         assert.isUndefined(reviewerMarker((yield* linkOf(loop.reviewThreadId))!));
 
         yield* awaitTurn(sourceId, loop, phase!);
@@ -440,14 +441,14 @@ it.live(
 );
 
 it.live(
-  "the event tail drives a loop to its cap: three reviews, two fixes, then the user",
+  "the event tail drives a loop to its budget: three reviews, two fixes, then the user",
   () =>
     runWith(
       {
         reviews: [
-          changes("Finding one."),
+          changes("S1 [should] src/login.ts:12 skips the token check."),
           { text: "Two things look off, but I am not sure." },
-          changes("Finding three."),
+          changes("S3 [should] src/login.ts:30 drops the retry."),
         ],
         fixes: [{ text: "Fixed one." }, { text: "Fixed two." }, { text: "Finding three remains." }],
       },
@@ -480,13 +481,18 @@ it.live(
           Stream.runHead,
         );
         const phase = yield* phaseOf(sourceId);
-        assert.deepInclude(phase, { status: "ended", reason: "needs_human", reviews: 3 });
+        assert.deepInclude(phase, {
+          status: "ended",
+          reason: "budget_ended",
+          reviews: 3,
+          budget: 3,
+        });
         yield* awaitTurn(sourceId, loop, phase!);
         yield* reactor.sweep;
 
         const requests = yield* loopMessages(loop.reviewThreadId);
         assert.deepEqual(
-          requests.map((text) => text.split("\n")[3]),
+          requests.map((text) => text.split("\n")[0]),
           [1, 2, 3].map(
             (round) =>
               `T3 Code review loop: review ${round} of 3 for pull request #42 (https://github.com/pingdotgg/t3code/pull/42).`,
@@ -496,9 +502,9 @@ it.live(
         assert.deepEqual(
           told.map((text) => text.split("\n")[0]),
           [
-            "**Review 1 of 3** from Cursor · composer-1 on #42",
-            "**Review 2 of 3** from Cursor · composer-1 on #42. The reviewer gave no verdict line, so T3 Code treats it as findings.",
-            "**Review loop needs you.** Review 3 of 3 from Cursor · composer-1 on #42 still has findings. The loop stops after 3 reviews.",
+            "**Review 1 of 3** from Cursor · composer-1 on #42: changes. Open: S1 should.",
+            "**Review 2 of 3** from Cursor · composer-1 on #42: changes. The reviewer gave no verdict line, so T3 Code treats this review as changes. The reviewer did not tag its findings with ids.",
+            "**Review loop needs you.** Review 3 of 3 from Cursor · composer-1 on #42 still has open findings: S3 should. The loop is out of reviews. Budget end is not approval.",
           ],
         );
         assert.isUndefined(reviewerMarker((yield* linkOf(loop.reviewThreadId))!));
@@ -568,7 +574,7 @@ it.live("a stopped fix ends the loop quietly", () =>
 
       assert.deepInclude(yield* phaseOf(sourceId), {
         status: "ended",
-        reason: "fix_stopped",
+        reason: "author_stopped",
         reviews: 1,
       });
       assert.lengthOf(yield* loopMessages(sourceId), 1);
@@ -632,7 +638,7 @@ it.live("cancelling the queued review bubble ends the loop quietly", () =>
 
         assert.deepInclude(yield* phaseOf(sourceId), {
           status: "ended",
-          reason: "fix_stopped",
+          reason: "author_stopped",
           reviews: 1,
         });
         assert.lengthOf(yield* loopMessages(loop.reviewThreadId), 1);
@@ -683,7 +689,7 @@ it.live("the source thread's provider turned off refuses review 1 and fails fix 
 
       assert.deepInclude(yield* phaseOf(sourceId), {
         status: "ended",
-        reason: "fix_failed",
+        reason: "author_failed",
         reviews: 1,
         detail: "this thread's provider is off for this project",
       });
@@ -755,7 +761,7 @@ it.live("a second loop on the same pull request starts cleanly after the first e
         ...pullRequest,
         createdBy: "user",
         creationSource: "web",
-        request: { type: "start", reviewer: reviewerModel, prompt: "/review #42 again" },
+        request: { type: "start", reviewer: reviewerModel, budget: 3 },
       });
       const second = liveAuthorLoop((yield* linkOf(sourceId))!);
       assert.isDefined(second);

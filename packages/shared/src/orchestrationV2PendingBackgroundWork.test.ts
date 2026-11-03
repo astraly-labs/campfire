@@ -599,7 +599,6 @@ describe("derivePendingBackgroundWork kinds", () => {
       role: "author" as const,
       id: ReviewLoopId.make("loop-1"),
       reviewThreadId: ThreadId.make("thread:review"),
-      prompt: "/review #7",
       startedAt,
       phase,
     });
@@ -614,7 +613,7 @@ describe("derivePendingBackgroundWork kinds", () => {
       source,
       reviewLoop,
     });
-    const reviewing = author({ status: "reviewing", round: 2 });
+    const reviewing = author({ status: "reviewing", budget: 3, round: 2 });
 
     it.each([
       ["idle, a live author loop", true, "completed", link(reviewing)],
@@ -622,7 +621,15 @@ describe("derivePendingBackgroundWork kinds", () => {
         "idle, an ended author loop",
         false,
         "completed",
-        link(author({ status: "ended", reason: "clean", reviews: 1, endedAt: startedAt })),
+        link(
+          author({
+            status: "ended",
+            reason: "approved",
+            reviews: 1,
+            budget: 3,
+            endedAt: startedAt,
+          }),
+        ),
       ],
       [
         "idle, a reviewer marker",

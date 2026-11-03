@@ -1,5 +1,5 @@
 import {
-  ReviewLoopPrompt,
+  ReviewLoopNote,
   type ModelSelection,
   type ScopedThreadRef,
   type ServerProvider,
@@ -10,10 +10,6 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { createModelSelection, modelSelectionsEqual } from "@t3tools/shared/model";
-import {
-  REVIEW_LOOP_MAX_REVIEWS,
-  defaultReviewLoopPrompt,
-} from "@t3tools/shared/pullRequestReviewLoop";
 import { useNavigate } from "@tanstack/react-router";
 import * as Schema from "effect/Schema";
 import { useId, useMemo, useState } from "react";
@@ -52,7 +48,7 @@ import {
 } from "./reviewLoop.logic";
 
 const EMPTY_PROVIDERS: ReadonlyArray<ServerProvider> = [];
-const isReviewLoopPrompt = Schema.is(ReviewLoopPrompt);
+const isReviewLoopNote = Schema.is(ReviewLoopNote);
 
 /** A pick always wins over the default reviewer, which can change while the source thread streams. */
 export function ReviewLoopDialog({
@@ -124,11 +120,11 @@ export function ReviewLoopDialog({
     reviewer === null
       ? undefined
       : instanceEntries.find((entry) => entry.instanceId === reviewer.instanceId);
-  const [prompt, setPrompt] = useState(() => defaultReviewLoopPrompt(pullRequest.number));
-  const trimmedPrompt = prompt.trim();
-  const promptValid = isReviewLoopPrompt(trimmedPrompt);
+  const [note, setNote] = useState("");
+  const trimmedNote = note.trim();
+  const noteValid = trimmedNote === "" || isReviewLoopNote(trimmedNote);
   const [starting, setStarting] = useState(false);
-  const promptId = useId();
+  const noteId = useId();
   const reviewLoop = useOrchestrationCommand(threadEnvironment.reviewLoop, {
     reportFailure: false,
   });
@@ -148,7 +144,7 @@ export function ReviewLoopDialog({
   };
 
   const start = async () => {
-    if (reviewer === null || !promptValid || starting) return;
+    if (reviewer === null || !noteValid || starting) return;
     setStarting(true);
     const result = await reviewLoop({
       environmentId,
@@ -160,7 +156,8 @@ export function ReviewLoopDialog({
         request: {
           type: "start",
           reviewer,
-          prompt: trimmedPrompt,
+          budget: 3,
+          ...(trimmedNote === "" ? {} : { note: trimmedNote }),
           ...(linked ? {} : { link: { url: pullRequest.url, source: "manual" } }),
         },
       },
@@ -212,9 +209,10 @@ export function ReviewLoopDialog({
         <DialogHeader>
           <DialogTitle>Review loop for #{pullRequest.number}</DialogTitle>
           <DialogDescription>
-            A second model reviews this pull request. This thread's agent fixes what it agrees with
-            and pushes. Up to {REVIEW_LOOP_MAX_REVIEWS} reviews and {REVIEW_LOOP_MAX_REVIEWS - 1}{" "}
-            fix rounds. You get a notification when the loop ends or needs you.
+            A second model reviews your local checkout of this pull request. This thread's agent
+            answers each review. Nothing is pushed until the reviewer approves. Then the agent
+            pushes once and notes the review in the pull request. You get a notification when the
+            loop ends or needs you.
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -261,16 +259,16 @@ export function ReviewLoopDialog({
               )}
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor={promptId}>Prompt</Label>
+              <Label htmlFor={noteId}>Notes for the reviewer (optional)</Label>
               <Textarea
-                id={promptId}
-                value={prompt}
-                aria-invalid={!promptValid}
+                id={noteId}
+                value={note}
+                aria-invalid={!noteValid}
                 disabled={starting}
-                onChange={(event) => setPrompt(event.target.value)}
+                onChange={(event) => setNote(event.target.value)}
               />
               <p className="text-xs text-muted-foreground">
-                T3 Code adds the loop instructions after your prompt.
+                The reviewer gets your note word for word with the first review.
               </p>
             </div>
           </div>
@@ -280,7 +278,7 @@ export function ReviewLoopDialog({
             Cancel
           </Button>
           <Button
-            disabled={starting || reviewer === null || !promptValid}
+            disabled={starting || reviewer === null || !noteValid}
             onClick={() => void start()}
           >
             {starting ? "Starting..." : "Start loop"}

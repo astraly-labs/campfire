@@ -17,9 +17,11 @@ import {
   toCustomModelSetting,
   getProviderOptionBooleanSelectionValue,
   getProviderOptionStringSelectionValue,
+  latestSolModel,
   normalizeCustomModelSlug,
   normalizeModelSlug,
   modelSelectionsEqual,
+  solModelVersion,
 } from "./model.ts";
 
 it("keeps the Codex catalog display formatting", () => {
@@ -361,5 +363,64 @@ describe("provider-reported option display", () => {
     { ...selection, options: [{ id: "variant", value: "none" }] },
   ])("ignores reports after changing the model, instance, or option: %j", (selected) => {
     expect(getProviderOptionCurrentLabel(descriptor, selected, reported)).toBe("Unknown");
+  });
+});
+
+describe("latest GPT Sol", () => {
+  const model = (slug: string, flags: { isCustom?: boolean; isLegacy?: boolean } = {}) => ({
+    slug,
+    isCustom: flags.isCustom ?? false,
+    ...(flags.isLegacy === undefined ? {} : { isLegacy: flags.isLegacy }),
+  });
+  const catalog = [
+    model("gpt-6-astra"),
+    model("gpt-6.1-terra"),
+    model("gpt-6-sol"),
+    model("gpt-6.1-sol"),
+    model("gpt-5.6-sol"),
+    model("gpt-7-sol", { isCustom: true }),
+  ];
+
+  it.each([
+    ["gpt-6.1-sol", [6, 1]],
+    ["openai.gpt-6.1-sol", [6, 1]],
+    ["gpt-6-sol", [6]],
+    ["gpt-6-astra", null],
+    ["gpt-6.1-sol-mini", null],
+    ["claude-opus-5-5", null],
+  ] as const)("reads the Sol version of %s as %o", (slug, version) => {
+    expect(solModelVersion(slug)).toEqual(version);
+  });
+
+  it("picks the newest Sol that is not custom", () => {
+    expect(latestSolModel(catalog)?.slug).toBe("gpt-6.1-sol");
+  });
+
+  it("prefers a Sol that is not legacy over a newer legacy one", () => {
+    const legacy = catalog.map((entry) =>
+      entry.slug === "gpt-6.1-sol" ? model("gpt-6.1-sol", { isLegacy: true }) : entry,
+    );
+    expect(latestSolModel(legacy)?.slug).toBe("gpt-6-sol");
+  });
+
+  it("compares versions as numbers, part by part", () => {
+    expect(latestSolModel([model("gpt-6.9-sol"), model("gpt-6.10-sol")])?.slug).toBe(
+      "gpt-6.10-sol",
+    );
+    expect(latestSolModel([model("gpt-6-sol"), model("gpt-6.1-sol")])?.slug).toBe("gpt-6.1-sol");
+  });
+
+  it("keeps the catalog order on a tie and reads the openai prefix", () => {
+    expect(latestSolModel([model("openai.gpt-6.1-sol")])?.slug).toBe("openai.gpt-6.1-sol");
+    expect(
+      latestSolModel([model("openai.gpt-6.1-sol"), model("gpt-6.1-sol", { isLegacy: false })])
+        ?.slug,
+    ).toBe("openai.gpt-6.1-sol");
+  });
+
+  it("finds nothing without a Sol", () => {
+    expect(latestSolModel([model("gpt-6-astra"), model("gpt-7-sol", { isCustom: true })])).toBe(
+      null,
+    );
   });
 });

@@ -84,7 +84,7 @@ it("stamps authoritative provenance on a review loop, whose start creates a thre
     request: {
       type: "start",
       reviewer: { instanceId: ProviderInstanceId.make("cursor"), model: "composer-1" },
-      prompt: "/review #42",
+      budget: 3,
     },
   };
 
