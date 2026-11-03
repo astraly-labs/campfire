@@ -296,27 +296,35 @@ out from the matching organization and repository.
 
 ## Review loop
 
-A review loop lets a second model review a thread's pull request while the thread's agent fixes
-the findings. For example, Cursor can review code that Claude wrote.
+A review loop lets a second model review the change on your thread's branch, and the thread's agent
+answers each review. Nothing is pushed until the reviewer approves. The reviewer defaults to the
+newest GPT Sol that a ready Codex instance offers. You can pick any other model for one loop.
 
 To start, open the thread's pull request in the side panel and click **Review loop**. You can also
-use **Start review loop...** in a row menu of the **Linked pull requests** panel. Pick a reviewer
-and, if you want, edit the prompt, which starts as `/review #<number>`. The pull request must be
-open and on the thread's branch. T3 Code remembers the reviewer for the project.
+use **Start review loop...** in a row menu of the **Linked pull requests** panel. Pick the reviewer
+and, if you want, write a note for the reviewer. Check **Allow up to 5 reviews** for a change that
+needs more rounds. The pull request must be open and on the thread's branch.
 
-The reviewer works in its own review thread. T3 Code posts each review into your thread for you.
-Your agent fixes what it agrees with, says why it skips the rest, and pushes. Then T3 Code asks
-the reviewer for the next review. Click **Sent by T3 Code** above a loop message to open the other
-thread.
+First, your agent writes a short review brief: the base, the intent, what is out of scope, and the
+checks it ran. T3 Code sends the brief and your note to the reviewer. The reviewer works in its own
+review thread on your local checkout, so commits that you did not push are part of the review. It
+tags each finding as a blocker, a should, or a nit. T3 Code posts each review into your thread.
+Your agent makes the smallest fix it agrees with, gives evidence where it disagrees, commits
+locally, and does not push. Later reviews check only the open findings and the changed code. Click
+**Sent by T3 Code** above a loop message to open the other thread.
 
-A loop runs at most 3 reviews, with a fix round after each of the first 2. It ends early when a
-review finds nothing to change. If the third review still has findings, the loop stops, and your
-agent tells you what remains for you to decide. You get a notification when the loop ends. Until
-then, the thread stays in **Working**.
+A loop runs up to 3 reviews. It extends to 5 by itself when review 3 leaves a blocker or should
+about security, permissions, auth, data loss, or concurrency open. The loop ends as **Approved**
+when the reviewer approves with no blocker or should open. Your agent then pushes once, adds a
+`Reviewed with sol-loop` line to the pull request description, and reports what changed. The loop
+ends as **Needs you** when the reviews run out, or when your agent still disputes a finding that
+the reviewer keeps open. Your agent then shows both sides and does not push. You decide. You get a
+notification when the loop ends. Until then, the thread stays in **Working**.
 
 To stop the loop, click its status in the pull request header and choose **Stop loop**, or choose
 **Stop review loop** in the row menu. Both let a running turn finish. Stop in the composer of either
-thread also ends the loop, and it interrupts a running turn as usual.
+thread also ends the loop, and it interrupts a running turn as usual. A stopped loop leaves your
+agent's fixes unpushed.
 
 ## GitHub stacks
 
