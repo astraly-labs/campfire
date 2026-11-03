@@ -144,8 +144,8 @@ import {
   endLinkAutomation,
   isReviewLoopStep,
   makeReviewThread,
-  reviewRequestText,
   type ReviewLoopPullRequest,
+  scopingRequestText,
   withoutReviewLoop,
 } from "./pullRequestReviewLoop.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -2464,9 +2464,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   );
 
   /**
-   * Starts or stops a review loop on the source thread's link. A start records the loop, creates
-   * the review thread, and sends review request 1 in this one transaction, like a delegated task:
-   * the review thread's id is derived from this command, so nothing else can write it yet.
+   * Starts or stops a review loop on the source thread's link. A start records the loop in its
+   * brief turn, creates the review thread, and asks this thread's agent for the brief, in this one
+   * transaction, like a delegated task: the review thread's id is derived from this command, so
+   * nothing else can write it yet.
    */
   const dispatchPullRequestReviewLoop = Effect.fn("orchestrationV2.dispatch.pullRequestReviewLoop")(
     function* (
@@ -2587,10 +2588,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         reviewThreadId,
         ...(request.note === undefined ? {} : { note: request.note }),
         startedAt: DateTime.formatIso(now),
-        phase:
-          request.budget === 3
-            ? { status: "reviewing", budget: 3, round: 1 }
-            : { status: "reviewing", budget: 5, round: 1 },
+        phase: { status: "scoping", budget: request.budget },
       };
       yield* emitEvent({
         type: "thread.pull-request-synced",
@@ -2631,18 +2629,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         {
           type: "message.dispatch",
           commandId: command.commandId,
-          threadId: reviewThreadId,
+          threadId: source.id,
           messageId: idAllocator.derive.reviewLoopMessage({ loopId, phase: loop.phase }),
-          text: reviewRequestText({
-            from: { status: "scoping", budget: request.budget },
+          text: scopingRequestText({
             pullRequest: reviewLoopPullRequest(source, link),
-            authorReply: null,
-            note: request.note ?? null,
+            budget: request.budget,
+            reviewerModel: reviewer.model,
           }),
           attachments: [],
-          senderThreadId: source.id,
-          modelSelection: reviewer,
-          dispatchMode: { type: "start_immediately" },
+          senderThreadId: reviewThreadId,
+          dispatchMode: { type: "queue_after_active" },
           createdBy: "agent",
           creationSource: "server",
         },

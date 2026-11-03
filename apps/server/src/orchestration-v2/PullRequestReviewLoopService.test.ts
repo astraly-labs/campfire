@@ -9,6 +9,8 @@ import {
   ProviderInstanceId,
   ProviderThreadId,
   ProviderTurnId,
+  ReviewLoopFindingId,
+  type ReviewLoopFindingRef,
   type ReviewLoopId,
   type ReviewLoopPhase,
   ThreadId,
@@ -212,9 +214,19 @@ const scriptedAdapter = (
 };
 
 interface Script {
+  /** The source thread's first turn. Each later author turn takes the next fix. */
+  readonly brief?: Reply;
   readonly reviews: Array<Reply>;
   readonly fixes: Array<Reply>;
 }
+
+const BRIEF = [
+  "Base: 4f1c2ab",
+  "Intent: Keep the token check when one refresh fails.",
+  "Out of scope: none.",
+  "Checks: vp test run src/login.test.ts passed.",
+  "Diff: 1 file changed, 4 insertions(+)",
+].join("\n");
 
 const layerFor = (script: Script) => {
   const database = SqlitePersistence.layerMemory;
@@ -226,7 +238,10 @@ const layerFor = (script: Script) => {
         ProviderReplayHarness.layerWithRegistry(
           { name: "review-loop" },
           ProviderAdapterRegistry.layerFromAdapters([
-            scriptedAdapter(authorModel, "codex", script.fixes),
+            scriptedAdapter(authorModel, "codex", [
+              script.brief ?? { text: BRIEF },
+              ...script.fixes,
+            ]),
             scriptedAdapter(reviewerModel, "cursor", script.reviews),
           ]),
           { databaseLayer: database },
@@ -374,9 +389,120 @@ const stepRepeatedly = (
     yield* reactor.sweep;
   });
 
+const scoping = { status: "scoping", budget: 3 } as const;
 const reviewing = (round: 1 | 2 | 3) => ({ status: "reviewing", budget: 3, round }) as const;
-const fixing = (round: 1 | 2) => ({ status: "fixing", budget: 3, round, open: [] }) as const;
+const fixing = (round: 1 | 2, open: ReadonlyArray<ReviewLoopFindingRef> = []) =>
+  ({ status: "fixing", budget: 3, round, open }) as const;
+const should = (id: string): ReviewLoopFindingRef => ({
+  id: ReviewLoopFindingId.make(id),
+  severity: "should",
+});
 const changes = (finding: string): Reply => ({ text: `VERDICT: CHANGES\n${finding}` });
+const firstLines = (texts: ReadonlyArray<string>) => texts.map((text) => text.split("\n")[0]);
+
+const BRIEF_REQUEST =
+  "**Review loop started** for #42. Composer 1 reviews this change, up to 3 reviews.";
+
+/** Waits for the brief turn and takes the step into review 1. */
+const passBrief = (
+  reactor: PullRequestReviewLoopService.PullRequestReviewLoopService["Service"],
+  sourceId: ThreadId,
+  loop: { readonly id: ReviewLoopId },
+) =>
+  Effect.gen(function* () {
+    yield* awaitTurn(sourceId, loop, scoping);
+    yield* reactor.advanceThread(sourceId);
+  });
+
+/** A reactor whose event tail replays from the first event, so no test races its subscription. */
+const replayingReactor = Effect.gen(function* () {
+  const threads = yield* ThreadManagementService.ThreadManagementService;
+  const reactor = yield* PullRequestReviewLoopService.make.pipe(
+    Effect.provideService(ThreadManagementService.ThreadManagementService, {
+      ...threads,
+      streamDomainEvents: threads.streamStoredEvents.pipe(Stream.map((stored) => stored.event)),
+    }),
+  );
+  yield* reactor.start();
+  return reactor;
+});
+
+/** Every phase the source recorded, in order, through the end. */
+const recordedPhases = (sourceId: ThreadId) =>
+  Effect.gen(function* () {
+    const sink = yield* EventSink.EventSinkV2;
+    const phases = yield* sink
+      .stream({ threadId: sourceId, eventType: "thread.pull-request-synced" })
+      .pipe(
+        Stream.map(({ event }) => {
+          const link =
+            event.type === "thread.pull-request-synced"
+              ? event.payload.pullRequests?.find(
+                  (candidate) => candidate.number === pullRequest.number,
+                )
+              : undefined;
+          return link?.reviewLoop?.role === "author" ? link.reviewLoop.phase : null;
+        }),
+        Stream.filter((phase) => phase !== null),
+        Stream.takeUntil((phase) => phase.status === "ended"),
+        Stream.runCollect,
+      );
+    return phases
+      .map((phase) =>
+        phase.status === "ended"
+          ? `ended ${phase.reason} after ${phase.reviews} of ${phase.budget}`
+          : phase.status === "scoping"
+            ? `scoping/${phase.budget}`
+            : `${phase.status} ${phase.round}/${phase.budget}`,
+      )
+      .filter((phase, index, all) => phase !== all[index - 1]);
+  });
+
+it.live("the brief goes to the reviewer, and an approval at review 1 frees both threads", () =>
+  runWith(
+    {
+      reviews: [
+        {
+          text: "VERDICT: APPROVE\nS1 [nit] src/login.ts:40 rename retryOnce. Fix: call it refreshWithRetry.",
+        },
+      ],
+      fixes: [{ text: "Declined S1 as a follow-up. Pushed once." }],
+    },
+    Effect.gen(function* () {
+      const reactor = yield* PullRequestReviewLoopService.make;
+      const sourceId = ThreadId.make("thread:loop:approved-at-1");
+      const loop = yield* startLoop(sourceId);
+      assert.deepEqual(loop.phase, scoping);
+      assert.deepEqual(firstLines(yield* loopMessages(sourceId)), [BRIEF_REQUEST]);
+      assert.lengthOf(yield* loopMessages(loop.reviewThreadId), 0);
+
+      yield* passBrief(reactor, sourceId, loop);
+      assert.deepEqual(yield* phaseOf(sourceId), reviewing(1));
+      const [request] = yield* loopMessages(loop.reviewThreadId);
+      assert.strictEqual(
+        request!.split("\n")[0],
+        "T3 Code review loop: review 1 of 3 for pull request #42 (https://github.com/pingdotgg/t3code/pull/42).",
+      );
+      assert.include(request, "The author's brief:\n\n> Base: 4f1c2ab");
+
+      yield* awaitTurn(loop.reviewThreadId, loop, reviewing(1));
+      yield* reactor.advanceThread(loop.reviewThreadId);
+      const phase = yield* phaseOf(sourceId);
+      assert.deepInclude(phase, { status: "ended", reason: "approved", reviews: 1, budget: 3 });
+      const told = yield* loopMessages(sourceId);
+      assert.deepEqual(firstLines(told), [
+        BRIEF_REQUEST,
+        "**Review loop approved.** Review 1 of 3 from Cursor · composer-1 on #42 approved this change. Open nits: S1.",
+      ]);
+      assert.include(
+        told[1],
+        "`Reviewed with sol-loop: 1 round with Composer 1. Verdict: approved`",
+      );
+      assert.isUndefined(reviewerMarker((yield* linkOf(loop.reviewThreadId))!));
+      assert.lengthOf(yield* loopMessages(loop.reviewThreadId), 1);
+    }),
+  ),
+);
 
 it.live(
   "a loop approved at review 2 posts each step once and then frees both threads",
@@ -384,53 +510,60 @@ it.live(
     runWith(
       {
         reviews: [
-          changes("src/login.ts:12 skips the token check."),
-          { text: "VERDICT: APPROVE\nThe token check is fixed." },
+          changes("S1 [should] src/login.ts:12 skips the token check. Fix: check it."),
+          { text: "VERDICT: APPROVE\nS1 resolved" },
         ],
-        fixes: [{ text: "Fixed the token check." }, { text: "Pushed once and reported." }],
+        fixes: [
+          { text: "fixed: S1 src/login.ts:12 checks the token.\nChanged: commit 9e0d1f7." },
+          { text: "Pushed once and reported." },
+        ],
       },
       Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
         const reactor = yield* PullRequestReviewLoopService.make;
         const sourceId = ThreadId.make("thread:loop:approved");
         const loop = yield* startLoop(sourceId);
+        yield* passBrief(reactor, sourceId, loop);
         assert.deepEqual(
           (yield* orchestrator.getThreadShell(sourceId))?.pendingBackgroundTasks?.map(
-            (task) => task.kind,
+            (task) => task.description,
           ),
-          ["monitor"],
+          ["Waiting for review 1 of 3 on pull request #42"],
         );
 
         yield* awaitTurn(loop.reviewThreadId, loop, reviewing(1));
         yield* stepRepeatedly(reactor, loop.reviewThreadId);
-        assert.deepEqual(yield* phaseOf(sourceId), fixing(1));
+        assert.deepEqual(yield* phaseOf(sourceId), fixing(1, [should("S1")]));
         const delivered = yield* loopMessages(sourceId);
-        assert.lengthOf(delivered, 1);
-        assert.strictEqual(
-          delivered[0]!.split("\n")[0],
-          "**Review 1 of 3** from Cursor · composer-1 on #42: changes. The reviewer did not tag its findings with ids.",
-        );
-        assert.include(delivered[0], "src/login.ts:12 skips the token check.");
+        assert.deepEqual(firstLines(delivered), [
+          BRIEF_REQUEST,
+          "**Review 1 of 3** from Cursor · composer-1 on #42: changes. Open: S1 should.",
+        ]);
+        assert.include(delivered[1], "Commit locally. Do not push.");
 
         yield* awaitTurn(sourceId, loop, fixing(1));
         yield* stepRepeatedly(reactor, sourceId);
         assert.deepEqual(yield* phaseOf(sourceId), reviewing(2));
         const requests = yield* loopMessages(loop.reviewThreadId);
         assert.lengthOf(requests, 2);
-        assert.include(requests[1], "> Fixed the token check.");
+        assert.include(requests[1], "> fixed: S1 src/login.ts:12 checks the token.");
+        assert.include(
+          requests[1],
+          "Open from your last review: S1 [should]. Number new findings from S2.",
+        );
 
         yield* awaitTurn(loop.reviewThreadId, loop, reviewing(2));
         yield* stepRepeatedly(reactor, loop.reviewThreadId);
         const phase = yield* phaseOf(sourceId);
         assert.deepInclude(phase, { status: "ended", reason: "approved", reviews: 2, budget: 3 });
         const told = yield* loopMessages(sourceId);
-        assert.lengthOf(told, 2);
-        assert.isTrue(told[1]!.startsWith("**Review loop approved.** Review 2 of 3"));
+        assert.lengthOf(told, 3);
+        assert.isTrue(told[2]!.startsWith("**Review loop approved.** Review 2 of 3"));
         assert.isUndefined(reviewerMarker((yield* linkOf(loop.reviewThreadId))!));
 
         yield* awaitTurn(sourceId, loop, phase!);
         yield* stepRepeatedly(reactor, sourceId);
-        assert.lengthOf(yield* loopMessages(sourceId), 2);
+        assert.lengthOf(yield* loopMessages(sourceId), 3);
         assert.lengthOf(yield* loopMessages(loop.reviewThreadId), 2);
         const shell = yield* orchestrator.getThreadShell(sourceId);
         assert.equal(shell?.status, "completed");
@@ -450,62 +583,150 @@ it.live(
           { text: "Two things look off, but I am not sure." },
           changes("S3 [should] src/login.ts:30 drops the retry."),
         ],
-        fixes: [{ text: "Fixed one." }, { text: "Fixed two." }, { text: "Finding three remains." }],
+        fixes: [{ text: "Fixed one." }, { text: "Fixed two." }, { text: "S3 stays open." }],
       },
       Effect.gen(function* () {
-        const threads = yield* ThreadManagementService.ThreadManagementService;
-        const sink = yield* EventSink.EventSinkV2;
-        // The live tail starts where it subscribes. This one replays from the first event, so the
-        // test never depends on when the tail's fiber gets to subscribe.
-        const reactor = yield* PullRequestReviewLoopService.make.pipe(
-          Effect.provideService(ThreadManagementService.ThreadManagementService, {
-            ...threads,
-            streamDomainEvents: threads.streamStoredEvents.pipe(
-              Stream.map((stored) => stored.event),
-            ),
-          }),
-        );
-        yield* reactor.start();
-        const sourceId = ThreadId.make("thread:loop:cap");
+        const reactor = yield* replayingReactor;
+        const sourceId = ThreadId.make("thread:loop:budget");
         const loop = yield* startLoop(sourceId);
 
-        yield* sink.stream({ threadId: sourceId, eventType: "thread.pull-request-synced" }).pipe(
-          Stream.filter(
-            ({ event }) =>
-              event.type === "thread.pull-request-synced" &&
-              event.payload.pullRequests?.some(
-                (link) =>
-                  link.reviewLoop?.role === "author" && link.reviewLoop.phase.status === "ended",
-              ) === true,
-          ),
-          Stream.runHead,
-        );
+        assert.deepEqual(yield* recordedPhases(sourceId), [
+          "scoping/3",
+          "reviewing 1/3",
+          "fixing 1/3",
+          "reviewing 2/3",
+          "fixing 2/3",
+          "reviewing 3/3",
+          "ended budget_ended after 3 of 3",
+        ]);
         const phase = yield* phaseOf(sourceId);
-        assert.deepInclude(phase, {
-          status: "ended",
-          reason: "budget_ended",
-          reviews: 3,
-          budget: 3,
-        });
         yield* awaitTurn(sourceId, loop, phase!);
         yield* reactor.sweep;
 
-        const requests = yield* loopMessages(loop.reviewThreadId);
         assert.deepEqual(
-          requests.map((text) => text.split("\n")[0]),
+          firstLines(yield* loopMessages(loop.reviewThreadId)),
           [1, 2, 3].map(
             (round) =>
               `T3 Code review loop: review ${round} of 3 for pull request #42 (https://github.com/pingdotgg/t3code/pull/42).`,
           ),
         );
-        const told = yield* loopMessages(sourceId);
+        assert.deepEqual(firstLines(yield* loopMessages(sourceId)), [
+          BRIEF_REQUEST,
+          "**Review 1 of 3** from Cursor · composer-1 on #42: changes. Open: S1 should.",
+          "**Review 2 of 3** from Cursor · composer-1 on #42: changes. The reviewer gave no verdict line, so T3 Code treats this review as changes. The reviewer did not tag its findings with ids.",
+          "**Review loop needs you.** Review 3 of 3 from Cursor · composer-1 on #42 still has open findings: S3 should. The loop is out of reviews. Budget end is not approval.",
+        ]);
+        assert.isUndefined(reviewerMarker((yield* linkOf(loop.reviewThreadId))!));
+      }),
+    ),
+  { timeout: 60_000 },
+);
+
+it.live(
+  "a concurrency blocker at review 3 extends the loop, and review 4 of 5 approves",
+  () =>
+    runWith(
+      {
+        reviews: [
+          changes("S1 [should] src/session.ts:12 drops the token."),
+          changes("S2 [should] src/session.ts:20 skips the retry."),
+          changes(
+            "S7 [blocker] [concurrency] src/session.ts:31 two tabs refresh at once. Fix: compare the token version.",
+          ),
+          { text: "VERDICT: APPROVE\nS7 resolved" },
+        ],
+        fixes: [
+          { text: "fixed: S1" },
+          { text: "fixed: S2" },
+          { text: "fixed: S7 the write compares the token version." },
+          { text: "Pushed once and reported." },
+        ],
+      },
+      Effect.gen(function* () {
+        const reactor = yield* replayingReactor;
+        const sourceId = ThreadId.make("thread:loop:extension");
+        const loop = yield* startLoop(sourceId);
+
+        assert.deepEqual(yield* recordedPhases(sourceId), [
+          "scoping/3",
+          "reviewing 1/3",
+          "fixing 1/3",
+          "reviewing 2/3",
+          "fixing 2/3",
+          "reviewing 3/3",
+          "fixing 3/5",
+          "reviewing 4/5",
+          "ended approved after 4 of 5",
+        ]);
+        const phase = yield* phaseOf(sourceId);
+        yield* awaitTurn(sourceId, loop, phase!);
+        yield* reactor.sweep;
+
         assert.deepEqual(
-          told.map((text) => text.split("\n")[0]),
+          firstLines(yield* loopMessages(loop.reviewThreadId)).map((line) =>
+            line?.replace(
+              " for pull request #42 (https://github.com/pingdotgg/t3code/pull/42).",
+              "",
+            ),
+          ),
           [
-            "**Review 1 of 3** from Cursor · composer-1 on #42: changes. Open: S1 should.",
-            "**Review 2 of 3** from Cursor · composer-1 on #42: changes. The reviewer gave no verdict line, so T3 Code treats this review as changes. The reviewer did not tag its findings with ids.",
-            "**Review loop needs you.** Review 3 of 3 from Cursor · composer-1 on #42 still has open findings: S3 should. The loop is out of reviews. Budget end is not approval.",
+            "T3 Code review loop: review 1 of 3",
+            "T3 Code review loop: review 2 of 3",
+            "T3 Code review loop: review 3 of 3",
+            "T3 Code review loop: review 4 of 5",
           ],
+        );
+        const told = yield* loopMessages(sourceId);
+        assert.include(
+          firstLines(told),
+          "**Review 3 of 5** from Cursor · composer-1 on #42: changes. Open: S7 blocker (concurrency). The loop now allows up to 5 reviews, because S7 is a concurrency finding.",
+        );
+        assert.include(
+          told.at(-1),
+          "`Reviewed with sol-loop: 4 rounds with Composer 1. Verdict: approved`",
+        );
+      }),
+    ),
+  { timeout: 60_000 },
+);
+
+it.live(
+  "a dispute in fix 2 ends the loop as stuck before review 3",
+  () =>
+    runWith(
+      {
+        reviews: [
+          changes("S2 [should] src/cache.ts:8 the cache is shared across requests."),
+          changes("S2 [should] still open: src/server.ts:44 reuses the instance."),
+        ],
+        fixes: [
+          { text: "disagree: S2 the cache is created per request in src/cache.ts:8." },
+          { text: "disagree: S2 src/server.ts:44 builds a new one per request.\nLOOP: STUCK S2" },
+          { text: "Both sides of S2 are above. Not pushed." },
+        ],
+      },
+      Effect.gen(function* () {
+        const reactor = yield* replayingReactor;
+        const sourceId = ThreadId.make("thread:loop:stuck");
+        const loop = yield* startLoop(sourceId);
+
+        assert.deepEqual(yield* recordedPhases(sourceId), [
+          "scoping/3",
+          "reviewing 1/3",
+          "fixing 1/3",
+          "reviewing 2/3",
+          "fixing 2/3",
+          "ended stuck after 2 of 3",
+        ]);
+        const phase = yield* phaseOf(sourceId);
+        assert.deepInclude(phase, { detail: "S2" });
+        yield* awaitTurn(sourceId, loop, phase!);
+        yield* reactor.sweep;
+
+        assert.lengthOf(yield* loopMessages(loop.reviewThreadId), 2);
+        assert.strictEqual(
+          firstLines(yield* loopMessages(sourceId)).at(-1),
+          "**Review loop needs you.** You still dispute S2 after two replies, and the reviewer keeps it open.",
         );
         assert.isUndefined(reviewerMarker((yield* linkOf(loop.reviewThreadId))!));
       }),
@@ -513,21 +734,60 @@ it.live(
   { timeout: 60_000 },
 );
 
-it.live("a reactor built after a review ended delivers it once from its first sweep", () =>
-  runWith(
-    { reviews: [changes("Finding one.")], fixes: [] },
+it.live(
+  "a reactor built after the brief ended steps once, from its first sweep, into review 1",
+  () =>
     Effect.gen(function* () {
-      const sourceId = ThreadId.make("thread:loop:restart");
-      const loop = yield* startLoop(sourceId);
-      yield* awaitTurn(loop.reviewThreadId, loop, reviewing(1));
+      const reading = yield* Deferred.make<void>();
+      yield* runWith(
+        { reviews: [{ text: "VERDICT: APPROVE", until: reading }], fixes: [] },
+        Effect.gen(function* () {
+          const sourceId = ThreadId.make("thread:loop:restart");
+          const loop = yield* startLoop(sourceId);
+          yield* awaitTurn(sourceId, loop, scoping);
 
-      const reactor = yield* PullRequestReviewLoopService.make;
-      yield* reactor.sweep;
-      yield* reactor.sweep;
-      assert.deepEqual(yield* phaseOf(sourceId), fixing(1));
-      assert.lengthOf(yield* loopMessages(sourceId), 1);
+          const reactor = yield* PullRequestReviewLoopService.make;
+          yield* reactor.sweep;
+          yield* reactor.sweep;
+          assert.deepEqual(yield* phaseOf(sourceId), reviewing(1));
+          assert.lengthOf(yield* loopMessages(loop.reviewThreadId), 1);
+          yield* Deferred.succeed(reading, undefined);
+        }),
+      );
     }),
-  ),
+);
+
+it.live("settling the source while the reviewer works ends the loop as stopped", () =>
+  Effect.gen(function* () {
+    const reviewing1 = yield* Deferred.make<void>();
+    yield* runWith(
+      { reviews: [{ ...changes("S1 [should] src/login.ts:12 x."), until: reviewing1 }], fixes: [] },
+      Effect.gen(function* () {
+        const reactor = yield* PullRequestReviewLoopService.make;
+        const sourceId = ThreadId.make("thread:loop:settled");
+        const loop = yield* startLoop(sourceId);
+        yield* passBrief(reactor, sourceId, loop);
+        yield* dispatch({
+          type: "thread.settle",
+          commandId: CommandId.make("settle-source"),
+          threadId: sourceId,
+        });
+
+        assert.deepInclude(yield* phaseOf(sourceId), {
+          status: "ended",
+          reason: "stopped",
+          reviews: 0,
+          budget: 3,
+        });
+        yield* reactor.advanceThread(sourceId);
+        assert.isUndefined(reviewerMarker((yield* linkOf(loop.reviewThreadId))!));
+        yield* Deferred.succeed(reviewing1, undefined);
+        yield* awaitTurn(loop.reviewThreadId, loop, reviewing(1));
+        yield* reactor.advanceThread(loop.reviewThreadId);
+        assert.deepEqual(firstLines(yield* loopMessages(sourceId)), [BRIEF_REQUEST]);
+      }),
+    );
+  }),
 );
 
 it.live("a failed review ends the loop and tells the source thread why", () =>
@@ -537,6 +797,7 @@ it.live("a failed review ends the loop and tells the source thread why", () =>
       const reactor = yield* PullRequestReviewLoopService.make;
       const sourceId = ThreadId.make("thread:loop:review-failed");
       const loop = yield* startLoop(sourceId);
+      yield* passBrief(reactor, sourceId, loop);
       yield* awaitTurn(loop.reviewThreadId, loop, reviewing(1));
       yield* reactor.advanceThread(loop.reviewThreadId);
 
@@ -544,14 +805,40 @@ it.live("a failed review ends the loop and tells the source thread why", () =>
         status: "ended",
         reason: "review_failed",
         reviews: 0,
+        budget: 3,
         detail: "The provider hit its usage limit",
       });
-      const told = yield* loopMessages(sourceId);
-      assert.lengthOf(told, 1);
-      assert.strictEqual(
-        told[0]!.split("\n")[0],
+      assert.deepEqual(firstLines(yield* loopMessages(sourceId)), [
+        BRIEF_REQUEST,
         "**Review loop stopped.** Review 1 of 3 on #42 failed: The provider hit its usage limit.",
-      );
+      ]);
+      assert.isUndefined(reviewerMarker((yield* linkOf(loop.reviewThreadId))!));
+    }),
+  ),
+);
+
+it.live("a failed brief ends the loop quietly before any review", () =>
+  runWith(
+    {
+      brief: { text: "The provider hit its usage limit.", status: "failed" },
+      reviews: [],
+      fixes: [],
+    },
+    Effect.gen(function* () {
+      const reactor = yield* PullRequestReviewLoopService.make;
+      const sourceId = ThreadId.make("thread:loop:brief-failed");
+      const loop = yield* startLoop(sourceId);
+      yield* passBrief(reactor, sourceId, loop);
+
+      assert.deepInclude(yield* phaseOf(sourceId), {
+        status: "ended",
+        reason: "author_failed",
+        reviews: 0,
+        budget: 3,
+        detail: "The provider hit its usage limit",
+      });
+      assert.deepEqual(firstLines(yield* loopMessages(sourceId)), [BRIEF_REQUEST]);
+      assert.lengthOf(yield* loopMessages(loop.reviewThreadId), 0);
       assert.isUndefined(reviewerMarker((yield* linkOf(loop.reviewThreadId))!));
     }),
   ),
@@ -567,6 +854,7 @@ it.live("a stopped fix ends the loop quietly", () =>
       const reactor = yield* PullRequestReviewLoopService.make;
       const sourceId = ThreadId.make("thread:loop:fix-stopped");
       const loop = yield* startLoop(sourceId);
+      yield* passBrief(reactor, sourceId, loop);
       yield* awaitTurn(loop.reviewThreadId, loop, reviewing(1));
       yield* reactor.advanceThread(loop.reviewThreadId);
       yield* awaitTurn(sourceId, loop, fixing(1));
@@ -576,8 +864,9 @@ it.live("a stopped fix ends the loop quietly", () =>
         status: "ended",
         reason: "author_stopped",
         reviews: 1,
+        budget: 3,
       });
-      assert.lengthOf(yield* loopMessages(sourceId), 1);
+      assert.lengthOf(yield* loopMessages(sourceId), 2);
       assert.lengthOf(yield* loopMessages(loop.reviewThreadId), 1);
     }),
   ),
@@ -595,6 +884,7 @@ it.live("cancelling the queued review bubble ends the loop quietly", () =>
         const reactor = yield* PullRequestReviewLoopService.make;
         const sourceId = ThreadId.make("thread:loop:delivery-cancelled");
         const loop = yield* startLoop(sourceId);
+        yield* passBrief(reactor, sourceId, loop);
         yield* awaitTurn(loop.reviewThreadId, loop, reviewing(1));
         yield* dispatch({
           type: "message.dispatch",
@@ -647,43 +937,40 @@ it.live("cancelling the queued review bubble ends the loop quietly", () =>
   }),
 );
 
-it.live("the reviewer's provider turned off before a ping ends the loop and says so", () =>
+it.live("the reviewer's provider turned off after the brief ends the loop and says so", () =>
   runWith(
-    { reviews: [changes("Finding one.")], fixes: [{ text: "Fixed one." }] },
+    { reviews: [], fixes: [] },
     Effect.gen(function* () {
       const reactor = yield* PullRequestReviewLoopService.make;
       const sourceId = ThreadId.make("thread:loop:reviewer-off");
       const loop = yield* startLoop(sourceId, { projectId: reviewerOffProjectId });
-      yield* awaitTurn(loop.reviewThreadId, loop, reviewing(1));
-      yield* reactor.advanceThread(loop.reviewThreadId);
-      yield* awaitTurn(sourceId, loop, fixing(1));
-      yield* reactor.advanceThread(sourceId);
+      yield* passBrief(reactor, sourceId, loop);
 
       assert.deepInclude(yield* phaseOf(sourceId), {
         status: "ended",
         reason: "review_failed",
-        reviews: 1,
+        reviews: 0,
+        budget: 3,
         detail: "the reviewer's provider is off for this project",
       });
-      const told = yield* loopMessages(sourceId);
-      assert.lengthOf(told, 2);
-      assert.isTrue(
-        told[1]!.startsWith(
-          "**Review loop stopped.** Review 2 of 3 on #42 failed: the reviewer's provider is off for this project.",
-        ),
-      );
-      assert.lengthOf(yield* loopMessages(loop.reviewThreadId), 1);
+      assert.deepEqual(firstLines(yield* loopMessages(sourceId)), [
+        BRIEF_REQUEST,
+        "**Review loop stopped.** Review 1 of 3 on #42 failed: the reviewer's provider is off for this project.",
+      ]);
+      assert.lengthOf(yield* loopMessages(loop.reviewThreadId), 0);
+      assert.isUndefined(reviewerMarker((yield* linkOf(loop.reviewThreadId))!));
     }),
   ),
 );
 
-it.live("the source thread's provider turned off refuses review 1 and fails fix 1", () =>
+it.live("the source thread's provider turned off fails fix 1 without a note", () =>
   runWith(
-    { reviews: [changes("Finding one.")], fixes: [] },
+    { reviews: [changes("S1 [should] src/login.ts:12 skips the token check.")], fixes: [] },
     Effect.gen(function* () {
       const reactor = yield* PullRequestReviewLoopService.make;
       const sourceId = ThreadId.make("thread:loop:author-off");
       const loop = yield* startLoop(sourceId, { projectId: authorOffProjectId });
+      yield* passBrief(reactor, sourceId, loop);
       yield* awaitTurn(loop.reviewThreadId, loop, reviewing(1));
       yield* reactor.advanceThread(loop.reviewThreadId);
 
@@ -691,10 +978,34 @@ it.live("the source thread's provider turned off refuses review 1 and fails fix 
         status: "ended",
         reason: "author_failed",
         reviews: 1,
+        budget: 3,
         detail: "this thread's provider is off for this project",
       });
-      assert.lengthOf(yield* loopMessages(sourceId), 0);
+      assert.deepEqual(firstLines(yield* loopMessages(sourceId)), [BRIEF_REQUEST]);
       assert.isUndefined(reviewerMarker((yield* linkOf(loop.reviewThreadId))!));
+    }),
+  ),
+);
+
+it.live("an approval that cannot reach the source says so on the record", () =>
+  runWith(
+    { reviews: [{ text: "VERDICT: APPROVE" }], fixes: [] },
+    Effect.gen(function* () {
+      const reactor = yield* PullRequestReviewLoopService.make;
+      const sourceId = ThreadId.make("thread:loop:approved-author-off");
+      const loop = yield* startLoop(sourceId, { projectId: authorOffProjectId });
+      yield* passBrief(reactor, sourceId, loop);
+      yield* awaitTurn(loop.reviewThreadId, loop, reviewing(1));
+      yield* reactor.advanceThread(loop.reviewThreadId);
+
+      assert.deepInclude(yield* phaseOf(sourceId), {
+        status: "ended",
+        reason: "approved",
+        reviews: 1,
+        budget: 3,
+        detail: "this thread's provider is off",
+      });
+      assert.deepEqual(firstLines(yield* loopMessages(sourceId)), [BRIEF_REQUEST]);
     }),
   ),
 );
@@ -706,6 +1017,7 @@ it.live("a step whose id an earlier rejection burned ends the loop as aborted", 
       const reactor = yield* PullRequestReviewLoopService.make;
       const sourceId = ThreadId.make("thread:loop:burned");
       const loop = yield* startLoop(sourceId);
+      yield* passBrief(reactor, sourceId, loop);
       yield* awaitTurn(loop.reviewThreadId, loop, reviewing(1));
       const stale = yield* dispatch({
         type: "thread.pull-request-review-loop.advance",
@@ -728,8 +1040,9 @@ it.live("a step whose id an earlier rejection burned ends the loop as aborted", 
         status: "ended",
         reason: "aborted",
         reviews: 0,
+        budget: 3,
       });
-      assert.lengthOf(yield* loopMessages(sourceId), 0);
+      assert.deepEqual(firstLines(yield* loopMessages(sourceId)), [BRIEF_REQUEST]);
       assert.isUndefined(reviewerMarker((yield* linkOf(loop.reviewThreadId))!));
     }),
   ),
@@ -753,6 +1066,7 @@ it.live("a second loop on the same pull request starts cleanly after the first e
       });
       yield* reactor.advanceThread(sourceId);
       assert.isUndefined(reviewerMarker((yield* linkOf(first.reviewThreadId))!));
+      yield* awaitTurn(sourceId, first, scoping);
 
       yield* dispatch({
         type: "thread.pull-request.review-loop",
@@ -767,7 +1081,7 @@ it.live("a second loop on the same pull request starts cleanly after the first e
       assert.isDefined(second);
       assert.notEqual(second!.id, first.id);
       assert.notEqual(second!.reviewThreadId, first.reviewThreadId);
-      assert.deepEqual(second!.phase, reviewing(1));
+      assert.deepEqual(second!.phase, scoping);
       assert.equal(reviewerMarker((yield* linkOf(second!.reviewThreadId))!)?.id, second!.id);
     }),
   ),
