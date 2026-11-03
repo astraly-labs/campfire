@@ -2463,12 +2463,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     },
   );
 
-  /**
-   * Starts or stops a review loop on the source thread's link. A start records the loop in its
-   * brief turn, creates the review thread, and asks this thread's agent for the brief, in this one
-   * transaction, like a delegated task: the review thread's id is derived from this command, so
-   * nothing else can write it yet.
-   */
   const dispatchPullRequestReviewLoop = Effect.fn("orchestrationV2.dispatch.pullRequestReviewLoop")(
     function* (
       command: Extract<

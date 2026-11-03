@@ -132,10 +132,10 @@ const describePhase = (phase: ReviewLoopPhase): string => {
 const readingOf = (text: string): string => {
   const reading = readReview(text);
   if (reading.kind === "approved") return `approved, nits [${reading.nits.join(", ")}]`;
-  const open = reading.open.map((finding) =>
+  const blocking = reading.blocking.map((finding) =>
     [finding.id, finding.severity, finding.area].filter((part) => part !== null).join(" "),
   );
-  return `changes (${reading.verdict}), open [${open.join(", ")}], nits [${reading.nits.join(", ")}]`;
+  return `changes (${reading.verdict}), blocking [${blocking.join(", ")}], nits [${reading.nits.join(", ")}]`;
 };
 
 const BRIEF = [
@@ -171,116 +171,120 @@ describe("readReview", () => {
   it.each([
     ["R1 an approval", "VERDICT: APPROVE", "approved, nits []"],
     ["R2 an approval with a nit", APPROVED_WITH_NIT, "approved, nits [S1]"],
-    ["R3 a blocker and a nit", CHANGES_BLOCKER, "changes (changes), open [S1 blocker], nits [S2]"],
+    [
+      "R3 a blocker and a nit",
+      CHANGES_BLOCKER,
+      "changes (changes), blocking [S1 blocker], nits [S2]",
+    ],
     [
       "R4 APPROVE beside an open should",
       CONTRADICTION,
-      "changes (approve), open [S2 should], nits []",
+      "changes (contradicted), blocking [S2 should], nits []",
     ],
-    ["R5 CHANGES with only nits", ONLY_NITS, "changes (changes), open [], nits [S3]"],
+    ["R5 CHANGES with only nits", ONLY_NITS, "changes (changes), blocking [], nits [S3]"],
     [
       "R6 findings without a verdict line",
       NO_VERDICT,
-      "changes (missing), open [S1 should], nits []",
+      "changes (missing), blocking [S1 should], nits []",
     ],
-    ["R7 empty text", "", "changes (missing), open [], nits []"],
+    ["R7 empty text", "", "changes (missing), blocking [], nits []"],
     [
       "R8 both verdicts",
       "VERDICT: APPROVE\nVERDICT: CHANGES",
-      "changes (changes), open [], nits []",
+      "changes (changes), blocking [], nits []",
     ],
     [
       "R8 both verdicts, changes first",
       "VERDICT: CHANGES\nVERDICT: APPROVE",
-      "changes (changes), open [], nits []",
+      "changes (changes), blocking [], nits []",
     ],
     ["R9 a bold verdict with a period", "**Verdict:** Approve.", "approved, nits []"],
     ["R10 a verdict in a code fence", "```\n`VERDICT: APPROVE`\n```", "approved, nits []"],
     [
       "R11 an approval with a remark",
       "VERDICT: APPROVE (nits only)",
-      "changes (changes), open [], nits []",
+      "changes (changes), blocking [], nits []",
     ],
     ["R12 APPROVED", "VERDICT: APPROVED", "approved, nits []"],
     [
       "R13 APPROVE WITH CHANGES",
       "VERDICT: APPROVE WITH CHANGES",
-      "changes (changes), open [], nits []",
+      "changes (changes), blocking [], nits []",
     ],
-    ["R14 a quoted verdict", "> VERDICT: APPROVE", "changes (missing), open [], nits []"],
+    ["R14 a quoted verdict", "> VERDICT: APPROVE", "changes (missing), blocking [], nits []"],
     [
       "R15 a verdict mid-sentence",
       "I would write VERDICT: APPROVE here.",
-      "changes (missing), open [], nits []",
+      "changes (missing), blocking [], nits []",
     ],
     [
       "R16 a severity it cannot read",
       "VERDICT: APPROVE\nS1 [major] src/a.ts:1 drops it.",
-      "changes (approve), open [S1 unknown], nits []",
+      "changes (contradicted), blocking [S1 unknown], nits []",
     ],
     ["R17 resolved findings", APPROVED_RESOLVED, "approved, nits []"],
     [
       "R18 a should still open",
       "VERDICT: APPROVE\nS2 [should] still open: still racy",
-      "changes (approve), open [S2 should], nits []",
+      "changes (contradicted), blocking [S2 should], nits []",
     ],
     [
       "R19 still open without a severity",
       "VERDICT: APPROVE\nS2 still open: still racy",
-      "changes (approve), open [S2 unknown], nits []",
+      "changes (contradicted), blocking [S2 unknown], nits []",
     ],
     [
       "R20 resolved and still open",
       "VERDICT: CHANGES\nS1 resolved\nS1 [should] still open: the retry path",
-      "changes (changes), open [S1 should], nits []",
+      "changes (changes), blocking [S1 should], nits []",
     ],
     [
       "R21 a blocker with an area",
       CONCURRENCY,
-      "changes (changes), open [S7 blocker concurrency], nits []",
+      "changes (changes), blocking [S7 blocker concurrency], nits []",
     ],
     [
       "R22 an area in any case",
       "VERDICT: CHANGES\nS7 [should] [Data-Loss] src/a.ts:1 drops rows.",
-      "changes (changes), open [S7 should data-loss], nits []",
+      "changes (changes), blocking [S7 should data-loss], nits []",
     ],
     [
       "R23 an area that is not a risk area",
       "VERDICT: CHANGES\nS7 [should] [style] src/a.ts:1 hides a bug.",
-      "changes (changes), open [S7 should], nits []",
+      "changes (changes), blocking [S7 should], nits []",
     ],
-    ["R24 an area on a nit", AREA_ON_NIT, "changes (changes), open [], nits [S7]"],
+    ["R24 an area on a nit", AREA_ON_NIT, "changes (changes), blocking [], nits [S7]"],
     [
       "R25 a still open should with an area",
       AUTH_STILL_OPEN,
-      "changes (changes), open [S2 should auth], nits []",
+      "changes (changes), blocking [S2 should auth], nits []",
     ],
     [
       "R26 a bullet and bold id",
       "VERDICT: CHANGES\n- **S1** [should] src/a.ts:3 drops it.",
-      "changes (changes), open [S1 should], nits []",
+      "changes (changes), blocking [S1 should], nits []",
     ],
     [
       "R27 a quoted old finding",
       "> S1 [should] src/a.ts:3 drops it.\nVERDICT: APPROVE\nS1 resolved",
       "approved, nits []",
     ],
-    ["R28 findings without ids", UNTAGGED, "changes (changes), open [], nits []"],
+    ["R28 findings without ids", UNTAGGED, "changes (changes), blocking [], nits []"],
     [
       "a numbered finding",
       "VERDICT: CHANGES\n1. S2 [blocker] src/a.ts:3 drops it.",
-      "changes (changes), open [S2 blocker], nits []",
+      "changes (changes), blocking [S2 blocker], nits []",
     ],
     ["a zero-padded id", "VERDICT: APPROVE\nS01 [nit] src/a.ts:3 rename.", "approved, nits [S1]"],
     [
       "a lowercase id and severity",
       "VERDICT: CHANGES\ns3 [Blocker] src/a.ts:3 drops it.",
-      "changes (changes), open [S3 blocker], nits []",
+      "changes (changes), blocking [S3 blocker], nits []",
     ],
     [
       "a severity with extra words",
       "VERDICT: APPROVE\nS1 [should fix] src/a.ts:3 drops it.",
-      "changes (approve), open [S1 unknown], nits []",
+      "changes (contradicted), blocking [S1 unknown], nits []",
     ],
     [
       "a severity before resolved",
@@ -290,12 +294,12 @@ describe("readReview", () => {
     [
       "a severity before unresolved",
       "VERDICT: CHANGES\nS1 [should] unresolved: still racy.",
-      "changes (changes), open [S1 should], nits []",
+      "changes (changes), blocking [S1 should], nits []",
     ],
     [
       "the strongest severity of an id",
       "VERDICT: CHANGES\nS1 [nit] src/a.ts:3 rename.\nS1 [blocker] src/a.ts:3 drops it.",
-      "changes (changes), open [S1 blocker], nits []",
+      "changes (changes), blocking [S1 blocker], nits []",
     ],
     [
       "ids in number order",
@@ -1234,7 +1238,7 @@ describe("what the agents read", () => {
     for (const severity of ["blocker", "should"]) {
       assert.strictEqual(
         readingOf(`VERDICT: CHANGES\n${example.replace("blocker|should|nit", severity)}`),
-        `changes (changes), open [S1 ${severity}], nits []`,
+        `changes (changes), blocking [S1 ${severity}], nits []`,
       );
     }
     assert.strictEqual(
@@ -1250,7 +1254,7 @@ describe("what the agents read", () => {
     for (const area of areas ?? []) {
       assert.strictEqual(
         readingOf(`VERDICT: CHANGES\nS1 [blocker] [${area}] src/a.ts:1 claim. Fix: x`),
-        `changes (changes), open [S1 blocker ${area}], nits []`,
+        `changes (changes), blocking [S1 blocker ${area}], nits []`,
       );
     }
     assert.include(lines, "VERDICT: APPROVE or CHANGES");

@@ -5,6 +5,7 @@ import type {
   OrchestrationV2DomainEvent,
   OrchestrationV2Run,
   OrchestrationV2ServerCommand,
+  ReviewLoopEndedPhase,
   ReviewLoopId,
   RunId,
   ThreadId,
@@ -257,19 +258,15 @@ export const make = Effect.gen(function* () {
           );
     const pullRequest = Orchestrator.reviewLoopPullRequest(source, link);
     const now = DateTime.formatIso(yield* DateTime.now);
-    // The end's own note cannot reach the author, so an approval or a budget end says so on the
-    // chip, where the user still sees it.
+    const endWithoutNote = (to: ReviewLoopEndedPhase): Step => ({
+      kind: "advance",
+      to:
+        (to.reason === "approved" || to.reason === "budget_ended") && to.detail === undefined
+          ? endedReviewLoopPhase(loop.phase, to.reason, to.endedAt, "this thread's provider is off")
+          : to,
+    });
     const withProviderOff = (step: Step): Step => {
-      if (step.to.status === "ended") {
-        const { reason, endedAt, detail } = step.to;
-        return {
-          kind: "advance",
-          to:
-            (reason === "approved" || reason === "budget_ended") && detail === undefined
-              ? endedReviewLoopPhase(loop.phase, reason, endedAt, "this thread's provider is off")
-              : step.to,
-        };
-      }
+      if (step.to.status === "ended") return endWithoutNote(step.to);
       if (step.to.status === "fixing") {
         return {
           kind: "advance",

@@ -214,7 +214,6 @@ const scriptedAdapter = (
 };
 
 interface Script {
-  /** The source thread's first turn. Each later author turn takes the next fix. */
   readonly brief?: Reply;
   readonly reviews: Array<Reply>;
   readonly fixes: Array<Reply>;
@@ -403,7 +402,6 @@ const firstLines = (texts: ReadonlyArray<string>) => texts.map((text) => text.sp
 const BRIEF_REQUEST =
   "**Review loop started** for #42. Composer 1 reviews this change, up to 3 reviews.";
 
-/** Waits for the brief turn and takes the step into review 1. */
 const passBrief = (
   reactor: PullRequestReviewLoopService.PullRequestReviewLoopService["Service"],
   sourceId: ThreadId,
@@ -414,7 +412,6 @@ const passBrief = (
     yield* reactor.advanceThread(sourceId);
   });
 
-/** A reactor whose event tail replays from the first event, so no test races its subscription. */
 const replayingReactor = Effect.gen(function* () {
   const threads = yield* ThreadManagementService.ThreadManagementService;
   const reactor = yield* PullRequestReviewLoopService.make.pipe(
@@ -427,7 +424,6 @@ const replayingReactor = Effect.gen(function* () {
   return reactor;
 });
 
-/** Every phase the source recorded, in order, through the end. */
 const recordedPhases = (sourceId: ThreadId) =>
   Effect.gen(function* () {
     const sink = yield* EventSink.EventSinkV2;
