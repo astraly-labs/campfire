@@ -2991,9 +2991,9 @@ export const OrchestrationV2Command = Schema.Union([
    *
    * `start` records the loop on this thread's link in its brief turn, creates the review thread,
    * and asks this thread's agent for the review brief, in one transaction. It links the pull
-   * request first when `link` is set, like a watch. It is rejected while this thread has a live loop or is a live reviewer; when the
-   * thread is archived, settled, or a subagent; and when the pull request is merged or closed,
-   * or its head branch is not this thread's branch.
+   * request first when `link` is set, like a watch. It is rejected while this thread has a live
+   * loop or is a live reviewer; when the thread is archived, settled, or a subagent; and when the
+   * pull request is merged or closed, or its head branch is not this thread's branch.
    * `stop` ends the live loop `loopId` on this link with reason `stopped`.
    */
   Schema.Struct({

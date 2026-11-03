@@ -141,87 +141,114 @@ describe("findReviewLoopLink", () => {
 });
 
 describe("defaultReviewLoopReviewer", () => {
+  const model = (slug: string, flags: { isCustom?: boolean; isLegacy?: boolean } = {}) => ({
+    slug,
+    isCustom: flags.isCustom ?? false,
+    ...(flags.isLegacy === undefined ? {} : { isLegacy: flags.isLegacy }),
+  });
+  const codexModels = [
+    model("gpt-6-astra"),
+    model("gpt-6.1-sol"),
+    model("gpt-6.1-terra"),
+    model("gpt-6-sol"),
+    model("gpt-5.6-sol"),
+  ];
   const claude = {
     instanceId: ProviderInstanceId.make("claudeAgent"),
     driverKind: ProviderDriverKind.make("claudeAgent"),
+    models: [model("claude-opus-4-5")],
   };
   const claudeWork = {
     instanceId: ProviderInstanceId.make("claude_work"),
     driverKind: ProviderDriverKind.make("claudeAgent"),
+    models: [model("claude-opus-4-5")],
   };
   const codex = {
     instanceId: ProviderInstanceId.make("codex"),
     driverKind: ProviderDriverKind.make("codex"),
+    models: codexModels,
   };
   const cursor = {
     instanceId: ProviderInstanceId.make("cursor"),
     driverKind: ProviderDriverKind.make("cursor"),
+    models: [model("composer-1")],
   };
   const source: ModelSelection = { instanceId: claude.instanceId, model: "claude-opus-4-5" };
-  const projectReviewer: ModelSelection = {
-    instanceId: cursor.instanceId,
-    model: "composer-1",
-    options: [{ id: "reasoningEffort", value: "high" }],
-  };
+  const reviewerFor = (readyInstances: ReadonlyArray<typeof codex>, author = source) =>
+    defaultReviewLoopReviewer({
+      source: author,
+      sourceDriver:
+        readyInstances.find((entry) => entry.instanceId === author.instanceId)?.driverKind ??
+        claude.driverKind,
+      readyInstances,
+    });
 
-  it("keeps the project's review model, options included, when its instance is ready", () => {
-    expect(
-      defaultReviewLoopReviewer({
-        projectReviewer,
-        source,
-        sourceDriver: claude.driverKind,
-        readyInstances: [claude, codex, cursor],
-      }),
-    ).toEqual({ instanceId: cursor.instanceId, selection: projectReviewer });
+  it("picks the newest GPT Sol over an earlier instance and over the author's own model", () => {
+    const sol = {
+      instanceId: codex.instanceId,
+      selection: { instanceId: codex.instanceId, model: "gpt-6.1-sol" },
+    };
+    expect(reviewerFor([cursor, claude, codex])).toEqual(sol);
+    expect(reviewerFor([codex], { instanceId: codex.instanceId, model: "gpt-6-astra" })).toEqual(
+      sol,
+    );
   });
 
-  it("picks the first ready instance on another driver than the code's author", () => {
+  it("skips a Sol the user hid or that is legacy", () => {
     expect(
-      defaultReviewLoopReviewer({
-        projectReviewer,
-        source,
-        sourceDriver: claude.driverKind,
-        readyInstances: [claude, claudeWork, codex],
-      }),
-    ).toEqual({ instanceId: codex.instanceId, selection: null });
+      reviewerFor([
+        { ...codex, models: codexModels.filter((entry) => entry.slug !== "gpt-6.1-sol") },
+      ]),
+    ).toEqual({
+      instanceId: codex.instanceId,
+      selection: { instanceId: codex.instanceId, model: "gpt-6-sol" },
+    });
     expect(
-      defaultReviewLoopReviewer({
-        projectReviewer: null,
-        source,
-        sourceDriver: claude.driverKind,
-        readyInstances: [claudeWork, cursor, codex],
-      }),
-    ).toEqual({ instanceId: cursor.instanceId, selection: null });
+      reviewerFor([
+        {
+          ...codex,
+          models: codexModels.map((entry) =>
+            entry.slug === "gpt-6.1-sol" ? model("gpt-6.1-sol", { isLegacy: true }) : entry,
+          ),
+        },
+      ])?.selection?.model,
+    ).toBe("gpt-6-sol");
+  });
+
+  it("looks past a Codex instance that offers no Sol", () => {
+    const noSol = {
+      ...codex,
+      instanceId: ProviderInstanceId.make("codex_work"),
+      models: [model("gpt-6-astra"), model("gpt-7-sol", { isCustom: true })],
+    };
+    expect(reviewerFor([noSol, codex])?.instanceId).toBe(codex.instanceId);
+  });
+
+  it("without a Sol, picks the first ready instance on another driver than the author's", () => {
+    const astra = { ...codex, models: [model("gpt-6-astra")] };
+    expect(reviewerFor([claude, claudeWork, astra])).toEqual({
+      instanceId: codex.instanceId,
+      selection: null,
+    });
+    expect(reviewerFor([claudeWork, cursor, astra])).toEqual({
+      instanceId: cursor.instanceId,
+      selection: null,
+    });
   });
 
   it("falls back to the author's own model when every ready instance shares its driver", () => {
-    expect(
-      defaultReviewLoopReviewer({
-        projectReviewer: null,
-        source,
-        sourceDriver: claude.driverKind,
-        readyInstances: [claudeWork, claude],
-      }),
-    ).toEqual({ instanceId: claude.instanceId, selection: source });
-    expect(
-      defaultReviewLoopReviewer({
-        projectReviewer: null,
-        source,
-        sourceDriver: claude.driverKind,
-        readyInstances: [claudeWork],
-      }),
-    ).toEqual({ instanceId: claudeWork.instanceId, selection: null });
+    expect(reviewerFor([claudeWork, claude])).toEqual({
+      instanceId: claude.instanceId,
+      selection: source,
+    });
+    expect(reviewerFor([claudeWork])).toEqual({
+      instanceId: claudeWork.instanceId,
+      selection: null,
+    });
   });
 
   it("offers no reviewer when no instance is ready", () => {
-    expect(
-      defaultReviewLoopReviewer({
-        projectReviewer,
-        source,
-        sourceDriver: claude.driverKind,
-        readyInstances: [],
-      }),
-    ).toBeNull();
+    expect(reviewerFor([])).toBeNull();
   });
 });
 

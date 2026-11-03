@@ -1,12 +1,13 @@
-import type {
-  ModelSelection,
+import {
+  type ModelSelection,
   ProviderDriverKind,
-  ProviderInstanceId,
-  PullRequestState,
-  ServerProvider,
-  ThreadPullRequestLink,
+  type ProviderInstanceId,
+  type PullRequestState,
+  type ServerProvider,
+  type ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import { resolveProviderInstanceDisplayName } from "@t3tools/client-runtime/state/provider-instance-display";
+import { latestSolModel } from "@t3tools/shared/model";
 import { liveAuthorLoop, reviewerMarker } from "@t3tools/shared/pullRequestReviewLoop";
 import {
   threadPullRequestKeysEqual,
@@ -62,21 +63,38 @@ export function canStartReviewLoop(input: {
   );
 }
 
+const CODEX = ProviderDriverKind.make("codex");
+
+/**
+ * The reviewer the dialog starts with: the newest GPT Sol that the first ready Codex instance lets
+ * the user pick. Without one, the first ready instance on another driver than the author's, then
+ * the author's own model, then the first ready instance.
+ */
 export function defaultReviewLoopReviewer(input: {
-  readonly projectReviewer: ModelSelection | null;
   readonly source: ModelSelection;
   readonly sourceDriver: ProviderDriverKind | null;
-  /** In picker order. */
+  /** In picker order, each with the models the user can pick. */
   readonly readyInstances: ReadonlyArray<{
     readonly instanceId: ProviderInstanceId;
     readonly driverKind: ProviderDriverKind;
+    readonly models: ReadonlyArray<{
+      readonly slug: string;
+      readonly isCustom: boolean;
+      readonly isLegacy?: boolean | undefined;
+    }>;
   }>;
 }): { readonly instanceId: ProviderInstanceId; readonly selection: ModelSelection | null } | null {
+  for (const entry of input.readyInstances) {
+    const sol = entry.driverKind === CODEX ? latestSolModel(entry.models) : null;
+    if (sol !== null) {
+      return {
+        instanceId: entry.instanceId,
+        selection: { instanceId: entry.instanceId, model: sol.slug },
+      };
+    }
+  }
   const isReady = (instanceId: ProviderInstanceId) =>
     input.readyInstances.some((entry) => entry.instanceId === instanceId);
-  if (input.projectReviewer !== null && isReady(input.projectReviewer.instanceId)) {
-    return { instanceId: input.projectReviewer.instanceId, selection: input.projectReviewer };
-  }
   const otherDriver = input.readyInstances.find((entry) => entry.driverKind !== input.sourceDriver);
   if (otherDriver !== undefined) return { instanceId: otherDriver.instanceId, selection: null };
   if (isReady(input.source.instanceId)) {

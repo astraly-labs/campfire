@@ -4,12 +4,12 @@ import {
   type ScopedThreadRef,
   type ServerProvider,
 } from "@t3tools/contracts";
-import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { createModelSelection, modelSelectionsEqual } from "@t3tools/shared/model";
+import { createModelSelection, solModelVersion } from "@t3tools/shared/model";
 import { useNavigate } from "@tanstack/react-router";
 import * as Schema from "effect/Schema";
 import { useId, useMemo, useState } from "react";
@@ -20,15 +20,14 @@ import {
   resolveAppModelSelectionForInstance,
 } from "~/modelSelection";
 import { deriveProviderInstanceEntries, sortProviderInstanceEntries } from "~/providerInstances";
-import { readThreadShell, useProject, useServerConfigs, useThreadShell } from "~/state/entities";
-import { projectEnvironment } from "~/state/projects";
+import { readThreadShell, useServerConfigs, useThreadShell } from "~/state/entities";
 import { threadEnvironment } from "~/state/threads";
-import { useAtomCommand } from "~/state/use-atom-command";
 import { useOrchestrationCommand } from "~/state/use-orchestration-command";
 import { buildThreadRouteParams } from "~/threadRoutes";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
 import { Button } from "../ui/button";
+import { Checkbox } from "../ui/checkbox";
 import {
   Dialog,
   DialogDescription,
@@ -67,9 +66,6 @@ export function ReviewLoopDialog({
   const { environmentId } = threadRef;
   const navigate = useNavigate();
   const thread = useThreadShell(threadRef);
-  const project = useProject(
-    thread === null ? null : scopeProjectRef(environmentId, thread.projectId),
-  );
   const providers = useServerConfigs().get(environmentId)?.providers ?? EMPTY_PROVIDERS;
   const settings = useEnvironmentSettings(environmentId);
   const allEntries = useMemo(
@@ -92,16 +88,18 @@ export function ReviewLoopDialog({
     [instanceEntries, settings],
   );
   const sourceSelection = thread?.modelSelection ?? null;
-  const projectReviewer = project?.defaultReviewModelSelection ?? null;
   const defaultReviewer = useMemo(() => {
     if (sourceSelection === null) return null;
     const seed = defaultReviewLoopReviewer({
-      projectReviewer,
       source: sourceSelection,
       sourceDriver:
         allEntries.find((entry) => entry.instanceId === sourceSelection.instanceId)?.driverKind ??
         null,
-      readyInstances: instanceEntries,
+      readyInstances: instanceEntries.map((entry) => ({
+        instanceId: entry.instanceId,
+        driverKind: entry.driverKind,
+        models: modelOptionsByInstance.get(entry.instanceId) ?? [],
+      })),
     });
     if (seed === null) return null;
     const model = resolveAppModelSelectionForInstance(
@@ -113,7 +111,7 @@ export function ReviewLoopDialog({
     return model === null
       ? seed.selection
       : createModelSelection(seed.instanceId, model, seed.selection?.options);
-  }, [allEntries, instanceEntries, projectReviewer, providers, settings, sourceSelection]);
+  }, [allEntries, instanceEntries, modelOptionsByInstance, providers, settings, sourceSelection]);
   const [picked, setPicked] = useState<ModelSelection | null>(null);
   const reviewer = picked ?? defaultReviewer;
   const reviewerEntry =
@@ -123,12 +121,12 @@ export function ReviewLoopDialog({
   const [note, setNote] = useState("");
   const trimmedNote = note.trim();
   const noteValid = trimmedNote === "" || isReviewLoopNote(trimmedNote);
+  const [allowFive, setAllowFive] = useState(false);
   const [starting, setStarting] = useState(false);
   const noteId = useId();
   const reviewLoop = useOrchestrationCommand(threadEnvironment.reviewLoop, {
     reportFailure: false,
   });
-  const updateProject = useAtomCommand(projectEnvironment.update, { reportFailure: false });
 
   const openReviewThread = () => {
     const source = readThreadShell(threadRef);
@@ -156,7 +154,7 @@ export function ReviewLoopDialog({
         request: {
           type: "start",
           reviewer,
-          budget: 3,
+          budget: allowFive ? 5 : 3,
           ...(trimmedNote === "" ? {} : { note: trimmedNote }),
           ...(linked ? {} : { link: { url: pullRequest.url, source: "manual" } }),
         },
@@ -186,16 +184,6 @@ export function ReviewLoopDialog({
         },
       },
     });
-    if (
-      project !== null &&
-      (project.defaultReviewModelSelection == null ||
-        !modelSelectionsEqual(project.defaultReviewModelSelection, reviewer))
-    ) {
-      void updateProject({
-        environmentId,
-        input: { projectId: project.id, defaultReviewModelSelection: reviewer },
-      });
-    }
   };
 
   return (
@@ -257,6 +245,9 @@ export function ReviewLoopDialog({
                   )}
                 </div>
               )}
+              {defaultReviewer !== null && solModelVersion(defaultReviewer.model) !== null ? (
+                <p className="text-xs text-muted-foreground">Defaults to the latest GPT Sol.</p>
+              ) : null}
             </div>
             <div className="grid gap-1.5">
               <Label htmlFor={noteId}>Notes for the reviewer (optional)</Label>
@@ -269,6 +260,20 @@ export function ReviewLoopDialog({
               />
               <p className="text-xs text-muted-foreground">
                 The reviewer gets your note word for word with the first review.
+              </p>
+            </div>
+            <div className="grid gap-1.5">
+              <Label>
+                <Checkbox
+                  checked={allowFive}
+                  disabled={starting}
+                  onCheckedChange={(checked) => setAllowFive(checked === true)}
+                />
+                Allow up to 5 reviews
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                A loop runs up to 3 reviews. It goes to 5 by itself while a security, permissions,
+                auth, data-loss, or concurrency finding stays open.
               </p>
             </div>
           </div>
