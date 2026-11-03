@@ -65,11 +65,6 @@ export function canStartReviewLoop(input: {
 
 const CODEX = ProviderDriverKind.make("codex");
 
-/**
- * The reviewer the dialog starts with: the newest GPT Sol that the first ready Codex instance lets
- * the user pick. Without one, the first ready instance on another driver than the author's, then
- * the author's own model, then the first ready instance.
- */
 export function defaultReviewLoopReviewer(input: {
   readonly source: ModelSelection;
   readonly sourceDriver: ProviderDriverKind | null;

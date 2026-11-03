@@ -1,7 +1,6 @@
 import type {
   OrchestrationV2PendingBackgroundTask,
   OrchestrationV2ThreadShell,
-  ReviewLoopBudget,
   ReviewLoopEndedPhase,
   ReviewLoopEndReason,
   ReviewLoopFixingPhase,
@@ -26,10 +25,7 @@ export type ReviewLoopPhaseKey =
   | `fixing-${ReviewLoopFixingPhase["round"]}`
   | "ended";
 
-/**
- * The phase part of the ids a loop derives. A changed key orphans the loops in flight. The budget
- * is not in the key: a loop meets each key once, because only the step out of review 3 changes it.
- */
+/** The phase part of the ids a loop derives. */
 export function reviewLoopPhaseKey(phase: ReviewLoopPhase): ReviewLoopPhaseKey {
   switch (phase.status) {
     case "scoping":
@@ -145,9 +141,6 @@ const OUTCOME_CHIP = {
   closed: { tone: "muted", label: "Closed" },
 } satisfies Record<ReviewLoopOutcome, Pick<ReviewLoopChip, "tone" | "label">>;
 
-/** The last review of a budget has no fix. */
-const MAX_FIXES = { 3: 2, 5: 4 } as const satisfies Record<ReviewLoopBudget, number>;
-
 function reviewCount(reviews: number): string {
   return reviews === 1 ? "1 review" : `${reviews} reviews`;
 }
@@ -156,7 +149,6 @@ function sentence(text: string): string {
   return `${text.charAt(0).toUpperCase()}${text.slice(1)}.`;
 }
 
-/** The brief is the author's turn before review 1. Every later author turn answers a review. */
 function authorTurn(reviews: ReviewLoopEndedPhase["reviews"]): string {
   return reviews === 0 ? "The brief" : `Fix ${reviews}`;
 }
@@ -216,7 +208,7 @@ function authorChip(
       const blocking = phase.open.filter((finding) => finding.severity !== "nit");
       return {
         tone: "working",
-        label: `Fix ${phase.round}/${MAX_FIXES[phase.budget]}`,
+        label: `Fix ${phase.round}/${phase.budget - 1}`,
         detail: `This thread's agent is answering review ${phase.round}.${
           blocking.length === 0
             ? ""

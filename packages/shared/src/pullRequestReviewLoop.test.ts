@@ -62,6 +62,24 @@ describe("reviewLoopPhaseKey", () => {
     expect(reviewLoopPhaseKey(ended("approved", 1))).toBe("ended");
     expect(reviewLoopPhaseKey(ended("stopped", 0, 5))).toBe("ended");
   });
+
+  it("gives each step of the longest loop its own key, so its derived ids never collide", () => {
+    const path: ReadonlyArray<ReviewLoopPhase> = [
+      { status: "scoping", budget: 3 },
+      { status: "reviewing", budget: 3, round: 1 },
+      { status: "fixing", budget: 3, round: 1, open: [] },
+      { status: "reviewing", budget: 3, round: 2 },
+      { status: "fixing", budget: 3, round: 2, open: [] },
+      { status: "reviewing", budget: 3, round: 3 },
+      { status: "fixing", budget: 5, round: 3, open: [] },
+      { status: "reviewing", budget: 5, round: 4 },
+      { status: "fixing", budget: 5, round: 4, open: [] },
+      { status: "reviewing", budget: 5, round: 5 },
+      ended("budget_ended", 5, 5),
+    ];
+    const keys = path.map(reviewLoopPhaseKey);
+    expect(new Set(keys).size).toBe(keys.length);
+  });
 });
 
 describe("reviewLoopOutcome", () => {

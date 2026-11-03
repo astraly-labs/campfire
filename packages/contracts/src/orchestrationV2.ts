@@ -2987,7 +2987,7 @@ export const OrchestrationV2Command = Schema.Union([
   }),
   /**
    * Start or stop a review loop: another model reviews this thread's change in a review thread,
-   * and this thread's agent answers each review, up to `budget` reviews.
+   * and this thread's agent answers each review.
    *
    * `start` records the loop on this thread's link in its brief turn, creates the review thread,
    * and asks this thread's agent for the review brief, in one transaction. It links the pull
@@ -3007,7 +3007,6 @@ export const OrchestrationV2Command = Schema.Union([
       Schema.Struct({
         type: Schema.Literal("start"),
         reviewer: ModelSelection,
-        /** 5 when the user allows up to 5 reviews. */
         budget: ReviewLoopBudget,
         note: Schema.optional(ReviewLoopNote),
         link: Schema.optional(

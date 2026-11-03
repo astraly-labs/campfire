@@ -323,9 +323,8 @@ function compareSolVersions(left: ReadonlyArray<number>, right: ReadonlyArray<nu
 }
 
 /**
- * The newest GPT Sol in `models`, so no caller hardcodes a Sol id. Custom models never count. A
- * model that is not legacy beats a legacy one, then the higher version wins, and a tie keeps the
- * catalog order.
+ * The newest GPT Sol in `models`. Custom models never count. A model that is not legacy beats a
+ * legacy one, then the higher version wins, and a tie keeps the catalog order.
  */
 export function latestSolModel<
   Model extends {

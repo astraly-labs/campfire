@@ -134,7 +134,6 @@ export type ThreadPullRequestWatch = typeof ThreadPullRequestWatch.Type;
 export const ReviewLoopBudget = Schema.Literals([3, 5]);
 export type ReviewLoopBudget = typeof ReviewLoopBudget.Type;
 
-/** A finding id as the reviewer numbers it, such as `S2`. */
 export const ReviewLoopFindingId = Schema.String.check(Schema.isPattern(/^S[1-9]\d*$/)).pipe(
   Schema.brand("ReviewLoopFindingId"),
 );
@@ -186,7 +185,6 @@ const ReviewLoopScoping = Schema.Struct({
   status: Schema.Literal("scoping"),
   budget: ReviewLoopBudget,
 });
-// Each budget has its own rounds, so "review 4 of 3" neither compiles nor decodes.
 const ReviewLoopReviewingOf3 = Schema.Struct({
   status: Schema.Literal("reviewing"),
   budget: Schema.Literal(3),

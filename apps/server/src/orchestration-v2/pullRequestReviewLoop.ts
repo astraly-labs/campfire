@@ -39,8 +39,6 @@ const MAX_AUTHOR_REPLY_CHARS = 8_000;
 const MAX_DETAIL_CHARS = 200;
 const MAX_FINDING_REFS = 40;
 
-// The lines each agent ends its turn with. The texts render these and the readers parse them, so
-// what an agent is told and what the server reads cannot drift apart.
 const VERDICT = { prefix: "VERDICT:", approve: "APPROVE", changes: "CHANGES" } as const;
 const APPROVE_VALUES: ReadonlySet<string> = new Set([VERDICT.approve, "APPROVED"]);
 const STUCK_LINE = "LOOP: STUCK";
@@ -52,11 +50,7 @@ const STILL_OPEN = "still open";
 
 export type RiskArea = (typeof RISK_AREAS)[number];
 
-/**
- * A finding that blocks approval. A severity the reader cannot read blocks too, and it never
- * extends the budget, so its area is always null.
- */
-export type OpenFinding =
+export type BlockingFinding =
   | {
       readonly id: ReviewLoopFindingId;
       readonly severity: "blocker" | "should";
@@ -64,14 +58,12 @@ export type OpenFinding =
     }
   | { readonly id: ReviewLoopFindingId; readonly severity: "unknown"; readonly area: null };
 
-/** An approved reading holds only nits, so it cannot carry an open blocker or should. */
 export type ReviewReading =
   | { readonly kind: "approved"; readonly nits: ReadonlyArray<ReviewLoopFindingId> }
   | {
       readonly kind: "changes";
-      /** What the verdict lines said. "approve" means the review contradicts itself. */
-      readonly verdict: "approve" | "changes" | "missing";
-      readonly open: ReadonlyArray<OpenFinding>;
+      readonly verdict: "contradicted" | "changes" | "missing";
+      readonly blocking: ReadonlyArray<BlockingFinding>;
       readonly nits: ReadonlyArray<ReviewLoopFindingId>;
     };
 type ChangesReading = Extract<ReviewReading, { readonly kind: "changes" }>;
@@ -83,7 +75,6 @@ export type AuthorReading =
       readonly ids: readonly [ReviewLoopFindingId, ...Array<ReviewLoopFindingId>];
     };
 
-/** A line as the readers see it, or null for a quoted line, which repeats another message. */
 function protocolLine(raw: string): string | null {
   const line = raw
     .replaceAll(/[*_`]/g, "")
@@ -118,10 +109,6 @@ interface FindingMark {
   readonly area: RiskArea | null;
 }
 
-/**
- * A line that keeps finding `id` open, or null. `S<n> [severity] [area] ...` opens it, and so does
- * `S<n> still open`, with an unknown severity. A resolved line keeps nothing open.
- */
 function readFindingLine(line: string): { readonly id: number; readonly mark: FindingMark } | null {
   const finding = /^S0*([1-9]\d*)\b[:.)]?\s*(.*)$/.exec(line);
   if (finding === null) return null;
@@ -160,44 +147,48 @@ export function readReview(text: string): ReviewReading {
       ? [APPROVE_VALUES.has(line.slice(VERDICT.prefix.length).trim())]
       : [],
   );
-  const verdict: ChangesReading["verdict"] =
+  const verdict =
     approvals.length === 0 ? "missing" : approvals.every(Boolean) ? "approve" : "changes";
   const marks = new Map<number, Array<FindingMark>>();
   for (const line of lines) {
     const finding = readFindingLine(line);
     if (finding !== null) marks.set(finding.id, [...(marks.get(finding.id) ?? []), finding.mark]);
   }
-  const open: Array<OpenFinding> = [];
+  const blocking: Array<BlockingFinding> = [];
   const nits: Array<ReviewLoopFindingId> = [];
   for (const [number, found] of [...marks].toSorted(([left], [right]) => left - right)) {
     const id = findingId(number);
-    const blocking = found.filter((mark) => mark.severity !== "nit");
-    if (blocking.length === 0) {
+    const blockingMarks = found.filter((mark) => mark.severity !== "nit");
+    if (blockingMarks.length === 0) {
       nits.push(id);
       continue;
     }
     const strongest = (["blocker", "should"] as const).find((severity) =>
-      blocking.some((mark) => mark.severity === severity),
+      blockingMarks.some((mark) => mark.severity === severity),
     );
-    open.push(
+    blocking.push(
       strongest === undefined
         ? { id, severity: "unknown", area: null }
         : {
             id,
             severity: strongest,
-            area: blocking.find((mark) => mark.area !== null)?.area ?? null,
+            area: blockingMarks.find((mark) => mark.area !== null)?.area ?? null,
           },
     );
   }
-  return verdict === "approve" && open.length === 0
+  return verdict === "approve" && blocking.length === 0
     ? { kind: "approved", nits }
-    : { kind: "changes", verdict, open, nits };
+    : {
+        kind: "changes",
+        verdict: verdict === "approve" ? "contradicted" : verdict,
+        blocking,
+        nits,
+      };
 }
 
 /**
  * Reads the author's final message after a fix. Stuck only when an unquoted line is `LOOP: STUCK`
- * followed by one or more ids, such as `S2` or `S2, S5`. Anything else reads as continue, which
- * costs one more review and never ends the loop early. Nothing the author writes can approve.
+ * followed by one or more ids, such as `S2` or `S2, S5`. Anything else reads as continue.
  */
 export function readAuthorReply(text: string): AuthorReading {
   const ids = new Set<number>();
@@ -226,7 +217,6 @@ const REVIEW_AFTER_FIX = {
   readonly 5: Record<FixingOf5["round"], ReviewingOf5["round"]>;
 };
 
-/** The last review of a budget has no fix. Only review 3 of 3 can still extend. */
 const FIX_AFTER_REVIEW = {
   3: { 1: 1, 2: 2, 3: null },
   5: { 1: 1, 2: 2, 3: 3, 4: 4, 5: null },
@@ -276,7 +266,7 @@ export function reviewLoopSuccessor(
 
 /**
  * A live `to` must be a forward step from `from`, with or without the extension. An end must keep
- * `from`'s budget. The orchestrator checks the phase stored on the link, never a command's copy.
+ * `from`'s budget.
  */
 export function isReviewLoopStep(from: ReviewLoopLivePhase, to: ReviewLoopPhase): boolean {
   if (to.status === "ended") return to.budget === from.budget;
@@ -308,8 +298,7 @@ function reviewsFinishedBefore(phase: ReviewLoopLivePhase): ReviewLoopEndedPhase
   }
 }
 
-/** The ends that a finished review's own result decides. author_failed: its fix could not start. */
-const ENDED_BY_REVIEW_RESULT: ReadonlySet<ReviewLoopEndReason> = new Set([
+const REVIEW_FINISHED_REASONS: ReadonlySet<ReviewLoopEndReason> = new Set([
   "approved",
   "budget_ended",
   "author_failed",
@@ -331,7 +320,7 @@ export function endedReviewLoopPhase(
     status: "ended",
     reason,
     reviews:
-      from.status === "reviewing" && ENDED_BY_REVIEW_RESULT.has(reason)
+      from.status === "reviewing" && REVIEW_FINISHED_REASONS.has(reason)
         ? from.round
         : reviewsFinishedBefore(from),
     budget: from.budget,
@@ -340,7 +329,6 @@ export function endedReviewLoopPhase(
   };
 }
 
-/** The review thread while reviewing. The source thread while scoping or fixing. */
 export function awaitedThread(
   loop: Pick<LiveReviewLoopAuthor, "reviewThreadId" | "phase">,
   sourceThreadId: ThreadId,
@@ -441,16 +429,10 @@ export interface ReviewLoopPullRequest {
   readonly state: PullRequestState | null;
 }
 
-/**
- * The review thread as the decision sees it. Its label and model exist only while it is live,
- * and row 2 ends the loop otherwise, so no later row reads a label that does not exist.
- */
 export type ReviewThreadFacts =
   | {
       readonly status: "live";
-      /** Such as "Codex · gpt-6.1-sol", for the headers of the texts. */
       readonly reviewerLabel: string;
-      /** The review thread's model slug, for the pull request line. */
       readonly reviewerModel: string;
     }
   | { readonly status: "archived" | "deleted" | "missing" };
@@ -473,7 +455,6 @@ export type ReviewLoopDecision =
       readonly post?: Omit<ReviewLoopPost, "messageId">;
     };
 
-/** The ends that post a note into the source thread, with what each note needs. */
 export type ReviewLoopEndNote =
   | {
       readonly reason: "approved";
@@ -494,15 +475,7 @@ export type ReviewLoopEndNote =
     }
   | { readonly reason: "review_stopped" | "review_failed"; readonly detail: string | null };
 
-/**
- * The ends that post nothing, because the source thread already shows its own state. With the
- * noted ends this covers every reason but "stopped", which only the user's stop and
- * `endLinkAutomation` write.
- */
-type QuietEnd = Extract<
-  ReviewLoopEndReason,
-  "pr_merged" | "pr_closed" | "aborted" | "author_stopped" | "author_failed"
->;
+type QuietEnd = Exclude<ReviewLoopEndReason, ReviewLoopEndNote["reason"] | "stopped">;
 
 const REVIEW_THREAD_GONE = {
   archived: "the review thread was archived",
@@ -523,10 +496,9 @@ function endDetail(note: ReviewLoopEndNote): string | null {
   }
 }
 
-/** Every finding the review left open, nits included, for the next review request and the chip. */
 function findingRefs(reading: ChangesReading): ReadonlyArray<ReviewLoopFindingRef> {
   return [
-    ...reading.open.map((finding) => ({ id: finding.id, severity: finding.severity })),
+    ...reading.blocking.map((finding) => ({ id: finding.id, severity: finding.severity })),
     ...reading.nits.map((id) => ({ id, severity: "nit" as const })),
   ]
     .toSorted((left, right) => findingNumber(left.id) - findingNumber(right.id))
@@ -558,8 +530,7 @@ function findingRefs(reading: ChangesReading): ReadonlyArray<ReviewLoopFindingRe
  * | 17 | reviewing 3 of 3 | not approved, an open blocker or should has an area  | fixing 3 of 5           | source: review + delivery    |
  * | 18 | reviewing B of B | not approved, no extension                           | ended(budget_ended)     | source: review + budget note |
  *
- * Rows 8 and 10 are one path, and so are rows 16 and 17: `reviewLoopSuccessor` picks the step. A
- * LOOP: STUCK line in fix 1 has no effect, because the author has replied only once.
+ * A LOOP: STUCK line in fix 1 has no effect, because the author has replied only once.
  */
 export function decideReviewLoop(facts: ReviewLoopFacts): ReviewLoopDecision {
   const { loop, pullRequest, reviewThread, progress, resultText, now } = facts;
@@ -611,8 +582,9 @@ export function decideReviewLoop(facts: ReviewLoopFacts): ReviewLoopDecision {
   if (progress.kind === "held") {
     return tell({ reason: "review_stopped", detail: "it is paused in the review thread's queue" });
   }
-  if (progress.run.status === "failed")
+  if (progress.run.status === "failed") {
     return tell({ reason: "review_failed", detail: resultText });
+  }
   if (progress.run.status !== "completed") {
     return tell({ reason: "review_stopped", detail: "it was stopped in the review thread" });
   }
@@ -631,7 +603,7 @@ export function decideReviewLoop(facts: ReviewLoopFacts): ReviewLoopDecision {
     });
   }
   const risk =
-    reading.open.flatMap((finding) =>
+    reading.blocking.flatMap((finding) =>
       finding.area === null ? [] : [{ id: finding.id, area: finding.area }],
     )[0] ?? null;
   const next = reviewLoopSuccessor(phase, risk !== null, findingRefs(reading));
@@ -668,7 +640,6 @@ function branchName(pullRequest: ReviewLoopPullRequest): string {
   return pullRequest.branch ?? "the pull request branch";
 }
 
-/** The format every review request ends with. A test parses its example lines. */
 function replyFormat(exampleId: string): ReadonlyArray<string> {
   return [
     `For a blocker or should about security, permissions, auth, data loss, or state and concurrency, put the area after the severity: ${exampleId} [blocker] [auth] ... Areas: ${RISK_AREAS.join(", ")}.`,
@@ -687,7 +658,6 @@ function openFromLastReview(open: ReadonlyArray<ReviewLoopFindingRef>): string {
         .join(", ")}. Number new findings from S${findingNumber(highest.id) + 1}.`;
 }
 
-/** The brief request the start posts into the source thread. */
 export function scopingRequestText(input: {
   readonly pullRequest: ReviewLoopPullRequest;
   readonly budget: ReviewLoopBudget;
@@ -711,17 +681,10 @@ export function scopingRequestText(input: {
   ].join("\n");
 }
 
-/**
- * The review request that follows the author's turn `from`. Review 1 quotes the brief, then the
- * user's note, and carries the full review rules. A later review quotes the ledger and asks for
- * the open ids and the changed code only.
- */
 export function reviewRequestText(input: {
   readonly from: ReviewLoopScopingPhase | ReviewLoopFixingPhase;
   readonly pullRequest: ReviewLoopPullRequest;
-  /** The author's final message: the brief after scoping, the ledger after a fix. */
   readonly authorReply: string | null;
-  /** Review 1 quotes it. */
   readonly note: string | null;
 }): string {
   const { from, pullRequest } = input;
@@ -767,18 +730,17 @@ export function reviewRequestText(input: {
   ].join("\n");
 }
 
-function describeOpen(finding: OpenFinding): string {
+function describeFinding(finding: BlockingFinding): string {
   return finding.severity === "unknown"
     ? `${finding.id} (unknown severity)`
     : `${finding.id} ${finding.severity}${finding.area === null ? "" : ` (${finding.area})`}`;
 }
 
-/** Why T3 Code read a review as changes when the review alone does not say so. */
 function readingNotes(reading: ChangesReading): Array<string> {
   return [
-    ...(reading.verdict === "approve"
+    ...(reading.verdict === "contradicted"
       ? [
-          `The reviewer wrote ${VERDICT.approve} but left ${reading.open
+          `The reviewer wrote ${VERDICT.approve} but left ${reading.blocking
             .map((finding) => finding.id)
             .join(", ")} open, so T3 Code treats this review as changes.`,
         ]
@@ -786,16 +748,12 @@ function readingNotes(reading: ChangesReading): Array<string> {
     ...(reading.verdict === "missing"
       ? ["The reviewer gave no verdict line, so T3 Code treats this review as changes."]
       : []),
-    ...(reading.open.length === 0 && reading.nits.length === 0
+    ...(reading.blocking.length === 0 && reading.nits.length === 0
       ? ["The reviewer did not tag its findings with ids."]
       : []),
   ];
 }
 
-/**
- * A review with findings, delivered to the author for fix k. From fix 2 on it offers the
- * LOOP: STUCK line. `extendedBy` is the risk finding that raised the budget, or null.
- */
 function reviewDeliveryText(input: {
   readonly phase: ReviewLoopFixingPhase;
   readonly extendedBy: { readonly id: ReviewLoopFindingId; readonly area: RiskArea } | null;
@@ -807,7 +765,9 @@ function reviewDeliveryText(input: {
   const { phase, extendedBy, reading } = input;
   const summary = [
     "changes.",
-    ...(reading.open.length === 0 ? [] : [`Open: ${reading.open.map(describeOpen).join(", ")}.`]),
+    ...(reading.blocking.length === 0
+      ? []
+      : [`Open: ${reading.blocking.map(describeFinding).join(", ")}.`]),
     ...(reading.nits.length === 0 ? [] : [`Nits: ${reading.nits.join(", ")}.`]),
     ...(extendedBy === null
       ? []
@@ -845,10 +805,6 @@ function reviewDeliveryText(input: {
 const NOT_PUSHED_REPORT =
   "- Then report: rounds, model, what the review changed, diff size before and after, fixed and declined findings with reasons, usage (T3 Code does not show it to you), and that you did not push.";
 
-/**
- * The note an end posts into the source thread. The approval note holds the exact pull request
- * line, which says "Sol verdict" only for a Sol reviewer.
- */
 export function reviewLoopEndText(
   note: ReviewLoopEndNote,
   context: { readonly ended: ReviewLoopEndedPhase; readonly pullRequest: ReviewLoopPullRequest },
@@ -878,9 +834,9 @@ export function reviewLoopEndText(
       const { reading } = note;
       const headline = [
         `**Review loop needs you.** Review ${ended.reviews} of ${ended.budget} from ${note.reviewerLabel} on #${pullRequest.number} ${
-          reading.open.length === 0
+          reading.blocking.length === 0
             ? "did not approve this change."
-            : `still has open findings: ${reading.open.map(describeOpen).join(", ")}.`
+            : `still has open findings: ${reading.blocking.map(describeFinding).join(", ")}.`
         }`,
         ...readingNotes(reading),
         "The loop is out of reviews. Budget end is not approval.",
