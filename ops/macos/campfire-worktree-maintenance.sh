@@ -19,6 +19,9 @@ campfire_dry_run=${3:-}
 campfire_target_retention_days=${CAMPFIRE_TARGET_RETENTION_DAYS:-$campfire_retention_days}
 # Colon-separated folders whose direct children are Cargo target directories.
 campfire_cargo_target_roots=${CAMPFIRE_CARGO_TARGET_ROOTS:-}
+# Colon-separated folders whose direct children are worktrees this job does not own.
+# Only their Cargo target directories are cleaned, never the worktrees themselves.
+campfire_cargo_worktree_roots=${CAMPFIRE_CARGO_WORKTREE_ROOTS:-}
 # Seconds one git command may run before its worktree is skipped for this pass.
 campfire_git_timeout=${CAMPFIRE_WORKTREE_GIT_TIMEOUT_SECONDS:-60}
 case "$campfire_home:$campfire_retention_days:$campfire_dry_run" in
@@ -272,6 +275,24 @@ for campfire_worktree in "$@"; do
   campfire_removed=$((campfire_removed + 1))
 done
 
+# Cargo leaves these markers, so nothing else in the folder can be mistaken for a cache.
+# $2 is the folder a process must not be running from for the target to be cleaned.
+clean_cargo_target() {
+  [ -f "$1/CACHEDIR.TAG" ] || [ -f "$1/.rustc_info.json" ] || return 0
+  if is_process_cwd "$2"; then
+    campfire_skipped_active=$((campfire_skipped_active + 1))
+    return 0
+  fi
+  target_is_stale "$1" || return 0
+  if [ "$campfire_dry_run" = "--dry-run" ]; then
+    echo "would clean: $1"
+  else
+    rm -rf "$1"
+    echo "cleaned: $1"
+  fi
+  campfire_cleaned=$((campfire_cleaned + 1))
+}
+
 campfire_roots_left=$campfire_cargo_target_roots
 while [ -n "$campfire_roots_left" ]; do
   campfire_root=${campfire_roots_left%%:*}
@@ -281,20 +302,20 @@ while [ -n "$campfire_roots_left" ]; do
   esac
   can_list_root "$campfire_root" || continue
   for campfire_target in "$campfire_root"/*; do
-    # Cargo leaves these markers, so nothing else in the folder can be mistaken for a cache.
-    [ -f "$campfire_target/CACHEDIR.TAG" ] || [ -f "$campfire_target/.rustc_info.json" ] || continue
-    if is_process_cwd "$campfire_target"; then
-      campfire_skipped_active=$((campfire_skipped_active + 1))
-      continue
-    fi
-    target_is_stale "$campfire_target" || continue
-    if [ "$campfire_dry_run" = "--dry-run" ]; then
-      echo "would clean: $campfire_target"
-    else
-      rm -rf "$campfire_target"
-      echo "cleaned: $campfire_target"
-    fi
-    campfire_cleaned=$((campfire_cleaned + 1))
+    clean_cargo_target "$campfire_target" "$campfire_target"
+  done
+done
+
+campfire_roots_left=$campfire_cargo_worktree_roots
+while [ -n "$campfire_roots_left" ]; do
+  campfire_root=${campfire_roots_left%%:*}
+  case "$campfire_roots_left" in
+    *:*) campfire_roots_left=${campfire_roots_left#*:} ;;
+    *) campfire_roots_left= ;;
+  esac
+  can_list_root "$campfire_root" || continue
+  for campfire_worktree in "$campfire_root"/*; do
+    clean_cargo_target "$campfire_worktree/target" "$campfire_worktree"
   done
 done
 
