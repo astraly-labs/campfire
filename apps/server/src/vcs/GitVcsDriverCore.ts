@@ -3848,13 +3848,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     }
     // Threads can share a worktree path, and worktrees get removed or pruned
     // outside the app, so a worktree that is already gone is a no-op rather
-    // than an error. Prune so no stale registration lingers to block a later
-    // `worktree add` at the same path.
+    // than an error. Git itself drops the registration of a deleted worktree
+    // on `remove`, so this path is no longer registered. Never prune here: a
+    // repo-wide prune also drops every worktree on a disconnected volume.
     const alreadyGone =
       isMissingWorktreeStderr(result.stderr) &&
       !(yield* fileSystem.exists(input.path).pipe(Effect.orElseSucceed(() => false)));
     if (alreadyGone) {
-      yield* pruneWorktrees({ cwd: input.cwd });
       return;
     }
     // Raw stderr stays out of both the wire error and the log (it can carry
@@ -3869,15 +3869,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       ...(result.exitCode === null ? {} : { exitCode: result.exitCode }),
       stdoutLength: result.stdout.length,
       stderrLength: result.stderr.length,
-    });
-  });
-
-  const pruneWorktrees: GitVcsDriver.GitVcsDriver["Service"]["pruneWorktrees"] = Effect.fn(
-    "pruneWorktrees",
-  )(function* (input) {
-    yield* executeGit("GitVcsDriver.pruneWorktrees", input.cwd, ["worktree", "prune"], {
-      timeoutMs: 15_000,
-      fallbackErrorDetail: "git worktree prune failed",
     });
   });
 
@@ -4126,7 +4117,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       withListRefsInvalidation(input.cwd, fetchRemoteTrackingBranch(input)),
     setBranchUpstream: (input) => withListRefsInvalidation(input.cwd, setBranchUpstream(input)),
     removeWorktree: (input) => withListRefsInvalidation(input.cwd, removeWorktree(input)),
-    pruneWorktrees: (input) => withListRefsInvalidation(input.cwd, pruneWorktrees(input)),
     deleteLocalBranch: (input) => withListRefsInvalidation(input.cwd, deleteLocalBranch(input)),
     renameBranch: (input) => withListRefsInvalidation(input.cwd, renameBranch(input)),
     createRef: (input) => withListRefsInvalidation(input.cwd, createRef(input)),
