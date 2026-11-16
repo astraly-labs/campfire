@@ -238,6 +238,7 @@ export const make = Effect.gen(function* () {
       threadSnooze: true,
       environmentThemes: true,
       usageLimitSources: true,
+      lowDiskVolumes: true,
       usagePriceOverrides: true,
       usageModelAliases: true,
       threadPinning: true,

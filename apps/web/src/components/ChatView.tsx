@@ -38,6 +38,7 @@ import {
   isUsageLimitsCommand,
 } from "@t3tools/shared/usageLimits";
 import { feedbackBannerItem } from "./chat/ComposerFeedback";
+import { lowDiskBannerItem } from "./chat/ComposerLowDisk";
 import { usageLimitsBannerItem } from "./chat/ComposerUsageLimits";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import * as Schema from "effect/Schema";
@@ -3090,6 +3091,8 @@ export default function ChatView(props: ChatViewProps) {
   const serverUpdateFailureDismissed =
     serverUpdateState === dismissedServerUpdateState ||
     isServerUpdateFailureDismissed(serverUpdateState);
+  const lowDiskServerEnvironmentId = serverConfig?.environment.environmentId ?? null;
+  const lowDiskVolumes = serverConfig?.lowDiskVolumes;
   const systemComposerBannerItems = useMemo<ComposerBannerStackItem[]>(() => {
     const items: ComposerBannerStackItem[] = [];
     const updateRunning = serverUpdateState.status === "running";
@@ -3223,11 +3226,20 @@ export default function ChatView(props: ChatViewProps) {
             }),
       });
     }
+    const lowDiskBanner = lowDiskServerEnvironmentId
+      ? lowDiskBannerItem(lowDiskServerEnvironmentId, lowDiskVolumes, () => {
+          void navigate({ to: "/settings/storage" });
+        })
+      : null;
+    if (lowDiskBanner) items.push(lowDiskBanner);
     if (autoBalanceUpdateBanner) items.push(autoBalanceUpdateBanner);
     return items;
   }, [
     automaticEnvironment,
     autoBalanceUpdateBanner,
+    lowDiskServerEnvironmentId,
+    lowDiskVolumes,
+    navigate,
     activeEnvironmentUnavailableState,
     handleReconnectActiveEnvironment,
     canDisconnectActiveEnvironment,

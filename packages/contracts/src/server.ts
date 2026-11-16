@@ -672,6 +672,19 @@ export const ServerDirectEndpoint = Schema.Struct({
 });
 export type ServerDirectEndpoint = typeof ServerDirectEndpoint.Type;
 
+/**
+ * A folder the server depends on whose volume is low on free space. `state`
+ * holds the database; `worktrees` is where new worktrees are created. Two
+ * folders on one volume are reported once, as `state`.
+ */
+export const ServerLowDiskVolume = Schema.Struct({
+  role: Schema.Literals(["state", "worktrees"]),
+  path: TrimmedNonEmptyString,
+  freeBytes: NonNegativeInt,
+  totalBytes: NonNegativeInt,
+});
+export type ServerLowDiskVolume = typeof ServerLowDiskVolume.Type;
+
 export const ServerConfig = Schema.Struct({
   environment: ExecutionEnvironmentDescriptor,
   auth: ServerAuthDescriptor,
@@ -742,6 +755,12 @@ export const ServerConfig = Schema.Struct({
    * stays absent for subscribers that did not opt in.
    */
   usageLimitSources: Schema.optional(UsageLimitSourceSnapshots),
+  /**
+   * Volumes this server depends on that are low on free space. Like themes,
+   * never in a snapshot: the storage stream emits the current set on
+   * subscribe, and it stays absent for subscribers that did not opt in.
+   */
+  lowDiskVolumes: Schema.optional(Schema.Array(ServerLowDiskVolume)),
 });
 export type ServerConfig = typeof ServerConfig.Type;
 
@@ -873,6 +892,21 @@ export const ServerConfigStreamUsageLimitSourcesUpdatedEvent = Schema.Struct({
 export type ServerConfigStreamUsageLimitSourcesUpdatedEvent =
   typeof ServerConfigStreamUsageLimitSourcesUpdatedEvent.Type;
 
+export const ServerConfigLowDiskVolumesUpdatedPayload = Schema.Struct({
+  /** The full set; empty once every volume has enough free space. */
+  volumes: Schema.Array(ServerLowDiskVolume),
+});
+export type ServerConfigLowDiskVolumesUpdatedPayload =
+  typeof ServerConfigLowDiskVolumesUpdatedPayload.Type;
+
+export const ServerConfigStreamLowDiskVolumesUpdatedEvent = Schema.Struct({
+  version: Schema.Literal(1),
+  type: Schema.Literal("lowDiskVolumesUpdated"),
+  payload: ServerConfigLowDiskVolumesUpdatedPayload,
+});
+export type ServerConfigStreamLowDiskVolumesUpdatedEvent =
+  typeof ServerConfigStreamLowDiskVolumesUpdatedEvent.Type;
+
 export const ServerConfigStreamEvent = Schema.Union([
   ServerConfigStreamSnapshotEvent,
   ServerConfigStreamKeybindingsUpdatedEvent,
@@ -880,6 +914,7 @@ export const ServerConfigStreamEvent = Schema.Union([
   ServerConfigStreamSettingsUpdatedEvent,
   ServerConfigStreamEnvironmentThemesUpdatedEvent,
   ServerConfigStreamUsageLimitSourcesUpdatedEvent,
+  ServerConfigStreamLowDiskVolumesUpdatedEvent,
 ]);
 export type ServerConfigStreamEvent = typeof ServerConfigStreamEvent.Type;
 

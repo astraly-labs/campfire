@@ -263,6 +263,7 @@ import {
 import * as AgentSessionScanner from "./project/AgentSessionScanner.ts";
 import * as AgentSessionImporter from "./project/AgentSessionImporter.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
+import * as StorageMonitor from "./storage/StorageMonitor.ts";
 
 const CONFIG_DISCOVERY_TIMEOUT = Duration.seconds(5);
 const isProviderUploadFeedbackError = Schema.is(ProviderUploadFeedbackError);
@@ -308,6 +309,25 @@ const resolveEditorConfig = <E, R>(
           }),
     };
   });
+
+/**
+ * Low-disk events for one config subscriber: the current set first, then each
+ * change. Gated like themes, because an already-shipped client decodes the
+ * config stream against the old event union and dies on an unknown member.
+ */
+export const lowDiskVolumesUpdates = (
+  optedIn: boolean,
+  storageMonitor: StorageMonitor.StorageMonitor["Service"],
+) =>
+  optedIn
+    ? storageMonitor.streamChanges.pipe(
+        Stream.map((volumes) => ({
+          version: 1 as const,
+          type: "lowDiskVolumesUpdated" as const,
+          payload: { volumes },
+        })),
+      )
+    : Stream.empty;
 
 /**
  * Live config updates that follow a snapshot of `config`. A busy host can
@@ -1280,6 +1300,7 @@ const layerWsRpc = (
             );
       const usage = yield* UsageService.UsageService;
       const usageLimitSources = yield* UsageLimitSources.UsageLimitSources;
+      const storageMonitor = yield* StorageMonitor.StorageMonitor;
       const projectSetupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
       const worktreeSetupTracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
       const projectCloneTracker = yield* ProjectCloneTracker.ProjectCloneTracker;
@@ -3149,6 +3170,10 @@ const layerWsRpc = (
                       })),
                     )
                   : Stream.empty;
+              const lowDiskVolumeUpdates = lowDiskVolumesUpdates(
+                input.lowDiskVolumes === true,
+                storageMonitor,
+              );
               const settingsUpdates = serverSettings.streamChanges.pipe(
                 Stream.map((settings) => ServerSettings.redactServerSettingsForClient(settings)),
                 Stream.map((settings) => ({
@@ -3164,7 +3189,10 @@ const layerWsRpc = (
                   providerStatuses,
                   Stream.merge(
                     settingsUpdates,
-                    Stream.merge(environmentThemeUpdates, usageLimitSourceUpdates),
+                    Stream.merge(
+                      environmentThemeUpdates,
+                      Stream.merge(usageLimitSourceUpdates, lowDiskVolumeUpdates),
+                    ),
                   ),
                 ),
               );

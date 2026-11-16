@@ -28,11 +28,13 @@ import * as ThreadManagement from "./orchestration-v2/ThreadManagementService.ts
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as OrchestrationEventStore from "./persistence/OrchestrationEventStore.ts";
 import * as SqlitePersistence from "./persistence/Sqlite.ts";
+import * as StorageMonitor from "./storage/StorageMonitor.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as ProjectEnrichment from "./project/ProjectEnrichmentService.ts";
 import * as ProjectService from "./project/ProjectService.ts";
 import {
   hasCompatibleOrchestrationProtocol,
+  lowDiskVolumesUpdates,
   resolveAvailableEditorsForConfig,
   shouldUseBoundedThreadSnapshot,
   subscribeOrchestrationV2Shell,
@@ -53,6 +55,22 @@ it("accepts only the current orchestration protocol before websocket RPC setup",
     ),
   );
 });
+
+it.effect("sends low-disk events only to config subscribers that opted in", () =>
+  Effect.gen(function* () {
+    const volumes = [{ role: "state" as const, path: "/data", freeBytes: 1024, totalBytes: 4096 }];
+    const monitor = StorageMonitor.StorageMonitor.of({
+      snapshot: Effect.succeed(volumes),
+      streamChanges: Stream.make(volumes),
+    });
+    const legacy = yield* Stream.runCollect(lowDiskVolumesUpdates(false, monitor));
+    const optedIn = yield* Stream.runCollect(lowDiskVolumesUpdates(true, monitor));
+    assert.deepStrictEqual(legacy, []);
+    assert.deepStrictEqual(optedIn, [
+      { version: 1, type: "lowDiskVolumesUpdated", payload: { volumes } },
+    ]);
+  }),
+);
 
 it("keeps full thread snapshot fallback unless the client opts into bounded history", () => {
   assert.isFalse(shouldUseBoundedThreadSnapshot({}));

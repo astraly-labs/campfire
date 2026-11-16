@@ -9,6 +9,7 @@ import { createThreadListEnvironmentsAtom } from "./thread-list-environments";
 export const serverEnvironment = createServerEnvironmentAtoms(connectionAtomRuntime, {
   initialConfigValueAtom: environmentSession.initialConfigValueAtom,
   usageLimitSources: true,
+  lowDiskVolumes: true,
   usageLimitsCommand: true,
 });
 export const environmentServerConfigsAtom = createEnvironmentServerConfigsAtom({

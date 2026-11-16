@@ -43,6 +43,10 @@
       "types": "./src/promptLinks.ts",
       "default": "./src/promptLinks.ts"
     },
+    "./low-disk-notice": {
+      "types": "./src/lowDiskNotice.ts",
+      "default": "./src/lowDiskNotice.ts"
+    },
     "./secret-request": {
       "types": "./src/secretRequest.ts",
       "default": "./src/secretRequest.ts"

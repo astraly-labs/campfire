@@ -168,6 +168,10 @@ Existing prompts for deleting a worktree manually remain available when this pol
 Choose **Delete now** to run the enabled rules immediately. The latest results show which
 worktrees were removed or kept and why, plus any failures.
 
+When the drive that holds the server's data or its worktrees has less than 20 GB free, the
+composer shows a low disk space warning. Messages can fail to save once that drive is full. The
+warning clears within a minute of freeing space.
+
 Browser captures and rotated logs have separate retention periods. Expired capture links stop
 working. Current logs, message attachments, and browser profiles are kept.
 

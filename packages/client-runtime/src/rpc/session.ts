@@ -58,6 +58,7 @@ export interface RpcSession {
 export interface RpcSessionOptions {
   readonly environmentThemes?: boolean;
   readonly usageLimitSources?: boolean;
+  readonly lowDiskVolumes?: boolean;
   /** This client answers /usage-limits itself, so the server may advertise it. */
   readonly usageLimitsCommand?: boolean;
 }
@@ -93,12 +94,17 @@ type UsageLimitSourcesUpdatedEvent = Extract<
   ServerConfigStreamEvent,
   { readonly type: "usageLimitSourcesUpdated" }
 >;
+type LowDiskVolumesUpdatedEvent = Extract<
+  ServerConfigStreamEvent,
+  { readonly type: "lowDiskVolumesUpdated" }
+>;
 
 interface ServerConfigReplayState {
   readonly projection: ServerConfigProjection;
   readonly revision: number;
   readonly themesEvent: EnvironmentThemesUpdatedEvent | undefined;
   readonly sourcesEvent: UsageLimitSourcesUpdatedEvent | undefined;
+  readonly lowDiskEvent: LowDiskVolumesUpdatedEvent | undefined;
 }
 
 interface BufferedServerConfigEvent {
@@ -119,6 +125,7 @@ function serverConfigReplayEvents(
     snapshot,
     ...(state.themesEvent === undefined ? [] : [state.themesEvent]),
     ...(state.sourcesEvent === undefined ? [] : [state.sourcesEvent]),
+    ...(state.lowDiskEvent === undefined ? [] : [state.lowDiskEvent]),
   ];
 }
 
@@ -156,6 +163,7 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
   const serverConfigInput: ServerConfigSubscriptionInput = {
     ...(options.environmentThemes === true ? { environmentThemes: true } : {}),
     ...(options.usageLimitSources === true ? { usageLimitSources: true } : {}),
+    ...(options.lowDiskVolumes === true ? { lowDiskVolumes: true } : {}),
     ...(options.usageLimitsCommand === true ? { usageLimitsCommand: true } : {}),
   };
 
@@ -260,6 +268,13 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
                       event.config.environment.capabilities.usageLimitSources !== true
                     ? undefined
                     : Option.getOrUndefined(current)?.sourcesEvent,
+              lowDiskEvent:
+                event.type === "lowDiskVolumesUpdated"
+                  ? event
+                  : event.type === "snapshot" &&
+                      event.config.environment.capabilities.lowDiskVolumes !== true
+                    ? undefined
+                    : Option.getOrUndefined(current)?.lowDiskEvent,
             } satisfies ServerConfigReplayState;
             return [
               Option.some({ event, replay: next, revision: next.revision }),

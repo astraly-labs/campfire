@@ -37,7 +37,11 @@ import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as Persistence from "../platform/persistence.ts";
 import * as RpcSession from "./session.ts";
 import { makeEnvironmentServerConfigState } from "../state/server.ts";
-import { applyServerConfigProjection } from "../state/serverConfigProjection.ts";
+import {
+  applyServerConfigProjection,
+  type ServerConfigProjection,
+  withoutEnvironmentThemes,
+} from "../state/serverConfigProjection.ts";
 import { NETWORK_BLOCKING_HINT } from "../errors/network.ts";
 
 type SocketEventType = "open" | "message" | "close" | "error";
@@ -199,6 +203,22 @@ const SOURCE_EVENT: ServerConfigStreamEventType = {
       },
     ],
   },
+};
+
+const LOW_DISK_SERVER_CONFIG: ServerConfigType = {
+  ...SERVER_CONFIG,
+  environment: {
+    ...SERVER_CONFIG.environment,
+    capabilities: { ...SERVER_CONFIG.environment.capabilities, lowDiskVolumes: true },
+  },
+};
+const LOW_DISK_VOLUMES = [
+  { role: "state" as const, path: "/data", freeBytes: 12 * 1024 ** 3, totalBytes: 2 ** 40 },
+];
+const LOW_DISK_EVENT: ServerConfigStreamEventType = {
+  version: 1,
+  type: "lowDiskVolumesUpdated",
+  payload: { volumes: LOW_DISK_VOLUMES },
 };
 
 const LEGACY_SERVER_CONFIG = {
@@ -554,6 +574,86 @@ describe("RpcSessionFactory", () => {
         );
       }),
     ),
+  );
+
+  it.effect(
+    "replays low-disk volumes to late subscribers until the server stops reporting them",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const options = { lowDiskVolumes: true };
+          const { factory, sockets } = yield* makeFactory(options);
+          const session = yield* factory.connect(PREPARED);
+          const ready = yield* Effect.forkChild(session.ready);
+          const socket = yield* awaitSocket(sockets);
+          socket.open();
+          yield* completeInitialConfig(socket, encodeServerConfig(LOW_DISK_SERVER_CONFIG), options);
+          yield* Fiber.join(ready);
+          const observed = yield* Queue.unbounded<ServerConfigStreamEventType>();
+          yield* session.subscribeServerConfig(options).pipe(
+            Stream.runForEach((event) => Queue.offer(observed, event)),
+            Effect.forkChild,
+          );
+          expect((yield* Queue.take(observed)).type).toBe("snapshot");
+
+          const lateSubscriberProjection = Effect.fn("lateSubscriberProjection")(function* () {
+            const started = yield* Deferred.make<void>();
+            const replay = yield* session.subscribeServerConfig(options).pipe(
+              Stream.tap(() => Deferred.succeed(started, undefined)),
+              Stream.takeUntil((item) => item.type === "keybindingsUpdated"),
+              Stream.runCollect,
+              Effect.forkChild,
+            );
+            yield* Deferred.await(started);
+            // A live end marker makes a missing replay event fail without a timeout.
+            const marker: ServerConfigStreamEventType = {
+              version: 1,
+              type: "keybindingsUpdated",
+              payload: { keybindings: [], issues: [] },
+            };
+            yield* publishConfigEvents(socket, [marker]);
+            expect(yield* Queue.take(observed)).toEqual(marker);
+            let projection = Option.none<ServerConfigProjection>();
+            for (const item of yield* Fiber.join(replay)) {
+              projection = applyServerConfigProjection(projection, item);
+            }
+            return Option.getOrThrow(projection).config;
+          });
+
+          yield* publishConfigEvents(socket, [LOW_DISK_EVENT]);
+          expect(yield* Queue.take(observed)).toEqual(LOW_DISK_EVENT);
+          const reported = yield* lateSubscriberProjection();
+          expect(reported.lowDiskVolumes).toEqual(LOW_DISK_VOLUMES);
+          // Stale disk warnings must not come back from the offline cache.
+          expect(withoutEnvironmentThemes(reported).lowDiskVolumes).toBeUndefined();
+
+          // A server without the capability can never send the recovery, so drop the set.
+          const downgrade: ServerConfigStreamEventType = {
+            version: 1,
+            type: "snapshot",
+            config: SERVER_CONFIG,
+          };
+          yield* publishConfigEvents(socket, [downgrade]);
+          expect(yield* Queue.take(observed)).toEqual(downgrade);
+          expect((yield* lateSubscriberProjection()).lowDiskVolumes).toBeUndefined();
+
+          // Wire snapshots never carry the set: a capable server's keeps it, any other drops it.
+          const reporting = applyServerConfigProjection(
+            applyServerConfigProjection(Option.none(), {
+              version: 1,
+              type: "snapshot",
+              config: LOW_DISK_SERVER_CONFIG,
+            }),
+            LOW_DISK_EVENT,
+          );
+          const resnapshot = (config: ServerConfigType) =>
+            Option.getOrThrow(
+              applyServerConfigProjection(reporting, { version: 1, type: "snapshot", config }),
+            ).config.lowDiskVolumes;
+          expect(resnapshot(LOW_DISK_SERVER_CONFIG)).toEqual(LOW_DISK_VOLUMES);
+          expect(resnapshot(SERVER_CONFIG)).toBeUndefined();
+        }),
+      ),
   );
 
   it.effect("replays theme updates and deletion as authoritative events", () =>

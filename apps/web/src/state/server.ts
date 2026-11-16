@@ -31,6 +31,7 @@ export const serverEnvironment = createServerEnvironmentAtoms(connectionAtomRunt
   initialConfigValueAtom: environmentSession.initialConfigValueAtom,
   environmentThemes: true,
   usageLimitSources: true,
+  lowDiskVolumes: true,
   usageLimitsCommand: true,
 });
 /** Updates a host whose protocol is too old for this client to connect to. */

@@ -119,6 +119,7 @@ import type {
 } from "../../lib/threadActivity";
 import { PendingApprovalCard } from "./PendingApprovalCard";
 import { ComposerErrorNotice } from "./ComposerErrorNotice";
+import { ComposerLowDiskNotice } from "./ComposerLowDiskNotice";
 import { ComposerFeedback } from "./ComposerFeedback";
 import { ComposerUsageLimits } from "./ComposerUsageLimits";
 import { PendingUserInputCard } from "./PendingUserInputCard";
@@ -1296,6 +1297,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                     thread={props.selectedThread}
                     environmentId={props.environmentId}
                   />
+                  <ComposerLowDiskNotice volumes={props.serverConfig?.lowDiskVolumes} />
                   {props.feedbackSubmissions.map((submission) => (
                     <ComposerFeedback
                       key={submission.id}
