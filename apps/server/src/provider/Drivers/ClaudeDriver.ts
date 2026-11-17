@@ -17,6 +17,7 @@ import * as Cache from "effect/Cache";
 import * as Duration from "effect/Duration";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
@@ -76,6 +77,20 @@ const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
 const CAPABILITIES_PROBE_TTL = Duration.minutes(5);
+
+/**
+ * Caches a capabilities probe that resolves to `undefined` when it fails. Only
+ * successes are kept: a failed probe cached for the full TTL would leave the
+ * instance unverified, and unpickable, until it expired.
+ */
+export const makeCapabilitiesProbeCache = <A, E>(
+  probe: Effect.Effect<A | undefined, E>,
+): Effect.Effect<Cache.Cache<string, A | undefined, E>> =>
+  Cache.makeWith((_key: string) => probe, {
+    capacity: 1,
+    timeToLive: (exit) =>
+      Exit.isSuccess(exit) && exit.value !== undefined ? CAPABILITIES_PROBE_TTL : Duration.zero,
+  });
 
 function isClaudeNativeCommandPath(commandPath: string): boolean {
   const normalized = normalizeCommandPath(commandPath);
@@ -199,21 +214,18 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
 
       // Per-instance capabilities cache: keyed on binary + resolved HOME so
       // account-specific probes never share auth metadata across instances.
-      const capabilitiesProbeCache = yield* Cache.make({
-        capacity: 1,
-        timeToLive: CAPABILITIES_PROBE_TTL,
-        lookup: () =>
-          Effect.all([
-            probeClaudeCapabilities(effectiveConfig, processEnv, cwd),
-            ClaudeResetCredits.readClaudeOrganizationId(accountConfigPath),
-          ]).pipe(
-            Effect.map(([capabilities, workspaceId]) =>
-              capabilities && workspaceId ? { ...capabilities, workspaceId } : capabilities,
-            ),
-            Effect.provideService(FileSystem.FileSystem, fileSystem),
-            Effect.provideService(Path.Path, path),
+      const capabilitiesProbeCache = yield* makeCapabilitiesProbeCache(
+        Effect.all([
+          probeClaudeCapabilities(effectiveConfig, processEnv, cwd),
+          ClaudeResetCredits.readClaudeOrganizationId(accountConfigPath),
+        ]).pipe(
+          Effect.map(([capabilities, workspaceId]) =>
+            capabilities && workspaceId ? { ...capabilities, workspaceId } : capabilities,
           ),
-      });
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, path),
+        ),
+      );
       const capabilitiesCacheKey = yield* makeClaudeCapabilitiesCacheKey(
         effectiveConfig,
         cwd,

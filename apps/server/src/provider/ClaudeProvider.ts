@@ -451,6 +451,11 @@ const probeClaudeCapabilities = (
         if (!abort.signal.aborted) abort.abort();
       }),
     ),
+    Effect.tapError((error) =>
+      Effect.logWarning("Claude capabilities probe failed; authentication stays unverified.", {
+        error: error instanceof Error ? error.message : String(error),
+      }),
+    ),
     Effect.result,
     Effect.map((result) => (Result.isSuccess(result) ? result.success : undefined)),
   );
