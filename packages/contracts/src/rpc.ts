@@ -323,6 +323,8 @@ import {
   ServerSignalProcessResult,
   ServerUpsertKeybindingInput,
   ServerUpsertKeybindingResult,
+  ServerStorageUsage,
+  ServerBuildCacheClearResult,
 } from "./server.ts";
 import {
   HostResourcesSnapshot,
@@ -498,6 +500,8 @@ export const WS_METHODS = {
   serverRemoveKeybinding: "server.removeKeybinding",
   serverRunStorageCleanup: "server.runStorageCleanup",
   serverGetStorageCleanupReport: "server.getStorageCleanupReport",
+  serverGetStorageUsage: "server.getStorageUsage",
+  serverClearBuildCaches: "server.clearBuildCaches",
   serverGetSettings: "server.getSettings",
   serverUpdateSettings: "server.updateSettings",
   serverDiscoverSourceControl: "server.discoverSourceControl",
@@ -774,6 +778,17 @@ const WsServerGetStorageCleanupReportRpc = Rpc.make(WS_METHODS.serverGetStorageC
   success: Schema.NullOr(StorageCleanupReport),
   stream: true,
   error: EnvironmentAuthorizationError,
+});
+
+const WsServerGetStorageUsageRpc = Rpc.make(WS_METHODS.serverGetStorageUsage, {
+  payload: Schema.Struct({}),
+  success: ServerStorageUsage,
+  error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+});
+const WsServerClearBuildCachesRpc = Rpc.make(WS_METHODS.serverClearBuildCaches, {
+  payload: Schema.Struct({}),
+  success: ServerBuildCacheClearResult,
+  error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
 });
 
 const WsServerGetSettingsRpc = Rpc.make(WS_METHODS.serverGetSettings, {
@@ -1947,6 +1962,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerRemoveKeybindingRpc,
   WsServerRunStorageCleanupRpc,
   WsServerGetStorageCleanupReportRpc,
+  WsServerGetStorageUsageRpc,
+  WsServerClearBuildCachesRpc,
   WsServerGetSettingsRpc,
   WsServerUpdateSettingsRpc,
   WsServerDiscoverSourceControlRpc,

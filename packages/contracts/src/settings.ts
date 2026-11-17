@@ -1094,6 +1094,13 @@ export const StorageCleanupSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   logsAfterDays: StorageRetentionDays.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  /**
+   * Absolute folders whose direct children are Cargo target folders, such as
+   * a shared `CARGO_TARGET_DIR` parent. Machine-wide, never project-scoped.
+   */
+  buildCacheFolders: Schema.Array(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
 });
 export type StorageCleanupSettings = typeof StorageCleanupSettings.Type;
 
@@ -1531,6 +1538,7 @@ export const ServerSettingsPatch = Schema.Struct({
       worktreeUnchanged: Schema.optionalKey(Schema.Boolean),
       browserArtifactsAfterDays: Schema.optionalKey(StorageRetentionDays),
       logsAfterDays: Schema.optionalKey(StorageRetentionDays),
+      buildCacheFolders: Schema.optionalKey(Schema.Array(TrimmedNonEmptyString)),
     }),
   ),
   worktreesDirectory: Schema.optionalKey(TrimmedString),

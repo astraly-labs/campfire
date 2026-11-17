@@ -685,6 +685,49 @@ export const ServerLowDiskVolume = Schema.Struct({
 });
 export type ServerLowDiskVolume = typeof ServerLowDiskVolume.Type;
 
+/** A volume holding a folder the server uses, deduplicated by device. */
+export const ServerStorageVolume = Schema.Struct({
+  role: Schema.Literals(["state", "worktrees", "build-cache"]),
+  path: TrimmedNonEmptyString,
+  freeBytes: NonNegativeInt,
+  totalBytes: NonNegativeInt,
+});
+export type ServerStorageVolume = typeof ServerStorageVolume.Type;
+
+/** A Cargo target folder: a `buildCacheFolders` child or a managed worktree's `target`. */
+export const ServerBuildCache = Schema.Struct({
+  path: TrimmedNonEmptyString,
+  /** Null when the size could not be measured in time. */
+  bytes: Schema.NullOr(NonNegativeInt),
+  lastBuildAt: Schema.String,
+  /** Built recently or owned by a busy worktree, so clearing skips it. */
+  inUse: Schema.Boolean,
+});
+export type ServerBuildCache = typeof ServerBuildCache.Type;
+
+export const ServerStorageUsage = Schema.Struct({
+  volumes: Schema.Array(ServerStorageVolume),
+  buildCaches: Schema.Array(ServerBuildCache),
+  buildCacheBytes: NonNegativeInt,
+  /** Folders that did not answer in time or could not be read, such as a frozen drive. */
+  unreadablePaths: Schema.Array(TrimmedNonEmptyString),
+});
+export type ServerStorageUsage = typeof ServerStorageUsage.Type;
+
+export const ServerBuildCacheClearEntry = Schema.Struct({
+  path: TrimmedNonEmptyString,
+  outcome: Schema.Literals(["removed", "kept", "failed"]),
+  reason: Schema.String,
+  bytes: Schema.NullOr(NonNegativeInt),
+});
+export type ServerBuildCacheClearEntry = typeof ServerBuildCacheClearEntry.Type;
+
+export const ServerBuildCacheClearResult = Schema.Struct({
+  bytesFreed: NonNegativeInt,
+  entries: Schema.Array(ServerBuildCacheClearEntry),
+});
+export type ServerBuildCacheClearResult = typeof ServerBuildCacheClearResult.Type;
+
 export const ServerConfig = Schema.Struct({
   environment: ExecutionEnvironmentDescriptor,
   auth: ServerAuthDescriptor,

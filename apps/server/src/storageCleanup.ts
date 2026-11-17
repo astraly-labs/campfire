@@ -154,6 +154,18 @@ export function storageCleanupPullRequestMerged(
   );
 }
 
+/** Working directories of provider sessions that are not stopped. Sessions can outlive their run. */
+export const openProviderSessionCwds = Effect.fn("StorageCleanup.openProviderSessionCwds")(
+  function* (sql: SqlClient.SqlClient) {
+    const rows = yield* sql<{ payload_json: string }>`
+      SELECT payload_json FROM orchestration_v2_projection_provider_sessions
+      WHERE status != 'stopped'
+    `;
+    const sessions = yield* Effect.forEach(rows, (row) => decodeCleanupSession(row.payload_json));
+    return sessions.map((session) => session.cwd);
+  },
+);
+
 export class StorageCleanup extends Context.Service<
   StorageCleanup,
   {
@@ -569,17 +581,10 @@ const make = Effect.gen(function* () {
             storageCleanupActivityAt(latest[0]!) !== storageCleanupActivityAt(thread)
           )
             return "thread activity or shared worktree changed since check";
-          // Sessions can outlive their run and can be shared across app threads.
-          const sessionRows = yield* sql<{ payload_json: string }>`
-            SELECT payload_json FROM orchestration_v2_projection_provider_sessions
-            WHERE status != 'stopped'
-          `;
-          const sessions = yield* Effect.forEach(sessionRows, (row) =>
-            decodeCleanupSession(row.payload_json),
-          );
+          // Sessions can be shared across app threads.
           if (
-            sessions.some((session) => {
-              const cwd = path.resolve(session.cwd);
+            (yield* openProviderSessionCwds(sql)).some((sessionCwd) => {
+              const cwd = path.resolve(sessionCwd);
               return cwd === worktreePath || inside(worktreePath, cwd);
             })
           )

@@ -25,8 +25,8 @@ const SAMPLE_INTERVAL = "60 seconds";
 const FOLDER_SAMPLE_TIMEOUT = "10 seconds";
 
 /** Free space of one folder the server depends on, as read from its volume. */
-export interface VolumeSample {
-  readonly role: ServerLowDiskVolume["role"];
+export interface VolumeSample<Role extends string = ServerLowDiskVolume["role"]> {
+  readonly role: Role;
   readonly path: string;
   /** `stat().dev`, so two folders on one volume are reported once. */
   readonly device: number;
@@ -44,21 +44,21 @@ export class StorageMonitor extends Context.Service<
 >()("t3/storage/StorageMonitor") {}
 
 /** Samples are in priority order: the first folder on a volume names it. */
-function lowVolumes(samples: ReadonlyArray<VolumeSample>): ReadonlyArray<ServerLowDiskVolume> {
+export function distinctVolumes<Sample extends { readonly device: number }>(
+  samples: ReadonlyArray<Sample>,
+): ReadonlyArray<Sample> {
   const seenDevices = new Set<number>();
-  const low: Array<ServerLowDiskVolume> = [];
-  for (const sample of samples) {
-    if (seenDevices.has(sample.device)) continue;
+  return samples.filter((sample) => {
+    if (seenDevices.has(sample.device)) return false;
     seenDevices.add(sample.device);
-    if (sample.freeBytes >= LOW_DISK_THRESHOLD_BYTES) continue;
-    low.push({
-      role: sample.role,
-      path: sample.path,
-      freeBytes: sample.freeBytes,
-      totalBytes: sample.totalBytes,
-    });
-  }
-  return low;
+    return true;
+  });
+}
+
+function lowVolumes(samples: ReadonlyArray<VolumeSample>): ReadonlyArray<ServerLowDiskVolume> {
+  return distinctVolumes(samples)
+    .filter((sample) => sample.freeBytes < LOW_DISK_THRESHOLD_BYTES)
+    .map(({ role, path, freeBytes, totalBytes }) => ({ role, path, freeBytes, totalBytes }));
 }
 
 /** Clients show whole GiB, so movement inside one is not worth a websocket frame. */
@@ -137,6 +137,29 @@ export const make = Effect.fn("StorageMonitor.make")(function* (
   });
 });
 
+/** None when the folder cannot be read in time, such as on an unplugged or frozen drive. */
+export const sampleFolder = <Role extends string>({
+  role,
+  path,
+}: Pick<VolumeSample<Role>, "role" | "path">): Effect.Effect<Option.Option<VolumeSample<Role>>> =>
+  Effect.tryPromise(async (): Promise<VolumeSample<Role>> => {
+    const [stat, statfs] = await Promise.all([
+      NodeFSP.stat(path),
+      NodeFSP.statfs(path, { bigint: true }),
+    ]);
+    return {
+      role,
+      path,
+      device: stat.dev,
+      freeBytes: Number(statfs.bavail * statfs.bsize),
+      totalBytes: Number(statfs.blocks * statfs.bsize),
+    };
+  }).pipe(
+    Effect.timeout(FOLDER_SAMPLE_TIMEOUT),
+    Effect.tapError((cause) => Effect.logDebug("storage folder unreadable", { role, path, cause })),
+    Effect.option,
+  );
+
 /**
  * Reads each folder's volume, in order. A folder that cannot be read, such as
  * one on an unplugged drive, is left out rather than reported.
@@ -144,30 +167,9 @@ export const make = Effect.fn("StorageMonitor.make")(function* (
 export const sampleFolders = (
   folders: ReadonlyArray<Pick<VolumeSample, "role" | "path">>,
 ): Effect.Effect<ReadonlyArray<VolumeSample>> =>
-  Effect.forEach(
-    folders,
-    ({ role, path }) =>
-      Effect.tryPromise(async (): Promise<VolumeSample> => {
-        const [stat, statfs] = await Promise.all([
-          NodeFSP.stat(path),
-          NodeFSP.statfs(path, { bigint: true }),
-        ]);
-        return {
-          role,
-          path,
-          device: stat.dev,
-          freeBytes: Number(statfs.bavail * statfs.bsize),
-          totalBytes: Number(statfs.blocks * statfs.bsize),
-        };
-      }).pipe(
-        Effect.timeout(FOLDER_SAMPLE_TIMEOUT),
-        Effect.tapError((cause) =>
-          Effect.logDebug("storage folder unreadable", { role, path, cause }),
-        ),
-        Effect.option,
-      ),
-    { concurrency: "unbounded" },
-  ).pipe(Effect.map((samples) => samples.flatMap((sample) => Option.toArray(sample))));
+  Effect.forEach(folders, sampleFolder, { concurrency: "unbounded" }).pipe(
+    Effect.map((samples) => samples.flatMap((sample) => Option.toArray(sample))),
+  );
 
 export const layer = Layer.effect(
   StorageMonitor,

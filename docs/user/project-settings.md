@@ -172,6 +172,14 @@ When the drive that holds the server's data or its worktrees has less than 20 GB
 composer shows a low disk space warning. Messages can fail to save once that drive is full. The
 warning clears within a minute of freeing space.
 
+**Disks** shows free space on each drive the server uses, and the size of Cargo build caches.
+The `target` folder of every T3-managed worktree is found automatically. If you share a
+`CARGO_TARGET_DIR` parent across checkouts, add that folder to **Build cache folders**, one
+absolute path per line. Each subfolder that Cargo marked as a cache counts. Choose **Clear build
+caches** to delete them. Caches built in the last 30 minutes, or used by a thread that is still
+running, are kept. Cleared caches rebuild on the next compile. A drive that does not respond is
+shown as unreadable and skipped.
+
 Browser captures and rotated logs have separate retention periods. Expired capture links stop
 working. Current logs, message attachments, and browser profiles are kept.
 

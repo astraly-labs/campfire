@@ -4,7 +4,7 @@ import type {
   WorktreeCleanupRules,
 } from "@t3tools/contracts";
 import { resolveWorktreeCleanup } from "@t3tools/shared/projectSettings";
-import { useMemo, useRef, useState } from "react";
+import { Fragment, useMemo, useRef, useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import { Atom } from "effect/reactivity";
 import {
@@ -12,13 +12,24 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { formatBytes } from "../../lib/formatBytes";
+import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { Button } from "../ui/button";
 import { toastManager } from "../ui/toast";
 
+import {
+  AlertDialog,
+  AlertDialogClose,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogPopup,
+  AlertDialogTitle,
+} from "../ui/alert-dialog";
 import { Input } from "../ui/input";
+import { Textarea } from "../ui/textarea";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import {
@@ -396,6 +407,252 @@ function CleanupSection() {
   );
 }
 
+const GIB = 1024 ** 3;
+const VOLUME_ROLE_LABELS = {
+  state: "Database and logs",
+  worktrees: "Worktrees",
+  "build-cache": "Build caches",
+} as const;
+
+function BuildCacheFoldersRow() {
+  const { connectedEnvironments, targets } = useSettingsScope();
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  const edited = useRef(false);
+  const folders = settings.storageCleanup.buildCacheFolders;
+  const mixed = targets.some(
+    (target) => target.settings.storageCleanup.buildCacheFolders.join("\n") !== folders.join("\n"),
+  );
+  if (
+    connectedEnvironments.some(
+      (environment) => environment.serverConfig?.environment.capabilities.buildCaches !== true,
+    )
+  )
+    return null;
+  const scopeKey = targets.map((target) => target.environmentId).join(",");
+
+  return (
+    <SettingsRow
+      {...searchableSetting("storage-build-cache-folders")}
+      status={mixed ? "Mixed across selected machines" : undefined}
+      description="Folders that hold Cargo target folders, such as a shared CARGO_TARGET_DIR parent. One absolute path per line. Worktree target folders are found automatically."
+      serverScoped
+    >
+      <div className="mt-3 max-w-2xl pb-3.5">
+        <Textarea
+          key={`${scopeKey}:${mixed}:${folders.join("\n")}`}
+          aria-label="Build cache folders"
+          autoCapitalize="none"
+          spellCheck={false}
+          rows={3}
+          placeholder={mixed ? "Mixed" : "/Volumes/SSD/cargo-targets"}
+          defaultValue={mixed ? "" : folders.join("\n")}
+          onChange={() => {
+            edited.current = true;
+          }}
+          onBlur={(event) => {
+            const next = [
+              ...new Set(
+                event.target.value
+                  .split(/\r?\n/)
+                  .map((line) => line.trim())
+                  .filter(Boolean),
+              ),
+            ];
+            if (edited.current && (mixed || next.join("\n") !== folders.join("\n")))
+              updateSettings({ storageCleanup: { buildCacheFolders: next } });
+            edited.current = false;
+          }}
+        />
+      </div>
+    </SettingsRow>
+  );
+}
+
+function DisksSection() {
+  const { connectedEnvironments } = useSettingsScope();
+  const [confirming, setConfirming] = useState(false);
+  const [pending, setPending] = useState(false);
+  const clear = useAtomCommand(serverEnvironment.clearBuildCaches);
+  const state = useAtomValue(
+    useMemo(
+      () =>
+        Atom.make((get) =>
+          connectedEnvironments.flatMap((environment) => {
+            if (environment.serverConfig?.environment.capabilities.buildCaches !== true) return [];
+            const query = get(
+              serverEnvironment.storageUsage({
+                environmentId: environment.environmentId,
+                input: {},
+              }),
+            );
+            return [
+              {
+                environment,
+                allowed: get(
+                  serverEnvironment.clearBuildCaches.permissionAtom(environment.environmentId),
+                ),
+                usage: query._tag === "Success" ? query.value : null,
+                loading: query.waiting,
+                failed: query._tag === "Failure",
+              },
+            ];
+          }),
+        ),
+      [connectedEnvironments],
+    ),
+  );
+  if (state.length === 0) return null;
+  const prefix = (label: string) => (connectedEnvironments.length > 1 ? `${label}: ` : "");
+  const clearable = state.flatMap(({ environment, usage, allowed }) =>
+    allowed && usage ? [{ environment, caches: usage.buildCaches.filter((c) => !c.inUse) }] : [],
+  );
+  const clearableBytes = clearable.reduce(
+    (total, { caches }) => total + caches.reduce((sum, cache) => sum + (cache.bytes ?? 0), 0),
+    0,
+  );
+  const clearableCount = clearable.reduce((total, { caches }) => total + caches.length, 0);
+
+  const clearNow = async () => {
+    if (pending) return;
+    setPending(true);
+    try {
+      await Promise.all(
+        clearable.map(async ({ environment }) => {
+          const result = await clear({ environmentId: environment.environmentId, input: {} });
+          if (result._tag === "Success") {
+            const failures = result.value.entries.filter((entry) => entry.outcome === "failed");
+            toastManager.add(
+              failures.length > 0
+                ? {
+                    type: "error",
+                    title: `${failures.length} build ${failures.length === 1 ? "cache" : "caches"} couldn't be removed on ${environment.label}`,
+                    description: `${failures[0]!.path}: ${failures[0]!.reason}`,
+                  }
+                : {
+                    type: "success",
+                    title: `${formatBytes(result.value.bytesFreed)} freed on ${environment.label}`,
+                  },
+            );
+          } else if (!isAtomCommandInterrupted(result)) {
+            toastManager.add({
+              type: "error",
+              title: `Could not clear build caches on ${environment.label}`,
+              description: String(squashAtomCommandFailure(result)),
+            });
+          }
+          appAtomRegistry.refresh(
+            serverEnvironment.storageUsage({ environmentId: environment.environmentId, input: {} }),
+          );
+        }),
+      );
+    } finally {
+      setPending(false);
+      setConfirming(false);
+    }
+  };
+
+  return (
+    <SettingsSection id="storage-disks" title="Disks">
+      {state.map(({ environment, usage, loading, failed }) => {
+        if (!usage)
+          return (
+            <SettingsRow
+              key={environment.environmentId}
+              title={`${prefix(environment.label)}Disks`}
+              description={failed ? "Could not read disk usage." : loading ? "Measuring…" : ""}
+            />
+          );
+        const count = usage.buildCaches.length;
+        const inUse = usage.buildCaches.filter((cache) => cache.inUse).length;
+        const unmeasured = usage.buildCaches.filter((cache) => cache.bytes === null).length;
+        return (
+          <Fragment key={environment.environmentId}>
+            {usage.volumes.map((volume) => (
+              <SettingsRow
+                key={volume.path}
+                title={`${prefix(environment.label)}${VOLUME_ROLE_LABELS[volume.role]}`}
+                description={<span className="wrap-anywhere">{volume.path}</span>}
+                control={
+                  <span className="text-xs text-muted-foreground">
+                    {Math.floor(volume.freeBytes / GIB).toLocaleString()} GB free of{" "}
+                    {Math.floor(volume.totalBytes / GIB).toLocaleString()} GB
+                  </span>
+                }
+              />
+            ))}
+            {usage.unreadablePaths.map((folder) => (
+              <SettingsRow
+                key={`unreadable:${folder}`}
+                title={`${prefix(environment.label)}Unreadable`}
+                description={
+                  <span className="wrap-anywhere text-destructive">
+                    {folder} did not respond. Its drive may be frozen or unplugged.
+                  </span>
+                }
+              />
+            ))}
+            <SettingsRow
+              title={`${prefix(environment.label)}Build caches`}
+              description={
+                count === 0
+                  ? "No build caches found."
+                  : [
+                      `${formatBytes(usage.buildCacheBytes)} in ${count} ${count === 1 ? "cache" : "caches"}.`,
+                      inUse > 0 ? `${inUse} in use will be kept.` : null,
+                      unmeasured > 0 ? `${unmeasured} unreadable.` : null,
+                    ]
+                      .filter(Boolean)
+                      .join(" ")
+              }
+            />
+          </Fragment>
+        );
+      })}
+      <SettingsRow
+        title="Clear build caches"
+        description="Delete Cargo build output that is not in use. Caches built in the last 30 minutes or used by a running thread are kept."
+        control={
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={pending || clearableCount === 0}
+            onClick={() => setConfirming(true)}
+          >
+            Clear build caches
+          </Button>
+        }
+      />
+      <BuildCacheFoldersRow />
+      <AlertDialog
+        open={confirming}
+        onOpenChange={(open) => {
+          if (!pending) setConfirming(open);
+        }}
+      >
+        <AlertDialogPopup>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Clear build caches?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This deletes {clearableCount} {clearableCount === 1 ? "cache" : "caches"} (
+              {formatBytes(clearableBytes)}). They rebuild on the next compile, which will be
+              slower.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogClose disabled={pending} render={<Button variant="outline" />}>
+              Cancel
+            </AlertDialogClose>
+            <Button variant="destructive" disabled={pending} onClick={() => void clearNow()}>
+              {pending ? "Clearing…" : "Clear build caches"}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogPopup>
+      </AlertDialog>
+    </SettingsSection>
+  );
+}
+
 export function StorageSettingsPanel() {
   const { scope, connectedEnvironments, targets, target } = useSettingsScope();
   const scopedSettings = useScopedSettings();
@@ -641,6 +898,7 @@ export function StorageSettingsPanel() {
           />
         </SettingsSection>
       )}
+      {!isProjectScope && <DisksSection />}
       {!isProjectScope && <CleanupSection />}
     </SettingsPageContainer>
   );

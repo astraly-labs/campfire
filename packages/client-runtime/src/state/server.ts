@@ -998,6 +998,18 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.serverGetStorageCleanupReport,
       idleTtlMs: 0,
     }),
+    // Measuring build caches shells out to `du`; the server caches sizes for a few minutes.
+    storageUsage: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:storage-usage",
+      tag: WS_METHODS.serverGetStorageUsage,
+      idleTtlMs: 0,
+      staleTimeMs: 5 * 60_000,
+    }),
+    clearBuildCaches: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:clear-build-caches",
+      tag: WS_METHODS.serverClearBuildCaches,
+      concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
+    }),
     updateStateAtom,
     settingsValueAtom,
     providersValueAtom,

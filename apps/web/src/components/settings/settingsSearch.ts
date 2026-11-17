@@ -205,6 +205,22 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["disk storage browser screenshots captures rotated logs cleanup retention"],
   },
   {
+    id: "storage-disks",
+    title: "Disks",
+    to: "/settings/storage",
+    scope: "environment-defaults",
+    searchTerms: [
+      "disk space free volume drive ssd full build caches cargo target rust clear delete",
+    ],
+  },
+  {
+    id: "storage-build-cache-folders",
+    title: "Build cache folders",
+    to: "/settings/storage",
+    scope: "environment-defaults",
+    searchTerms: ["cargo target dir CARGO_TARGET_DIR rust build cache folders shared"],
+  },
+  {
     id: "project-defaults",
     title: "Project defaults and overrides",
     to: "/settings/general",

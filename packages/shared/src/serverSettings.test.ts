@@ -69,7 +69,17 @@ describe("serverSettings helpers", () => {
       worktreeKeepWhen: "uncommitted-changes",
       browserArtifactsAfterDays: null,
       logsAfterDays: 30,
+      buildCacheFolders: [],
     });
+  });
+  it("replaces the build cache folder list instead of merging it", () => {
+    const two = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      storageCleanup: { buildCacheFolders: ["/ssd/cargo-targets", "/ssd/cargo-target"] },
+    });
+    expect(
+      applyServerSettingsPatch(two, { storageCleanup: { buildCacheFolders: ["/ssd/other"] } })
+        .storageCleanup.buildCacheFolders,
+    ).toEqual(["/ssd/other"]);
   });
   it("replaces a source control host's patched field so a cleared account pin does not survive", () => {
     const pinned = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
