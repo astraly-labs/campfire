@@ -381,9 +381,22 @@ const probeClaudeCapabilities = (
   environment?: NodeJS.ProcessEnv,
   cwd?: string,
   includeUsage = true,
-) => {
-  const abort = new AbortController();
-  return Effect.gen(function* () {
+) =>
+  // Callers cache and re-run this effect, so each run needs its own controller:
+  // a reused, already-aborted one ends the prompt at once and Claude exits silently.
+  Effect.suspend(() => {
+    const abort = new AbortController();
+    return probeClaudeCapabilitiesOnce(abort, claudeSettings, environment, cwd, includeUsage);
+  });
+
+const probeClaudeCapabilitiesOnce = (
+  abort: AbortController,
+  claudeSettings: ClaudeSettings,
+  environment: NodeJS.ProcessEnv | undefined,
+  cwd: string | undefined,
+  includeUsage: boolean,
+) =>
+  Effect.gen(function* () {
     const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, environment);
     const executablePath = yield* resolveClaudeSdkExecutablePath(
       claudeSettings.binaryPath,
@@ -453,13 +466,15 @@ const probeClaudeCapabilities = (
     ),
     Effect.tapError((error) =>
       Effect.logWarning("Claude capabilities probe failed; authentication stays unverified.", {
-        error: error instanceof Error ? error.message : String(error),
+        // tryPromise wraps the SDK rejection; its cause is the useful part.
+        error: String(
+          error instanceof Error && error.cause instanceof Error ? error.cause.message : error,
+        ),
       }),
     ),
     Effect.result,
     Effect.map((result) => (Result.isSuccess(result) ? result.success : undefined)),
   );
-};
 
 const runClaudeCommand = Effect.fn("runClaudeCommand")(function* (
   claudeSettings: ClaudeSettings,

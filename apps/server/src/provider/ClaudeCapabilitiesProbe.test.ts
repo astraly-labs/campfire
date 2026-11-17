@@ -374,3 +374,31 @@ it.effect("asks for usage without the local transcript scan", () =>
     assert.deepEqual(usageOptions, { skipBehaviors: true });
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
+
+it.effect("re-running the same probe effect starts each query with a live abort signal", () =>
+  Effect.gen(function* () {
+    const query = vi.spyOn(ClaudeSdk, "query").mockImplementation(({ options }) => {
+      // The real CLI sees its prompt end at once and exits without initializing.
+      const abortedAtStart = options?.abortController?.signal.aborted ?? false;
+      return {
+        initializationResult: async () => {
+          if (abortedAtStart) throw new Error("Claude Code process exited with code 0");
+          return {
+            account: { email: "dev@example.com", subscriptionType: "max", tokenSource: "oauth" },
+            commands: [],
+          };
+        },
+        usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: async () => ({
+          rate_limits_available: false,
+          rate_limits: null,
+        }),
+      } as unknown as ReturnType<typeof ClaudeSdk.query>;
+    });
+    yield* Effect.addFinalizer(() => Effect.sync(() => query.mockRestore()));
+    const probe = probeClaudeCapabilities(decodeClaudeSettings({ binaryPath: "claude" }));
+
+    assert.equal((yield* probe)?.subscriptionType, "max");
+    assert.equal((yield* probe)?.subscriptionType, "max");
+    assert.equal(query.mock.calls.length, 2);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
