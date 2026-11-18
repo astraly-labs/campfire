@@ -32,6 +32,7 @@ import {
   type ClaudeAgentSdkQueryOpenInput,
   layerQueryRunner,
   spawnClaudeProcessGroup,
+  trackClaudeDescendants,
 } from "./ClaudeAdapterV2.ts";
 
 vi.mock("@anthropic-ai/claude-agent-sdk", { spy: true });
@@ -924,5 +925,30 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("Claude CLI pro
       yield* Effect.promise(() => agentReleased);
       assert.equal(runningAgents, 0);
     }).pipe(Effect.provide(runner));
+  });
+});
+
+describe("trackClaudeDescendants", () => {
+  const row = (pid: number, ppid: number, started: string) => ({ pid, ppid, pgid: pid, started });
+
+  it("drops jobs that exited, so long sessions do not rescan every process they ever saw", () => {
+    const exited = row(50, 1, "Mon Nov 16 10:00:00 2026");
+    const moved = row(60, 1, "Mon Nov 16 10:00:01 2026");
+    const tracked = new Map([
+      ["50 Mon Nov 16 10:00:00 2026", exited],
+      ["60 Mon Nov 16 10:00:01 2026", moved],
+    ]);
+    const rows = [
+      row(10, 1, "Mon Nov 16 09:00:00 2026"),
+      row(11, 10, "Mon Nov 16 10:00:02 2026"),
+      row(50, 1, "Mon Nov 16 11:00:00 2026"),
+      moved,
+      row(61, 60, "Mon Nov 16 10:00:03 2026"),
+    ];
+    const pids = (cliPid: number | undefined) =>
+      [...trackClaudeDescendants(tracked, rows, cliPid).values()].map(({ pid }) => pid).toSorted();
+
+    assert.deepStrictEqual(pids(10), [11, 60, 61]);
+    assert.deepStrictEqual(pids(undefined), [60, 61]);
   });
 });

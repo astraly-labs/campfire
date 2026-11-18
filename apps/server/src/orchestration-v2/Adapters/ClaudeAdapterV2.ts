@@ -510,6 +510,23 @@ function claudeDescendants(
   return found;
 }
 
+const claudeProcessIdentity = (row: ClaudeProcessRow) => `${row.pid} ${row.started}`;
+
+/** Keeps the tracked jobs still running, plus what they and the live CLI started since. */
+export function trackClaudeDescendants(
+  tracked: ReadonlyMap<string, ClaudeProcessRow>,
+  rows: ReadonlyArray<ClaudeProcessRow>,
+  cliPid: number | undefined,
+): ReadonlyMap<string, ClaudeProcessRow> {
+  const running = new Set(rows.map(claudeProcessIdentity));
+  const live = [...tracked].filter(([key]) => running.has(key));
+  const roots = [...(cliPid === undefined ? [] : [cliPid]), ...live.map(([, row]) => row.pid)];
+  return new Map([
+    ...live,
+    ...claudeDescendants(rows, roots).map((row) => [claudeProcessIdentity(row), row] as const),
+  ]);
+}
+
 export const ClaudeProviderCapabilitiesV2 = {
   sessions: {
     supportsMultipleProviderThreadsPerSession: false,
@@ -1429,26 +1446,20 @@ export const layerQueryRunner: Layer.Layer<
     // re-parented once the CLI exits. So the CLI's tree is recorded while it runs, and what is
     // still the same process (pid and start time) is stopped after it exits.
     const trackDescendants = (cliPid: number) => {
-      const tracked = new Map<string, ClaudeProcessRow>();
-      const identity = (row: ClaudeProcessRow) => `${row.pid} ${row.started}`;
+      let tracked: ReadonlyMap<string, ClaudeProcessRow> = new Map();
       // After exit the CLI's pid may belong to an unrelated process, so only tracked jobs are roots.
+      // An empty table means ps failed: keep what is tracked, and stop nothing on stale rows.
       const refresh = Effect.fn("ClaudeAgentSdkQueryRunner.trackDescendants")(function* (
         cliRunning: boolean,
       ) {
         const rows = yield* readProcessTable;
-        const running = new Set(rows.map(identity));
-        const roots = [
-          ...(cliRunning ? [cliPid] : []),
-          ...[...tracked.values()].flatMap((row) => (running.has(identity(row)) ? [row.pid] : [])),
-        ];
-        for (const row of claudeDescendants(rows, roots)) tracked.set(identity(row), row);
-        return running;
+        if (rows.length > 0)
+          tracked = trackClaudeDescendants(tracked, rows, cliRunning ? cliPid : undefined);
+        return rows.length > 0;
       });
       const stop = refresh(false).pipe(
-        Effect.map((running) => {
-          for (const row of tracked.values()) {
-            if (running.has(identity(row))) killClaudeDescendant(row);
-          }
+        Effect.map((fresh) => {
+          if (fresh) for (const row of tracked.values()) killClaudeDescendant(row);
         }),
       );
       return { refresh: refresh(true).pipe(Effect.asVoid), stop };
