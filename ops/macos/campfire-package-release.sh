@@ -85,8 +85,9 @@ campfire_pnpm_version=$(PATH="$campfire_tools:$PATH" "$campfire_pnpm" --version)
   PATH="$campfire_tools:$PATH" "$campfire_node" "$campfire_vp" run \
     --filter @t3tools/web --filter t3 build
   mkdir -p "$campfire_stage/apps"
+  # The server deploy skips the mobile and desktop packages, so their patches go unused.
   PATH="$campfire_tools:$PATH" "$campfire_pnpm" --filter t3 deploy --prod --legacy \
-    "$campfire_stage/apps/server"
+    --config.allow-unused-patches=true "$campfire_stage/apps/server"
 )
 
 # pnpm's legacy deploy leaves a workspace self-link back to the source checkout. It is not a
