@@ -1,24 +1,24 @@
+import { Button } from "../../components/ui/Button";
 import {
+  WORKTREE_SETUP_STAGE_ORDER,
   worktreeSetupStageLabel,
   type WorktreeSetupSnapshot,
   type WorktreeSetupStage,
 } from "@t3tools/contracts";
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
-import { useEffect, useState } from "react";
-import { AppState, Platform, Pressable, ScrollView, View } from "react-native";
+import { Platform, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { AppActivityIndicator } from "../../components/AppActivityIndicator";
-import { AppText as Text } from "../../components/AppText";
-import { SymbolView, type AppSymbolName } from "../../components/AppSymbol";
-import { WorktreeSetupSheet } from "./worktree-setup-sheet";
+import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
+import { AppText as Text } from "../../components/ui/AppText";
+import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
+import { Sheet } from "../../components/ui/Sheet";
 import { ShimmeringWorkContent } from "./thread-work-log";
+import { useVisibleSecondClock } from "./use-visible-second-clock";
 
 export interface WorktreeSetupCardProps {
   snapshot: WorktreeSetupSnapshot;
   turnStarted: boolean;
-  turnStartedAt: string | null;
-  working: boolean;
   onCancel: () => void;
   onWorkLocally: (() => void) | null;
 }
@@ -37,77 +37,56 @@ const icons: Record<WorktreeSetupStage["status"], AppSymbolName> = {
   warning: "exclamationmark.triangle",
 };
 
-/** Setup stages collapse into the working header once the agent's turn is live. */
-export function WorktreeSetupCard(props: WorktreeSetupCardProps) {
-  const { snapshot, turnStarted, turnStartedAt, working } = props;
-  const handedOff = turnStarted && worktreeSetupAgentStarted(snapshot);
+/** The feed owns whether the details sheet is open, so it survives the card turning into a chip or summary. */
+interface SetupDetailsControl {
+  readonly detailsOpen: boolean;
+  readonly onOpenDetails: () => void;
+}
+
+export function WorktreeSetupCard(props: WorktreeSetupCardProps & SetupDetailsControl) {
+  // Once the agent has the turn, running setup is a chip on the live Working row.
+  if (worktreeSetupHandedOff(props)) {
+    // As on web, only a setup that went wrong stays in view.
+    return setupWentWrong(props.snapshot) ? <WorktreeSetupSummaryRow {...props} /> : null;
+  }
+  return <WorktreeSetupHeaderCard {...props} />;
+}
+
+function WorktreeSetupHeaderCard(props: WorktreeSetupCardProps & SetupDetailsControl) {
+  const { snapshot, detailsOpen } = props;
   const running = snapshot.phase === "running";
-  const backgroundSetup = handedOff && running;
-  const scriptName = snapshot.setupScript?.name ?? "Setup script";
-  const [detailsOpen, setDetailsOpen] = useState(false);
-  const now = useSetupClock(running || working);
+  const now = useVisibleSecondClock(running);
   const failed =
     snapshot.phase === "failed" || snapshot.stages.some((stage) => stage.status === "failed");
-  const label =
-    handedOff && working
-      ? `Working for ${elapsed(turnStartedAt, null, now) ?? "0s"}`
-      : running
-        ? handedOff
-          ? "Setup continues…"
-          : "Setting up worktree…"
-        : snapshot.phase === "cancelled"
-          ? "Worktree setup cancelled"
-          : snapshot.phase === "failed"
-            ? "Worktree setup failed"
-            : failed
-              ? "Setup script failed"
-              : "Worktree ready";
+  const label = running
+    ? "Setting up worktree…"
+    : snapshot.phase === "cancelled"
+      ? "Worktree setup cancelled"
+      : snapshot.phase === "failed"
+        ? "Worktree setup failed"
+        : failed
+          ? "Setup script failed"
+          : "Worktree ready";
 
   return (
     <View accessibilityLabel="Worktree setup" className="py-1">
       <View className="min-h-11 flex-row items-center gap-2 border-b border-border px-1">
-        <HeaderLabel
-          label={label}
-          active={(running || working) && !detailsOpen}
-          failed={failed && !working}
-        />
-        {!handedOff ? (
-          <Text
-            className="text-2xs text-foreground-secondary"
-            style={{ fontVariant: ["tabular-nums"] }}
-          >
-            {elapsed(snapshot.startedAt, snapshot.endedAt, now)}
-          </Text>
-        ) : null}
+        <HeaderLabel label={label} active={running && !detailsOpen} failed={failed} />
+        <Text
+          className="text-2xs text-foreground-secondary"
+          style={{ fontVariant: ["tabular-nums"] }}
+        >
+          {elapsed(snapshot.startedAt, snapshot.endedAt, now)}
+        </Text>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={
-            backgroundSetup
-              ? `${scriptName} is still running. Show setup progress.`
-              : "Worktree setup details"
-          }
+          accessibilityLabel="Worktree setup details"
           accessibilityState={{ expanded: detailsOpen }}
-          onPress={() => setDetailsOpen(true)}
+          onPress={props.onOpenDetails}
           className="min-h-11 max-w-[55%] justify-center px-2"
         >
-          <View
-            className={
-              backgroundSetup
-                ? "min-w-0 flex-row items-center gap-1 rounded-full border border-border px-2 py-1"
-                : "flex-row items-center gap-1"
-            }
-          >
-            {backgroundSetup ? (
-              <AppActivityIndicator
-                size={Platform.OS === "android" ? 12 : "small"}
-                colorClassName="accent-icon-muted"
-                style={{
-                  width: 12,
-                  height: 12,
-                  transform: Platform.OS === "android" ? undefined : [{ scale: 0.65 }],
-                }}
-              />
-            ) : failed ? (
+          <View className="flex-row items-center gap-1">
+            {failed ? (
               <SymbolView
                 name="exclamationmark.circle"
                 size={12}
@@ -115,43 +94,141 @@ export function WorktreeSetupCard(props: WorktreeSetupCardProps) {
               />
             ) : null}
             <Text numberOfLines={1} className="shrink text-2xs text-foreground-secondary">
-              {backgroundSetup ? scriptName : "Details"}
+              Details
             </Text>
-            {!backgroundSetup ? (
-              <SymbolView name="chevron.right" size={10} tintColorClassName="accent-icon-muted" />
-            ) : null}
+            <SymbolView name="chevron.right" size={10} tintColorClassName="accent-icon-muted" />
           </View>
         </Pressable>
       </View>
-      {!handedOff ? (
-        <View className="pt-1 pb-2">
-          {snapshot.stages
-            .filter((stage) => stage.id !== "agent")
-            .map((stage) => (
-              <StageRow
-                key={stage.id}
-                stage={stage}
-                scriptName={snapshot.setupScript?.name ?? null}
-                now={now}
-                compact
-                animate={!detailsOpen}
-              />
-            ))}
-        </View>
-      ) : null}
-      {detailsOpen ? (
-        <SetupDetailsSheet {...props} now={now} onClose={() => setDetailsOpen(false)} />
-      ) : null}
+      <View className="pt-1 pb-2">
+        {snapshot.stages
+          .filter((stage) => stage.id !== "agent")
+          .map((stage) => (
+            <StageRow
+              key={stage.id}
+              stage={stage}
+              scriptName={snapshot.setupScript?.name ?? null}
+              now={now}
+              compact
+              animate={!detailsOpen}
+            />
+          ))}
+      </View>
     </View>
   );
 }
 
-export function WorktreeWorkingHeader({ startedAt }: { startedAt: string }) {
-  const now = useSetupClock(true);
+/** True once the agent has the turn; the turn's fold row then carries the setup instead of the card. */
+export function worktreeSetupHandedOff(props: WorktreeSetupCardProps): boolean {
+  return props.turnStarted && worktreeSetupAgentStarted(props.snapshot);
+}
+
+/** The card's state on the turn's fold row: setup still running, or a failure to look at. */
+export function WorktreeSetupFoldChip(props: WorktreeSetupCardProps & SetupDetailsControl) {
+  const scriptName = props.snapshot.setupScript?.name ?? "Setup script";
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`Background setup is still running: ${scriptName}. Show setup progress.`}
+      onPress={props.onOpenDetails}
+      hitSlop={8}
+      className="ml-2 min-w-0 max-w-[55%] flex-row items-center gap-1 rounded-full border border-border px-2 py-1 active:opacity-70"
+    >
+      <AppActivityIndicator
+        size={Platform.OS === "android" ? 12 : "small"}
+        colorClassName="accent-icon-muted"
+        style={{
+          width: 12,
+          height: 12,
+          transform: Platform.OS === "android" ? undefined : [{ scale: 0.65 }],
+        }}
+      />
+      <Text numberOfLines={1} className="shrink text-2xs text-foreground-secondary">
+        Background setup
+      </Text>
+    </Pressable>
+  );
+}
+
+/**
+ * Setup that ended after the agent took the turn, as one row under the prompt, like web's
+ * collapsed summary. Tapping it opens the details.
+ */
+function setupWentWrong(snapshot: WorktreeSetupSnapshot): boolean {
+  return (
+    snapshot.phase === "failed" ||
+    snapshot.phase === "cancelled" ||
+    (snapshot.phase === "done" &&
+      snapshot.stages.some((stage) => stage.id === "setup-script" && stage.status === "failed"))
+  );
+}
+
+function WorktreeSetupSummaryRow(props: WorktreeSetupCardProps & SetupDetailsControl) {
+  const { snapshot } = props;
+  const now = useVisibleSecondClock(false);
+  const label =
+    snapshot.phase === "failed"
+      ? "Worktree setup failed"
+      : snapshot.phase === "cancelled"
+        ? "Worktree setup cancelled"
+        : "Worktree ready, setup script failed";
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`${label}. Show setup details.`}
+      onPress={props.onOpenDetails}
+      className="mb-1 min-h-8 flex-row items-center px-1 active:opacity-70"
+      style={{ columnGap: 8 }}
+    >
+      <View className="w-6 items-center">
+        <SymbolView name="xmark" size={14} tintColorClassName="accent-danger-foreground" />
+      </View>
+      <Text numberOfLines={1} className="flex-1 text-sm text-danger-foreground">
+        {label}
+      </Text>
+      <Text
+        className="text-2xs text-foreground-secondary"
+        style={{ fontVariant: ["tabular-nums"] }}
+      >
+        {elapsed(snapshot.startedAt, snapshot.endedAt, now)}
+      </Text>
+      <SymbolView name="chevron.right" size={10} tintColorClassName="accent-icon-muted" />
+    </Pressable>
+  );
+}
+
+/** The one setup details sheet, opened from the card, the chip, or the summary row. */
+export function WorktreeSetupDetails(
+  props: WorktreeSetupCardProps & { readonly onClose: () => void },
+) {
+  const now = useVisibleSecondClock(props.snapshot.phase === "running");
+  return <SetupDetailsSheet {...props} now={now} />;
+}
+
+/** Holds the card's place until the server publishes the first setup snapshot. */
+// Same rows the first snapshot brings, so the card keeps its height when that snapshot lands.
+const PREPARING_STAGES: ReadonlyArray<WorktreeSetupStage> = WORKTREE_SETUP_STAGE_ORDER.filter(
+  (id) => id !== "agent",
+).map((id) => ({
+  id,
+  status: "pending",
+  startedAt: null,
+  endedAt: null,
+  percent: null,
+  detail: null,
+  tail: [],
+}));
+
+export function WorktreePreparingHeader() {
   return (
     <View className="py-1">
       <View className="min-h-11 flex-row items-center border-b border-border px-1">
-        <HeaderLabel label={`Working for ${elapsed(startedAt, null, now) ?? "0s"}`} active />
+        <HeaderLabel label="Setting up worktree…" active />
+      </View>
+      <View className="pt-1 pb-2">
+        {PREPARING_STAGES.map((stage) => (
+          <StageRow key={stage.id} stage={stage} scriptName={null} now={0} compact />
+        ))}
       </View>
     </View>
   );
@@ -188,21 +265,6 @@ function HeaderLabel({
   );
 }
 
-function useSetupClock(active: boolean) {
-  const [now, setNow] = useState(Date.now);
-  const [appState, setAppState] = useState(AppState.currentState);
-  useEffect(() => {
-    const subscription = AppState.addEventListener("change", setAppState);
-    return () => subscription.remove();
-  }, []);
-  useEffect(() => {
-    if (!active || appState !== "active") return;
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, [active, appState]);
-  return now;
-}
-
 function SetupDetailsSheet({
   snapshot,
   turnStarted,
@@ -212,21 +274,18 @@ function SetupDetailsSheet({
   now,
 }: WorktreeSetupCardProps & { onClose: () => void; now: number }) {
   const insets = useSafeAreaInsets();
-  const [bodyHeight, setBodyHeight] = useState(0);
   const canCancel = snapshot.phase === "running" && !turnStarted;
   return (
-    <WorktreeSetupSheet height={bodyHeight} onClose={onClose}>
+    <Sheet title="Worktree setup" onClose={onClose}>
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         bounces={false}
-        onContentSizeChange={(_width, height) => setBodyHeight(height)}
         contentContainerStyle={{
           paddingHorizontal: 20,
           paddingTop: 12,
           paddingBottom: Math.max(20, insets.bottom),
         }}
       >
-        {/* Agent startup is the header handoff, not a fifth setup step. */}
         {snapshot.stages
           .filter((stage) => stage.id !== "agent")
           .map((stage) => (
@@ -245,33 +304,29 @@ function SetupDetailsSheet({
         ) : null}
         {canCancel ? (
           <View className="mt-3 flex-row items-center justify-end gap-4 border-t border-border pt-1">
-            <Pressable
-              accessibilityRole="button"
+            <Button
+              label="Cancel setup"
+              tone="danger"
               accessibilityLabel="Cancel worktree setup"
               onPress={() => {
                 onClose();
                 onCancel();
               }}
-              className="min-h-11 justify-center px-2"
-            >
-              <Text className="text-sm text-danger-foreground">Cancel setup</Text>
-            </Pressable>
+            />
             {onWorkLocally ? (
-              <Pressable
-                accessibilityRole="button"
+              <Button
+                label="Work locally"
+                tone="secondary"
                 onPress={() => {
                   onClose();
                   onWorkLocally();
                 }}
-                className="min-h-11 justify-center px-2"
-              >
-                <Text className="text-sm text-foreground">Work locally</Text>
-              </Pressable>
+              />
             ) : null}
           </View>
         ) : null}
       </ScrollView>
-    </WorktreeSetupSheet>
+    </Sheet>
   );
 }
 
@@ -365,7 +420,6 @@ function StageRow({
 
 const OUTPUT_TAIL_SLOTS = [0, 1, 2, 3] as const;
 
-/** Fixed four-line output window, shown only in Details. */
 function OutputTail({ lines, failed }: { lines: ReadonlyArray<string>; failed: boolean }) {
   return (
     <View

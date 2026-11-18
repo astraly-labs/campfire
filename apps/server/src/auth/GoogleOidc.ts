@@ -1,6 +1,6 @@
 import * as Clock from "effect/Clock";
-import * as Data from "effect/Data";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import { Base64Url } from "effect/encoding";
 import * as Effect from "effect/Effect";
 import * as Ref from "effect/Ref";
@@ -41,38 +41,45 @@ interface PendingTransaction {
   readonly expiresAtMs: number;
 }
 
-export class GoogleOidcTransactionError extends Data.TaggedError("GoogleOidcTransactionError")<{
-  readonly reason:
-    | "invalid_return_to"
-    | "invalid_state"
-    | "expired_or_replayed"
-    | "too_many_pending";
-}> {
+export class GoogleOidcTransactionError extends Schema.TaggedError<GoogleOidcTransactionError>()(
+  "GoogleOidcTransactionError",
+  {
+    reason: Schema.Literals([
+      "invalid_return_to",
+      "invalid_state",
+      "expired_or_replayed",
+      "too_many_pending",
+    ]),
+  },
+) {
   override get message(): string {
     return `Google OIDC transaction failed: ${this.reason}.`;
   }
 }
 
-export class GoogleOidcTokenError extends Data.TaggedError("GoogleOidcTokenError")<{
-  readonly reason:
-    | "exchange_failed"
-    | "invalid_token_response"
-    | "invalid_id_token"
-    | "nonce_mismatch"
-    | "unverified_email"
-    | "invalid_identity";
-  readonly cause?: unknown;
-}> {
+export class GoogleOidcTokenError extends Schema.TaggedError<GoogleOidcTokenError>()(
+  "GoogleOidcTokenError",
+  {
+    reason: Schema.Literals([
+      "exchange_failed",
+      "invalid_token_response",
+      "invalid_id_token",
+      "nonce_mismatch",
+      "unverified_email",
+      "invalid_identity",
+    ]),
+    cause: Schema.optionalKey(Schema.Defect()),
+  },
+) {
   override get message(): string {
     return `Google OIDC token validation failed: ${this.reason}.`;
   }
 }
 
-export class GoogleOidcIdentityNotAllowedError extends Data.TaggedError(
+export class GoogleOidcIdentityNotAllowedError extends Schema.TaggedError<GoogleOidcIdentityNotAllowedError>()(
   "GoogleOidcIdentityNotAllowedError",
-)<{
-  readonly email: string;
-}> {
+  { email: Schema.String },
+) {
   override get message(): string {
     return "This Google identity is not allowed to access Campfire.";
   }
@@ -124,11 +131,12 @@ function normalizeReturnTo(value: string | undefined): string | undefined {
 export function makeGoogleOidcFlow<R>(
   config: GoogleOidcConfig,
   tokenClient: GoogleOidcTokenClient<R>,
-): Effect.Effect<GoogleOidcFlow<R>, never, Crypto.Crypto> {
+): Effect.Effect<GoogleOidcFlow<R>, never, SecureRandom.SecureRandom | Digest.Digest> {
   return Effect.gen(function* () {
-    const crypto = yield* Crypto.Crypto;
+    const random = yield* SecureRandom.SecureRandom;
+    const digest = yield* Digest.Digest;
     const randomBase64Url = (bytes = 32) =>
-      crypto.randomBytes(bytes).pipe(Effect.map(Base64Url.encode), Effect.orDie);
+      random.randomBytes(bytes).pipe(Effect.map(Base64Url.encode));
     const pending = yield* Ref.make(new Map<string, PendingTransaction>());
 
     const begin: GoogleOidcFlow<R>["begin"] = Effect.fn("GoogleOidcFlow.begin")(
@@ -166,9 +174,9 @@ export function makeGoogleOidcFlow<R>(
           scope: "openid email profile",
           state: transaction.state,
           nonce: transaction.nonce,
-          code_challenge: yield* crypto
-            .digest("SHA-256", new TextEncoder().encode(transaction.codeVerifier))
-            .pipe(Effect.map(Base64Url.encode), Effect.orDie),
+          code_challenge: yield* digest
+            .digest(Digest.sha256, new TextEncoder().encode(transaction.codeVerifier))
+            .pipe(Effect.map(Base64Url.encode)),
           code_challenge_method: "S256",
           prompt: "select_account",
         }).toString();
@@ -300,7 +308,11 @@ const productionFlows = new WeakMap<GoogleOidcConfig, GoogleOidcFlow<HttpClient.
 
 export function googleOidcFlowForConfig(
   config: GoogleOidcConfig,
-): Effect.Effect<GoogleOidcFlow<HttpClient.HttpClient>, never, Crypto.Crypto> {
+): Effect.Effect<
+  GoogleOidcFlow<HttpClient.HttpClient>,
+  never,
+  SecureRandom.SecureRandom | Digest.Digest
+> {
   return Effect.gen(function* () {
     const cached = productionFlows.get(config);
     if (cached !== undefined) return cached;

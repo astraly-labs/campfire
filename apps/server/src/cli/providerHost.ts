@@ -10,6 +10,7 @@ import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderS
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as PortScanner from "../preview/PortScanner.ts";
 import { ServerConfig } from "../config.ts";
 import {
   createLocalCodexAdapterV2,
@@ -114,6 +115,7 @@ export const runCodexProviderHost = Effect.fn("runCodexProviderHost")(function* 
   return yield* Effect.never;
 });
 
+// The host process cannot feed the server's preview scanner, so hosted agents stay untracked.
 const layerHost = Layer.mergeAll(
   IdAllocator.layer,
   McpProviderSessions.layer,
@@ -125,7 +127,7 @@ const layerHost = Layer.mergeAll(
       ),
     ),
   ),
-);
+).pipe(Layer.provideMerge(PortScanner.layerTest));
 export const providerHostCommand = Command.make("provider-host", {
   ...sharedServerCommandFlags,
 }).pipe(

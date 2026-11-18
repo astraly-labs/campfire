@@ -1,4 +1,5 @@
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
+import { isAttachmentOnlyBootstrapPrompt } from "@t3tools/shared/composerContextReferences";
 import {
   type ModelSelection,
   repositoryGroupingKeyOf,
@@ -14,6 +15,7 @@ import {
 import { type ComposerThreadTarget, useComposerDraftStore } from "~/composerDraftStore";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { configuredHostedAppUrl } from "~/hostedPairing";
+import { draftModelSelectionApplies } from "~/lib/chatThreadActions";
 
 import { stackedThreadToast, toastManager } from "../ui/toast";
 
@@ -26,12 +28,11 @@ export function promptLinkFor(
     readonly model: string | null;
   },
 ): string | null {
-  const trimmed = prompt.trim();
+  const trimmed = isAttachmentOnlyBootstrapPrompt(prompt) ? "" : prompt.trim();
   if (trimmed.length === 0 || trimmed.length > PROMPT_LINK_MAX_PROMPT_LENGTH) return null;
   return buildNewThreadLink({ prompt: trimmed, ...context, origin: configuredHostedAppUrl() });
 }
 
-/** The project's GitHub repository, the only kind a prompt link can name. */
 export function promptLinkRepositoryOf(
   project: Pick<EnvironmentProject, "repositoryIdentity"> | undefined,
 ): PromptLinkRepository | null {
@@ -43,25 +44,21 @@ export function promptLinkRepositoryOf(
     : null;
 }
 
-/**
- * The draft in a composer as a link: its text and, with `withContext`, the project's repository
- * and the model the composer has picked. Null when the composer holds no prompt to share.
- */
 export function composerPromptLink(input: {
   readonly target: ComposerThreadTarget;
   readonly project: EnvironmentProject | undefined;
   readonly providers: ReadonlyArray<ServerProvider>;
   readonly threadModelSelection: ModelSelection | null;
+  readonly threadStarted: boolean;
   readonly withContext: boolean;
 }): string | null {
   const draft = useComposerDraftStore.getState().getComposerDraft(input.target);
   if (!draft) return null;
   if (!input.withContext) return promptLinkFor(draft.prompt);
-  // A server thread's composer shows the thread's shared selection; a local
-  // draft shows its own pick.
   const selection =
-    input.threadModelSelection ??
-    (draft.activeProvider ? draft.modelSelectionByProvider[draft.activeProvider] : undefined);
+    (draft.activeProvider && draftModelSelectionApplies(draft, input.threadStarted)
+      ? draft.modelSelectionByProvider[draft.activeProvider]
+      : undefined) ?? input.threadModelSelection;
   const provider = selection
     ? (input.providers.find((candidate) => candidate.instanceId === selection.instanceId)?.driver ??
       null)
@@ -73,11 +70,9 @@ export function composerPromptLink(input: {
   });
 }
 
-/** Copies a prompt link and says so. */
 export async function copyPromptLink(link: string): Promise<void> {
   try {
-    if (!(await writeTextToClipboard(link))) return;
-    toastManager.add({ type: "success", title: "Prompt link copied" });
+    await writeTextToClipboard(link);
   } catch (error) {
     toastManager.add(
       stackedThreadToast({

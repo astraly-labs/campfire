@@ -10,7 +10,7 @@ import {
 import * as Adapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
@@ -50,9 +50,12 @@ export interface RemoteCodexAdapterOptions {
 export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(function* (
   options: RemoteCodexAdapterOptions,
 ) {
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const mcp = yield* McpProviderSessions.McpProviderSessions;
-  const prefix = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
+  const prefix = yield* random.uuidV4();
+  const services = yield* Effect.context<never>();
+  const runFork = Effect.runForkWith(services);
+  const runPromise = Effect.runPromiseWith(services);
   const queues = new Map<
     ProviderSessionId,
     Queue.Queue<Adapter.ProviderAdapterV2Event, Adapter.ProviderAdapterV2Error>
@@ -83,7 +86,7 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
     firstConnectionReject?.(cause);
     for (const command of pending.values()) command.reject(cause);
     pending.clear();
-    for (const queue of queues.values()) Effect.runFork(Queue.fail(queue, cause));
+    for (const queue of queues.values()) runFork(Queue.fail(queue, cause));
     socket?.destroy();
   };
   const connect = () => {
@@ -167,7 +170,7 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
         delivery = delivery
           .then(async () => {
             if (closed || terminalError) return;
-            await Effect.runPromise(deliver);
+            await runPromise(deliver);
             cursor = message.sequence;
             if (lease !== undefined && ready) send({ type: "ack", lease, sequence: cursor });
           })
@@ -293,8 +296,12 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
   return Adapter.ProviderAdapterV2.of({
     instanceId: options.instanceId,
     driver: CODEX,
-    getCapabilities: () => call("capabilities", Schema.Void, Protocol.Capabilities, undefined),
-    planSelectionTransition: () => Effect.succeed(turnScopedSelectionTransition()),
+    getCapabilities: Effect.fn("RemoteCodexAdapter.getCapabilities")(function () {
+      return call("capabilities", Schema.Void, Protocol.Capabilities, undefined);
+    }),
+    planSelectionTransition: Effect.fn("RemoteCodexAdapter.planSelectionTransition")(function () {
+      return Effect.succeed(turnScopedSelectionTransition());
+    }),
     hostedSessions: hostedSessions.pipe(
       Effect.map((sessions) =>
         sessions.map((session) => ({
@@ -306,215 +313,204 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
         })),
       ),
     ),
-    openSession: (input) =>
-      Effect.gen(function* () {
-        const queue = yield* Queue.bounded<
-          Adapter.ProviderAdapterV2Event,
-          Adapter.ProviderAdapterV2Error
-        >(512);
-        queues.set(input.providerSessionId, queue);
+    openSession: Effect.fn("RemoteCodexAdapter.openSession")(function* (input) {
+      const queue = yield* Queue.bounded<
+        Adapter.ProviderAdapterV2Event,
+        Adapter.ProviderAdapterV2Error
+      >(512);
+      queues.set(input.providerSessionId, queue);
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          if (queues.get(input.providerSessionId) === queue) queues.delete(input.providerSessionId);
+          Queue.shutdownUnsafe(queue);
+        }),
+      );
+      const existing = descriptions.get(input.providerSessionId);
+      const effectiveRuntime =
+        existing || !options.resolveRuntime
+          ? undefined
+          : yield* options.resolveRuntime.pipe(
+              Effect.mapError((cause) => error("Could not resolve managed Codex runtime.", cause)),
+            );
+      if (input.lifetime === "ephemeral")
         yield* Effect.addFinalizer(() =>
-          Effect.sync(() => {
-            if (queues.get(input.providerSessionId) === queue)
-              queues.delete(input.providerSessionId);
-            Queue.shutdownUnsafe(queue);
-          }),
+          stopSession(input.providerSessionId).pipe(Effect.ignoreCause()),
         );
-        const existing = descriptions.get(input.providerSessionId);
-        const effectiveRuntime =
-          existing || !options.resolveRuntime
-            ? undefined
-            : yield* options.resolveRuntime.pipe(
-                Effect.mapError((cause) =>
-                  error("Could not resolve managed Codex runtime.", cause),
-                ),
-              );
-        if (input.lifetime === "ephemeral")
-          yield* Effect.addFinalizer(() =>
-            stopSession(input.providerSessionId).pipe(Effect.catchCause(() => Effect.void)),
-          );
-        const description = yield* call(
-          "openSession",
-          Protocol.OpenSession,
-          Protocol.SessionDescription,
-          input,
-          input.providerSessionId,
-          {
-            mcpSessions: yield* mcpForThread(input.threadId),
-            ...(effectiveRuntime === undefined ? {} : { effectiveRuntime }),
-          },
-        );
-        descriptions.set(input.providerSessionId, description);
-        if (!existing) yield* enableReplay;
-        const sessionId = input.providerSessionId;
-        const supports = (method: string) => description.methods.includes(method);
-        const ensureThread: Adapter.ProviderAdapterV2SessionRuntime["ensureThread"] = (payload) =>
-          mcpForThread(payload.threadId).pipe(
-            Effect.flatMap((mcpSessions) =>
-              call(
-                "ensureThread",
-                Protocol.EnsureThread,
-                Protocol.ProviderThread,
-                payload,
-                sessionId,
-                { mcpSessions },
-              ),
-            ),
-          );
-        const resumeThread: Adapter.ProviderAdapterV2SessionRuntime["resumeThread"] = (payload) =>
-          mcpForThread(payload.threadId ?? payload.providerThread.appThreadId).pipe(
-            Effect.flatMap((mcpSessions) =>
-              call(
-                "resumeThread",
-                Protocol.ResumeThread,
-                Protocol.ProviderThread,
-                payload,
-                sessionId,
-                { mcpSessions },
-              ),
-            ),
-          );
-        const start = (
-          operation: "startTurn" | "compactThread",
-          payload: Adapter.ProviderAdapterV2TurnInput,
-        ) =>
-          enableReplay.pipe(
-            Effect.andThen(
-              call(operation, Protocol.Turn, Schema.Void, payload, sessionId, {
-                commandId: `${operation}:${sessionId}:${payload.attemptId}`,
-              }),
-            ),
-          );
-        return {
-          instanceId: options.instanceId,
-          driver: CODEX,
-          providerSessionId: sessionId,
-          providerSession: description.session,
-          events: Stream.fromQueue(queue),
-          externalLifetime: {
-            stop: stopSession(sessionId),
-            replay: enableReplay,
-          },
-          canReuseContextUsage: options.canReuseContextUsage,
-          hasPendingBackgroundWork: call(
-            "hasPendingBackgroundWork",
-            Schema.Void,
-            Schema.Boolean,
-            undefined,
-            sessionId,
-          ).pipe(Effect.orElseSucceed(() => true)),
-          hasPendingBackgroundWorkForThread: (providerThread) =>
+      const description = yield* call(
+        "openSession",
+        Protocol.OpenSession,
+        Protocol.SessionDescription,
+        input,
+        input.providerSessionId,
+        {
+          mcpSessions: yield* mcpForThread(input.threadId),
+          ...(effectiveRuntime === undefined ? {} : { effectiveRuntime }),
+        },
+      );
+      descriptions.set(input.providerSessionId, description);
+      if (!existing) yield* enableReplay;
+      const sessionId = input.providerSessionId;
+      const supports = (method: string) => description.methods.includes(method);
+      const ensureThread: Adapter.ProviderAdapterV2SessionRuntime["ensureThread"] = (payload) =>
+        mcpForThread(payload.threadId).pipe(
+          Effect.flatMap((mcpSessions) =>
             call(
-              "hasPendingBackgroundWorkForThread",
-              Protocol.Thread,
-              Schema.Boolean,
-              { providerThread },
-              sessionId,
-            ).pipe(Effect.orElseSucceed(() => true)),
-          ensureThread,
-          resumeThread,
-          startTurn: (payload) => start("startTurn", payload),
-          ...(supports("compactThread")
-            ? {
-                compactThread: (payload: Adapter.ProviderAdapterV2TurnInput) =>
-                  start("compactThread", payload),
-              }
-            : {}),
-          steerTurn: (payload) =>
-            call("steerTurn", Protocol.Steer, Schema.Void, payload, sessionId),
-          interruptTurn: (payload) =>
-            call("interruptTurn", Protocol.Interrupt, Schema.Void, payload, sessionId),
-          respondToRuntimeRequest: (payload) =>
-            call("respondToRuntimeRequest", Protocol.Respond, Schema.Void, payload, sessionId),
-          readThreadSnapshot: (payload) =>
-            call(
-              "readThreadSnapshot",
-              Protocol.Thread,
-              Protocol.ThreadSnapshot,
+              "ensureThread",
+              Protocol.EnsureThread,
+              Protocol.ProviderThread,
               payload,
               sessionId,
+              { mcpSessions },
             ),
-          rollbackThread: (payload) =>
-            call("rollbackThread", Protocol.Rollback, Protocol.ThreadSnapshot, payload, sessionId),
-          forkThread: (payload) =>
-            call("forkThread", Protocol.Fork, Protocol.ProviderThread, payload, sessionId),
-          ...(supports("injectHistory")
-            ? {
-                injectHistory: (
-                  payload: Adapter.ProviderAdapterV2HistoricalContext & {
-                    readonly providerThread: typeof Protocol.ProviderThread.Type;
-                  },
-                ) =>
-                  call("injectHistory", Protocol.InjectHistory, Schema.Boolean, payload, sessionId),
-              }
-            : {}),
-          ...(supports("unloadThread")
-            ? {
-                unloadThread: (payload: typeof Protocol.Thread.Type) =>
-                  call("unloadThread", Protocol.Thread, Schema.Void, payload, sessionId),
-              }
-            : {}),
-          ...(supports("stopTask")
-            ? {
-                stopTask: (payload: typeof Protocol.StopTask.Type) =>
-                  call("stopTask", Protocol.StopTask, Schema.Void, payload, sessionId),
-              }
-            : {}),
-          ...(supports("stopSubagent")
-            ? {
-                stopSubagent: (payload: typeof Protocol.StopSubagent.Type) =>
-                  call(
-                    "stopSubagent",
-                    Protocol.StopSubagent,
-                    Protocol.SubagentOutcome,
-                    payload,
-                    sessionId,
-                  ),
-              }
-            : {}),
-          ...(supports("uploadFeedback")
-            ? {
-                uploadFeedback: (payload: typeof Protocol.Feedback.Type) =>
-                  call(
-                    "uploadFeedback",
-                    Protocol.Feedback,
-                    Schema.Struct({ feedbackId: Schema.String }),
-                    payload,
-                    sessionId,
-                  ),
-              }
-            : {}),
-          ...(supports("mcpApps")
-            ? {
-                mcpApps: {
-                  listTools: (payload: typeof Protocol.McpToolsInput.Type) =>
-                    call(
-                      "mcp.listTools",
-                      Protocol.McpToolsInput,
-                      Protocol.McpTools,
-                      payload,
-                      sessionId,
-                    ),
-                  callTool: (payload: typeof Protocol.McpCallInput.Type) =>
-                    call(
-                      "mcp.callTool",
-                      Protocol.McpCallInput,
-                      Protocol.McpResult,
-                      payload,
-                      sessionId,
-                    ),
-                  readResource: (payload: typeof Protocol.McpResourceInput.Type) =>
-                    call(
-                      "mcp.readResource",
-                      Protocol.McpResourceInput,
-                      Protocol.McpResource,
-                      payload,
-                      sessionId,
-                    ),
+          ),
+        );
+      const resumeThread: Adapter.ProviderAdapterV2SessionRuntime["resumeThread"] = (payload) =>
+        mcpForThread(payload.threadId ?? payload.providerThread.appThreadId).pipe(
+          Effect.flatMap((mcpSessions) =>
+            call(
+              "resumeThread",
+              Protocol.ResumeThread,
+              Protocol.ProviderThread,
+              payload,
+              sessionId,
+              { mcpSessions },
+            ),
+          ),
+        );
+      const start = (
+        operation: "startTurn" | "compactThread",
+        payload: Adapter.ProviderAdapterV2TurnInput,
+      ) =>
+        enableReplay.pipe(
+          Effect.andThen(
+            call(operation, Protocol.Turn, Schema.Void, payload, sessionId, {
+              commandId: `${operation}:${sessionId}:${payload.attemptId}`,
+            }),
+          ),
+        );
+      return {
+        instanceId: options.instanceId,
+        driver: CODEX,
+        providerSessionId: sessionId,
+        providerSession: description.session,
+        events: Stream.fromQueue(queue),
+        externalLifetime: {
+          stop: stopSession(sessionId),
+          replay: enableReplay,
+        },
+        canReuseContextUsage: options.canReuseContextUsage,
+        hasPendingBackgroundWork: call(
+          "hasPendingBackgroundWork",
+          Schema.Void,
+          Schema.Boolean,
+          undefined,
+          sessionId,
+        ).pipe(Effect.orElseSucceed(() => true)),
+        hasPendingBackgroundWorkForThread: (providerThread) =>
+          call(
+            "hasPendingBackgroundWorkForThread",
+            Protocol.Thread,
+            Schema.Boolean,
+            { providerThread },
+            sessionId,
+          ).pipe(Effect.orElseSucceed(() => true)),
+        ensureThread,
+        resumeThread,
+        startTurn: (payload) => start("startTurn", payload),
+        ...(supports("compactThread")
+          ? {
+              compactThread: (payload: Adapter.ProviderAdapterV2TurnInput) =>
+                start("compactThread", payload),
+            }
+          : {}),
+        steerTurn: (payload) => call("steerTurn", Protocol.Steer, Schema.Void, payload, sessionId),
+        interruptTurn: (payload) =>
+          call("interruptTurn", Protocol.Interrupt, Schema.Void, payload, sessionId),
+        respondToRuntimeRequest: (payload) =>
+          call("respondToRuntimeRequest", Protocol.Respond, Schema.Void, payload, sessionId),
+        readThreadSnapshot: (payload) =>
+          call("readThreadSnapshot", Protocol.Thread, Protocol.ThreadSnapshot, payload, sessionId),
+        rollbackThread: (payload) =>
+          call("rollbackThread", Protocol.Rollback, Protocol.ThreadSnapshot, payload, sessionId),
+        forkThread: (payload) =>
+          call("forkThread", Protocol.Fork, Protocol.ProviderThread, payload, sessionId),
+        ...(supports("injectHistory")
+          ? {
+              injectHistory: (
+                payload: Adapter.ProviderAdapterV2HistoricalContext & {
+                  readonly providerThread: typeof Protocol.ProviderThread.Type;
                 },
-              }
-            : {}),
-        } satisfies Adapter.ProviderAdapterV2SessionRuntime;
-      }),
+              ) =>
+                call("injectHistory", Protocol.InjectHistory, Schema.Boolean, payload, sessionId),
+            }
+          : {}),
+        ...(supports("unloadThread")
+          ? {
+              unloadThread: (payload: typeof Protocol.Thread.Type) =>
+                call("unloadThread", Protocol.Thread, Schema.Void, payload, sessionId),
+            }
+          : {}),
+        ...(supports("stopTask")
+          ? {
+              stopTask: (payload: typeof Protocol.StopTask.Type) =>
+                call("stopTask", Protocol.StopTask, Schema.Void, payload, sessionId),
+            }
+          : {}),
+        ...(supports("stopSubagent")
+          ? {
+              stopSubagent: (payload: typeof Protocol.StopSubagent.Type) =>
+                call(
+                  "stopSubagent",
+                  Protocol.StopSubagent,
+                  Protocol.SubagentOutcome,
+                  payload,
+                  sessionId,
+                ),
+            }
+          : {}),
+        ...(supports("uploadFeedback")
+          ? {
+              uploadFeedback: (payload: typeof Protocol.Feedback.Type) =>
+                call(
+                  "uploadFeedback",
+                  Protocol.Feedback,
+                  Schema.Struct({ feedbackId: Schema.String }),
+                  payload,
+                  sessionId,
+                ),
+            }
+          : {}),
+        ...(supports("mcpApps")
+          ? {
+              mcpApps: {
+                listTools: (payload: typeof Protocol.McpToolsInput.Type) =>
+                  call(
+                    "mcp.listTools",
+                    Protocol.McpToolsInput,
+                    Protocol.McpTools,
+                    payload,
+                    sessionId,
+                  ),
+                callTool: (payload: typeof Protocol.McpCallInput.Type) =>
+                  call(
+                    "mcp.callTool",
+                    Protocol.McpCallInput,
+                    Protocol.McpResult,
+                    payload,
+                    sessionId,
+                  ),
+                readResource: (payload: typeof Protocol.McpResourceInput.Type) =>
+                  call(
+                    "mcp.readResource",
+                    Protocol.McpResourceInput,
+                    Protocol.McpResource,
+                    payload,
+                    sessionId,
+                  ),
+              },
+            }
+          : {}),
+      } satisfies Adapter.ProviderAdapterV2SessionRuntime;
+    }),
   });
 });

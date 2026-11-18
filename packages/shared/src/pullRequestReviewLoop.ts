@@ -88,7 +88,7 @@ export function reviewerMarker(
 }
 
 /**
- * The hold a link's review loop puts on its thread, like a watch's. A live author loop keeps the
+ * The hold a link's review loop puts on its thread, like a watch's while its checks run. A live author loop keeps the
  * source thread waiting while the reviewer works. A reviewer marker keeps the review thread
  * waiting while the author writes the brief or answers a review.
  */
@@ -106,6 +106,7 @@ export function reviewLoopMonitorTasks(
             ? `Waiting for review ${author.phase.round} of ${author.phase.budget} on pull request #${link.number}`
             : `Review loop on pull request #${link.number}`,
         kind: "monitor",
+        awaited: true,
       },
     ];
   }
@@ -117,6 +118,7 @@ export function reviewLoopMonitorTasks(
           taskId: `review-loop:${marker.id}:reviewer`,
           description: `Waiting for the author on pull request #${link.number}`,
           kind: "monitor",
+          awaited: true,
         },
       ];
 }

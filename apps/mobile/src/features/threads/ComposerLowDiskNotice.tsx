@@ -2,8 +2,8 @@ import { lowDiskNotice } from "@t3tools/client-runtime/low-disk-notice";
 import type { ServerLowDiskVolume } from "@t3tools/contracts";
 import { View } from "react-native";
 
-import { AppText as Text } from "../../components/AppText";
-import { SymbolView } from "../../components/AppSymbol";
+import { AppText as Text } from "../../components/ui/AppText";
+import { SymbolView } from "../../components/ui/AppSymbol";
 
 /** Above the composer while the server reports a volume low on free space. */
 export function ComposerLowDiskNotice({

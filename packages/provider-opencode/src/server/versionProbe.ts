@@ -1,4 +1,4 @@
-/** Detects whether an OpenCode instance runs 1.x or 2.x, so the driver can pick its runtime. */
+import { resolveProviderProbeTimeoutMs } from "@t3tools/provider-core/server/snapshotProbe";
 import { parseSemver } from "@t3tools/shared/semver";
 import * as Cache from "effect/Cache";
 import * as Duration from "effect/Duration";
@@ -17,8 +17,9 @@ export interface ProbedOpenCode {
   readonly version: string;
 }
 
-const OPENCODE_VERSION_PROBE_TIMEOUT = "4 seconds";
-const OPENCODE_SERVER_PROBE_TIMEOUT = "5 seconds";
+// Meant to stop a hung `--version`; wrapped installs can take several seconds to start cold.
+const OPENCODE_VERSION_PROBE_TIMEOUT_MS = 10_000;
+const OPENCODE_SERVER_PROBE_TIMEOUT_MS = 5_000;
 // 2.x's own CLI decodes `{version, pid}` from `/api/info`; requiring both keeps unrelated JSON out.
 const decodeApiInfo = Schema.decodeUnknownOption(
   Schema.fromJsonString(Schema.Struct({ version: Schema.String, pid: Schema.Int })),
@@ -33,15 +34,10 @@ function probed(version: string | null | undefined): ProbedOpenCode | undefined 
   return { generation: major >= 2 ? "v2" : "v1", version };
 }
 
-/** `opencode --version` prints `1.18.32` on 1.x and `opencode v2.0.18` on 2.x. */
 export const classifyOpenCodeCliVersion = (output: string) =>
   probed(parseGenericCliVersion(output));
 
-/**
- * 2.x answers `/api/info` and 1.x answers `/global/health`. Each serves its web UI's HTML with a
- * 200 on the other's path, so only a JSON body counts. Both versions answer a wrong password with
- * a 401 on either path, so a 401 says nothing about the version.
- */
+// Cross-version paths return HTML 200s, so require JSON; either version returns 401 for bad passwords.
 function classifyOpenCodeProbeResponse(
   path: "/api/info" | "/global/health",
   response: {
@@ -60,11 +56,16 @@ function classifyOpenCodeProbeResponse(
   return probed(Option.getOrUndefined(version));
 }
 
-const probeOpenCodeBinary = Effect.fn("probeOpenCodeBinary")(function* (
+export const probeOpenCodeBinary = Effect.fn("probeOpenCodeBinary")(function* (
   binaryPath: string,
   environment: NodeJS.ProcessEnv | undefined,
 ) {
   const runtime = yield* OpenCodeRuntime.OpenCodeRuntime;
+  const timeoutMs = resolveProviderProbeTimeoutMs(
+    "opencode",
+    OPENCODE_VERSION_PROBE_TIMEOUT_MS,
+    environment,
+  );
   const { stdout } = yield* runtime
     .runOpenCodeCommand({
       binaryPath,
@@ -73,12 +74,12 @@ const probeOpenCodeBinary = Effect.fn("probeOpenCodeBinary")(function* (
     })
     .pipe(
       Effect.timeoutOrElse({
-        duration: OPENCODE_VERSION_PROBE_TIMEOUT,
+        duration: timeoutMs,
         orElse: () =>
           Effect.fail(
             new OpenCodeRuntime.OpenCodeRuntimeError({
               operation: "probeOpenCodeBinary",
-              detail: `OpenCode CLI version probe timed out after ${OPENCODE_VERSION_PROBE_TIMEOUT}.`,
+              detail: `OpenCode CLI version probe timed out after ${timeoutMs / 1_000} seconds.`,
             }),
           ),
       }),
@@ -91,11 +92,11 @@ const probeOpenCodeBinary = Effect.fn("probeOpenCodeBinary")(function* (
   });
 });
 
-// Server failures reach clients through the provider status, so their details are fixed text:
-// the underlying error can carry the configured URL, its credentials, or the password header.
+// Use fixed status text; underlying errors may expose URLs, credentials, or password headers.
 const probeOpenCodeServer = Effect.fn("probeOpenCodeServer")(function* (
   serverUrl: string,
   serverPassword: string,
+  environment?: NodeJS.ProcessEnv,
 ) {
   const client = yield* HttpClient.HttpClient;
   const baseUrl = URL.parse(serverUrl.trim());
@@ -110,7 +111,6 @@ const probeOpenCodeServer = Effect.fn("probeOpenCodeServer")(function* (
     ? `Basic ${Buffer.from(`opencode:${serverPassword}`, "utf8").toString("base64")}`
     : undefined;
   for (const path of ["/api/info", "/global/health"] as const) {
-    // A path prefix and query on the configured URL are kept: `/base/?x=1` → `/base/api/info?x=1`.
     const url = new URL(baseUrl);
     url.pathname = `${url.pathname.replace(/\/+$/, "")}${path}`;
     const request = HttpClientRequest.get(url.href);
@@ -139,7 +139,11 @@ const probeOpenCodeServer = Effect.fn("probeOpenCodeServer")(function* (
             }),
         ),
         Effect.timeoutOrElse({
-          duration: OPENCODE_SERVER_PROBE_TIMEOUT,
+          duration: resolveProviderProbeTimeoutMs(
+            "opencode",
+            OPENCODE_SERVER_PROBE_TIMEOUT_MS,
+            environment,
+          ),
           orElse: () =>
             Effect.fail(
               new OpenCodeRuntime.OpenCodeRuntimeError({
@@ -163,7 +167,6 @@ const probeOpenCodeServer = Effect.fn("probeOpenCodeServer")(function* (
   });
 });
 
-/** Probes a configured server when `serverUrl` is set, otherwise the local binary. */
 export const probeOpenCodeRuntime = (
   settings: {
     readonly binaryPath: string;
@@ -177,23 +180,22 @@ export const probeOpenCodeRuntime = (
   HttpClient.HttpClient | OpenCodeRuntime.OpenCodeRuntime
 > =>
   settings.serverUrl.trim().length > 0
-    ? probeOpenCodeServer(settings.serverUrl, settings.serverPassword)
+    ? probeOpenCodeServer(settings.serverUrl, settings.serverPassword, environment)
     : probeOpenCodeBinary(settings.binaryPath, environment);
 
-/**
- * One instance's runtime, remembered after the first successful probe. Settings changes rebuild
- * the driver; `refresh` re-probes (status checks use it, so an in-place upgrade re-routes). A
- * failed probe is never remembered. `lastSuccess` never probes, for calls too hot to wait on one.
- */
+// Only 2.x is kept: 1.x can be upgraded in place while T3 runs, and 2.x converts the shared
+// database, so going back is unsupported.
 export const makeOpenCodeRuntimeProbe = <E>(probe: Effect.Effect<ProbedOpenCode, E>) =>
   Effect.map(
     Cache.makeWith(() => probe, {
       capacity: 1,
-      timeToLive: (exit) => (Exit.isSuccess(exit) ? Duration.infinity : Duration.zero),
+      timeToLive: (exit) =>
+        Exit.isSuccess(exit) && exit.value.generation === "v2" ? Duration.infinity : Duration.zero,
     }),
     (cache) => ({
       get: Cache.get(cache, undefined),
       refresh: Cache.refresh(cache, undefined),
       lastSuccess: Cache.getSuccess(cache, undefined),
+      record: (probed: ProbedOpenCode) => Cache.set(cache, undefined, probed),
     }),
   );

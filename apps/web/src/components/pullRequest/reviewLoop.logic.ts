@@ -12,7 +12,7 @@ import { liveAuthorLoop, reviewerMarker } from "@t3tools/shared/pullRequestRevie
 import {
   threadPullRequestKeysEqual,
   visibleThreadPullRequests,
-} from "@t3tools/shared/threadPullRequests";
+} from "@t3tools/client-runtime/thread-pull-requests";
 
 import { getTriggerDisplayModelName } from "../chat/providerIconUtils";
 
@@ -107,6 +107,6 @@ export function modelSelectionLabel(
   if (provider === undefined) return selection.model;
   const model = provider.models.find((candidate) => candidate.slug === selection.model);
   return `${resolveProviderInstanceDisplayName(provider)} · ${
-    model === undefined ? selection.model : getTriggerDisplayModelName(model)
+    model === undefined ? selection.model : getTriggerDisplayModelName(model, provider.driver)
   }`;
 }

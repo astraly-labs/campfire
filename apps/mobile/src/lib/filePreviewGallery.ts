@@ -1,4 +1,4 @@
-import type { FilePreviewItem, FilePreviewSource } from "../components/FilePreviewModal.types";
+import type { FilePreviewItem, FilePreviewSource } from "../components/ui/FilePreviewModal.types";
 
 export function filePreviewKey(source: FilePreviewItem): string {
   if ("resource" in source)
@@ -12,7 +12,11 @@ export function filePreviewKey(source: FilePreviewItem): string {
   return source.uri;
 }
 
-/** Preserve document order and the tapped image's transition source. */
+/** The thumbnail a gallery page opens from and closes into, including pages that were not tapped. */
+export function filePreviewSourceIdentifier(source: FilePreviewItem): string {
+  return source.sourceIdentifier ?? `preview:${filePreviewKey(source)}`;
+}
+
 export function filePreviewGallery(source: FilePreviewSource, group: readonly FilePreviewItem[]) {
   if (source.kind !== "image") return [source];
   const selectedKey = filePreviewKey(source);
@@ -29,7 +33,6 @@ export function filePreviewGallery(source: FilePreviewSource, group: readonly Fi
   return items;
 }
 
-/** Markdown captions are display text, never filenames for native file type detection. */
 export function filePreviewName(source: FilePreviewItem): string {
   const uriName = "uri" in source ? source.uri.split(/[?#]/)[0]?.split("/").pop() : undefined;
   const name =

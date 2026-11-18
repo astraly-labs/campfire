@@ -5,11 +5,13 @@ import type {
   ProjectMutation,
   ProjectId,
   ServerConfig,
+  ServerSettings,
   SourceControlDiscoveryResult,
   SourceControlRepositoryInfo,
 } from "@t3tools/contracts";
 import { SourceControlProviderKind } from "@t3tools/contracts";
-import { newProjectFolderName } from "@t3tools/shared/path";
+import { cloneUrlRepositoryPath } from "@t3tools/shared/cloneUrl";
+import { isExplicitRelativePath, isHostPath, newProjectFolderName } from "@t3tools/shared/path";
 import * as Arr from "effect/Array";
 import * as Option from "effect/Option";
 import * as Order from "effect/Order";
@@ -18,6 +20,7 @@ import {
   appendBrowsePathSegment,
   ensureBrowseDirectoryPath,
   findProjectByPath,
+  getBrowseParentPath,
   inferProjectTitleFromPath,
   isExplicitRelativeProjectPath,
   isUnsupportedWindowsProjectPath,
@@ -25,9 +28,8 @@ import {
 } from "../state/projects.ts";
 import type { EnvironmentProject } from "../state/models.ts";
 import { sourceControlClients } from "../sourceControlClients.ts";
-import type { SourceControlClientDefinition } from "../sourceControlClients.ts";
+import type { SourceControlDefinition } from "../sourceControlClients.ts";
 
-/** A host to clone from, or `url` for a pasted clone URL. */
 export type AddProjectRemoteSource = SourceControlProviderKind | "url";
 
 export function canCreateProjectInEnvironment(
@@ -36,10 +38,6 @@ export function canCreateProjectInEnvironment(
   return connectionPhase === "connected";
 }
 
-/**
- * The Scratch folder an environment offers threads without a project right
- * now, or null while it is not connected or has none.
- */
 export function availableScratchWorkspaceRoot(
   connectionPhase: EnvironmentConnectionPhase | null | undefined,
   serverConfig: Pick<ServerConfig, "scratchWorkspaceRoot"> | null | undefined,
@@ -54,7 +52,6 @@ export interface AddProjectRemoteSourceReadinessEntry {
   readonly hint: string | null;
 }
 
-/** Whether each clone source can be used on an environment, and why not. */
 export type AddProjectRemoteSourceReadiness = (
   source: AddProjectRemoteSource,
 ) => AddProjectRemoteSourceReadinessEntry;
@@ -74,7 +71,6 @@ export type AddProjectCloneFlow =
       readonly remoteUrl: string;
     };
 
-/** The hosts the clone picker offers, in the order the built-in definitions list them. */
 const ADD_PROJECT_REMOTE_PROVIDER_SOURCES: ReadonlyArray<SourceControlProviderKind> =
   sourceControlClients.definitions.map((definition) => definition.kind);
 
@@ -92,25 +88,52 @@ export function addProjectRemoteSourceProvider(
   return source === "url" ? null : source;
 }
 
-/** A clone source named in a route or link, or `url` for anything this client does not ship. */
 export function parseAddProjectRemoteSource(
   value: string | null | undefined,
 ): AddProjectRemoteSource {
   return (value ? sourceControlClients.find(value)?.kind : undefined) ?? "url";
 }
 
-const GITHUB_REPOSITORY_SHORTHAND =
-  /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]+(?:\.git)?$/;
+const REPOSITORY_SHORTHAND = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]+(?:\.git)?$/;
 
-/** Treat the common owner/repository shorthand as a public GitHub HTTPS URL. */
-export function normalizePastedCloneUrl(input: string): string {
-  const trimmed = input.trim();
-  if (!GITHUB_REPOSITORY_SHORTHAND.test(trimmed)) return trimmed;
-  const repository = trimmed.endsWith(".git") ? trimmed : `${trimmed}.git`;
-  return `https://github.com/${repository}`;
+/**
+ * The clone URL of `owner/name` on the public host of the host a repository reads as before it
+ * reports one. Null when that host has no public host.
+ */
+export function defaultHostCloneUrl(repository: string): string | null {
+  const definition = sourceControlClients.get(undefined);
+  if (definition.publicHost === null) return null;
+  const path = repository.endsWith(".git") ? repository : `${repository}.git`;
+  return definition.defaultCloneTransport === "https"
+    ? `https://${definition.publicHost}/${path}`
+    : `git@${definition.publicHost}:${path}`;
 }
 
-/** The clone URL for the transport the repository's host defaults to. */
+/** Owner present, repository name missing: `owner/` or `owner//`. */
+const INCOMPLETE_GITHUB_OWNER_PATH = /^[A-Za-z0-9](?:[A-Za-z0-9_-]{0,38})\/+$/;
+
+const INCOMPLETE_GITHUB_OWNER_REPOSITORY_MESSAGE = "Enter the full owner/repository name.";
+
+/**
+ * Message to show when a GitHub add-project field is only `owner/`.
+ * Lookup would send that to GitHub and come back as a generic failure.
+ * Returns null for complete names, bare repo names, URLs, and other sources.
+ */
+export function githubIncompleteOwnerRepositoryMessage(
+  source: AddProjectRemoteSource,
+  input: string,
+): string | null {
+  if (source !== "github") return null;
+  if (!INCOMPLETE_GITHUB_OWNER_PATH.test(input.trim())) return null;
+  return INCOMPLETE_GITHUB_OWNER_REPOSITORY_MESSAGE;
+}
+
+export function normalizePastedCloneUrl(input: string): string {
+  const trimmed = input.trim();
+  if (REPOSITORY_SHORTHAND.test(trimmed)) return defaultHostCloneUrl(trimmed) ?? trimmed;
+  return sourceControlClients.repositoryUrlFromPage(trimmed) ?? trimmed;
+}
+
 export function getDefaultCloneUrl(
   repository: Pick<SourceControlRepositoryInfo, "provider" | "url" | "sshUrl">,
 ): string {
@@ -119,11 +142,24 @@ export function getDefaultCloneUrl(
     : repository.sshUrl;
 }
 
+export type OfferedSourceControlProviders = ServerSettings["offeredSourceControlProviders"];
+
+/** Whether the project pickers offer a host. Only the default host is on until the user turns others on. */
+export function isSourceControlProviderOffered(
+  offered: OfferedSourceControlProviders | undefined,
+  kind: SourceControlProviderKind,
+): boolean {
+  return offered?.[kind] ?? kind === sourceControlClients.get(undefined).kind;
+}
+
 export function sortAddProjectProviderSources(
   readiness: AddProjectRemoteSourceReadiness,
+  offered: OfferedSourceControlProviders | undefined,
 ): ReadonlyArray<SourceControlProviderKind> {
   return Arr.sort(
-    ADD_PROJECT_REMOTE_PROVIDER_SOURCES,
+    ADD_PROJECT_REMOTE_PROVIDER_SOURCES.filter((source) =>
+      isSourceControlProviderOffered(offered, source),
+    ),
     Order.mapInput(
       Order.Struct({
         ready: Order.flip(Order.Boolean),
@@ -168,23 +204,15 @@ export function buildAddProjectRemoteSourceReadiness(
 
 export function getAddProjectInitialQuery(baseDirectory: string | null | undefined): string {
   const trimmed = baseDirectory?.trim() ?? "";
-  return trimmed.length === 0 ? "~/" : ensureBrowseDirectoryPath(trimmed);
+  if (trimmed.length === 0) return "~/";
+  // A bare relative setting such as `Desktop/dev` means a folder under home.
+  const isAnchored = trimmed === "~" || isHostPath(trimmed) || isExplicitRelativePath(trimmed);
+  return ensureBrowseDirectoryPath(isAnchored ? trimmed : `~/${trimmed}`);
 }
 
-/**
- * Folder name `git clone` would pick, from either a looked-up repository or a
- * pasted clone URL. Providers report `owner/repo`, Azure DevOps reports
- * `org/project/repo`, and a URL can arrive in any form: `https://host/owner/
- * repo.git`, `ssh://git@host:22/owner/repo`, `git@host:owner/repo.git`, with
- * or without a query, a fragment or a trailing slash. The repository is always
- * the last segment, minus the `.git` suffix.
- */
 export function getCloneDirectoryName(repositoryOrRemoteUrl: string | null | undefined): string {
   const withoutQuery = (repositoryOrRemoteUrl ?? "").split(/[?#]/)[0]?.trim() ?? "";
   const schemeIndex = withoutQuery.indexOf("://");
-  // A remote URL carries a host before the repository path. The host is never
-  // the repository, so a link that stops at the host, or at a port, names
-  // nothing and the destination falls back to the browsed folder.
   const hasHost = schemeIndex >= 0 || /^[^/\\:]+@[^/\\:]+:/.test(withoutQuery);
   const pathPart = schemeIndex >= 0 ? withoutQuery.slice(schemeIndex + "://".length) : withoutQuery;
   const segments = pathPart.split(/[/\\:]+/).filter((segment) => segment.trim().length > 0);
@@ -193,20 +221,32 @@ export function getCloneDirectoryName(repositoryOrRemoteUrl: string | null | und
   }
 
   const lastSegment = segments.at(-1)?.trim() ?? "";
-  // A port can only sit directly behind the authority, so it is a port only
-  // when nothing follows it. Deeper segments are path, even when numeric: the
-  // repository in `https://host/acme/123` really is named `123`.
   if (hasHost && segments.length === 2 && /^\d+$/.test(lastSegment)) {
     return "";
   }
   return lastSegment.endsWith(".git") ? lastSegment.slice(0, -".git".length) : lastSegment;
 }
 
-/**
- * Clone destination proposed for a directory: the directory the user picked
- * plus the repository folder inside it. Without a name the directory is the
- * destination, which is what the raw clone URL flow keeps doing.
- */
+/** The folder a clone gets below its base: `<repo>`, or `<host>/<owner>/<repo>` like ghq. */
+export function getCloneDirectoryPath(
+  remoteUrl: string,
+  ghqCloneLayout: boolean,
+  repository = remoteUrl,
+): string {
+  return (
+    (ghqCloneLayout ? cloneUrlRepositoryPath(remoteUrl) : null) ?? getCloneDirectoryName(repository)
+  );
+}
+
+/** The clone's own folder, which folder browsing keeps at the end of the destination. */
+export function getCloneDirectoryLeafName(
+  remoteUrl: string,
+  ghqCloneLayout: boolean,
+  repository = remoteUrl,
+): string {
+  return getCloneDirectoryPath(remoteUrl, ghqCloneLayout, repository).split("/").at(-1) ?? "";
+}
+
 export function getCloneDestinationPath(
   directoryPath: string,
   directoryName: string | null | undefined,
@@ -215,34 +255,26 @@ export function getCloneDestinationPath(
   if (name.length === 0) {
     return directoryPath;
   }
-  return `${ensureBrowseDirectoryPath(directoryPath)}${name}`;
+  const base = ensureBrowseDirectoryPath(directoryPath);
+  return `${base}${base.endsWith("\\") ? name.replaceAll("/", "\\") : name}`;
 }
 
-/**
- * Where `projects.createNew` will put a project named `name`. The server adds
- * `-2`, `-3`, ... when that folder is taken, so this is a preview.
- */
 export function getNewProjectPathPreview(newProjectsRoot: string, name: string): string {
   return getCloneDestinationPath(newProjectsRoot, newProjectFolderName(name));
 }
 
-/** A host a new project can be published to, and who the repository goes under there. */
 export interface NewProjectPublishTarget {
-  readonly definition: SourceControlClientDefinition;
-  /** Null lets the host's CLI place it under the signed-in user. */
+  readonly definition: SourceControlDefinition;
   readonly owner: string | null;
 }
 
-/**
- * The hosts a new project can be published to on that environment, in definition order so
- * GitHub leads. A host is offered when it is ready and its account names where the repository
- * goes.
- */
 export function getNewProjectPublishTargets(
   discovery: SourceControlDiscoveryResult | null,
+  offered: OfferedSourceControlProviders | undefined,
 ): ReadonlyArray<NewProjectPublishTarget> {
   const readiness = buildAddProjectRemoteSourceReadiness(discovery);
   return sourceControlClients.definitions.flatMap((definition) => {
+    if (!isSourceControlProviderOffered(offered, definition.kind)) return [];
     if (!readiness(definition.kind).ready) return [];
     const provider = discovery?.sourceControlProviders.find(
       (candidate) => candidate.kind === definition.kind,
@@ -254,7 +286,6 @@ export function getNewProjectPublishTargets(
   });
 }
 
-/** The chosen host's target, or the first one when the choice is not on offer. */
 export function getNewProjectPublishTarget(
   targets: ReadonlyArray<NewProjectPublishTarget>,
   kind: SourceControlProviderKind | null,
@@ -262,7 +293,6 @@ export function getNewProjectPublishTarget(
   return targets.find((target) => target.definition.kind === kind) ?? targets[0] ?? null;
 }
 
-/** `owner/folder` for publishing a new project, or just the folder for the host to place. */
 export function getNewProjectRepository(
   target: Pick<NewProjectPublishTarget, "owner">,
   workspaceRoot: string,
@@ -271,11 +301,6 @@ export function getNewProjectRepository(
   return target.owner ? `${target.owner}/${folderName}` : folderName;
 }
 
-/**
- * Destination query after choosing a directory while the clone folder is
- * pinned in the path input. Selecting an existing directory with the pinned
- * name uses that directory directly instead of producing `repo/repo`.
- */
 export function getCloneDestinationBrowsePath(input: {
   readonly browseDirectoryPath: string;
   readonly selectedDirectoryName: string;
@@ -292,6 +317,26 @@ export function getCloneDestinationBrowsePath(input: {
   return selectedDirectoryMatches
     ? selectedDirectoryPath
     : getCloneDestinationPath(selectedDirectoryPath, input.cloneDirectoryName);
+}
+
+// The native picker returns a full path, not a name under the browsed directory.
+// Split it and reuse the in-app rules so a folder already named after the
+// repository stays that folder instead of becoming repo/repo.
+export function getCloneDestinationForPickedFolder(input: {
+  readonly pickedPath: string;
+  readonly cloneDirectoryName: string;
+  readonly caseSensitive: boolean;
+}): string {
+  const parentPath = getBrowseParentPath(input.pickedPath);
+  if (parentPath === null) {
+    return getCloneDestinationPath(input.pickedPath, input.cloneDirectoryName);
+  }
+  return getCloneDestinationBrowsePath({
+    browseDirectoryPath: parentPath,
+    selectedDirectoryName: inferProjectTitleFromPath(input.pickedPath),
+    cloneDirectoryName: input.cloneDirectoryName,
+    caseSensitive: input.caseSensitive,
+  });
 }
 
 export function resolveAddProjectPath(input: {

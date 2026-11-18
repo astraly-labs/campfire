@@ -7,6 +7,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect has no free-space query.
 import * as NodeFSP from "node:fs/promises";
@@ -23,6 +24,15 @@ export const LOW_DISK_THRESHOLD_BYTES = 20 * GIB;
 const SAMPLE_INTERVAL = "60 seconds";
 // A hung network mount must not stall every later sample.
 const FOLDER_SAMPLE_TIMEOUT = "10 seconds";
+
+class StorageFolderReadError extends Schema.TaggedError<StorageFolderReadError>()(
+  "StorageFolderReadError",
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Could not read a storage folder's volume.";
+  }
+}
 
 /** Free space of one folder the server depends on, as read from its volume. */
 export interface VolumeSample<Role extends string = ServerLowDiskVolume["role"]> {
@@ -142,18 +152,21 @@ export const sampleFolder = <Role extends string>({
   role,
   path,
 }: Pick<VolumeSample<Role>, "role" | "path">): Effect.Effect<Option.Option<VolumeSample<Role>>> =>
-  Effect.tryPromise(async (): Promise<VolumeSample<Role>> => {
-    const [stat, statfs] = await Promise.all([
-      NodeFSP.stat(path),
-      NodeFSP.statfs(path, { bigint: true }),
-    ]);
-    return {
-      role,
-      path,
-      device: stat.dev,
-      freeBytes: Number(statfs.bavail * statfs.bsize),
-      totalBytes: Number(statfs.blocks * statfs.bsize),
-    };
+  Effect.tryPromise({
+    try: async (): Promise<VolumeSample<Role>> => {
+      const [stat, statfs] = await Promise.all([
+        NodeFSP.stat(path),
+        NodeFSP.statfs(path, { bigint: true }),
+      ]);
+      return {
+        role,
+        path,
+        device: stat.dev,
+        freeBytes: Number(statfs.bavail * statfs.bsize),
+        totalBytes: Number(statfs.blocks * statfs.bsize),
+      };
+    },
+    catch: (cause) => new StorageFolderReadError({ cause }),
   }).pipe(
     Effect.timeout(FOLDER_SAMPLE_TIMEOUT),
     Effect.tapError((cause) => Effect.logDebug("storage folder unreadable", { role, path, cause })),

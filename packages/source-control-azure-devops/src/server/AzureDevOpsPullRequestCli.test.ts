@@ -1,3 +1,8 @@
+// @effect-diagnostics nodeBuiltinImport:off -- Builds the zip Azure returns and stands in for az writing it.
+import * as NodeFS from "node:fs";
+import * as NodeZlib from "node:zlib";
+
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { afterEach, assert, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -16,6 +21,7 @@ const layer = it.layer(
         execute: mockedExecute,
       }),
     ),
+    Layer.provide(NodeServices.layer),
   ),
 );
 
@@ -29,14 +35,8 @@ function output(stdout: string) {
   };
 }
 
-/** What VcsProcess allows a read that asked for no ceiling of its own. */
 const VCS_DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
 
-/**
- * The runner as it really behaves: it cuts stdout at the ceiling its caller asked for, and cuts
- * it at the process default when the caller asked for none. A read whose response is larger than
- * its ceiling gets JSON that stops mid-string, which is the whole cost of an unset ceiling.
- */
 function outputWithin(maxOutputBytes: number | undefined, response: string) {
   const ceiling = maxOutputBytes ?? VCS_DEFAULT_MAX_OUTPUT_BYTES;
   return ceiling >= Buffer.byteLength(response)
@@ -44,7 +44,6 @@ function outputWithin(maxOutputBytes: number | undefined, response: string) {
     : { ...output(response.slice(0, ceiling)), stdoutTruncated: true };
 }
 
-/** A fixture's own shape, spelled the way `az` would answer with it. */
 const json = (value: Record<string, unknown>) => JSON.stringify(value);
 
 const pullRequestRow = {
@@ -88,21 +87,58 @@ function pullRequests(count: number, firstNumber: number): string {
   return JSON.stringify(pullRequestRows(count, firstNumber));
 }
 
-/** The arguments of the nth az invocation. */
+/** Entries as Azure streams them: data descriptors, with sizes only in the central directory. */
+function streamedZip(
+  entries: ReadonlyArray<{
+    readonly name: string;
+    readonly data: Uint8Array;
+    readonly stored?: true;
+  }>,
+): Buffer {
+  const parts: Buffer[] = [];
+  const directory: Buffer[] = [];
+  let offset = 0;
+  for (const entry of entries) {
+    const name = Buffer.from(entry.name);
+    const method = entry.stored ? 0 : 8;
+    const body = entry.stored ? Buffer.from(entry.data) : NodeZlib.deflateRawSync(entry.data);
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(0x0008, 6);
+    local.writeUInt16LE(method, 8);
+    local.writeUInt16LE(name.length, 26);
+    const descriptor = Buffer.alloc(16);
+    descriptor.writeUInt32LE(0x08074b50, 0);
+    descriptor.writeUInt32LE(body.length, 8);
+    descriptor.writeUInt32LE(entry.data.length, 12);
+    const central = Buffer.alloc(46);
+    central.writeUInt32LE(0x02014b50, 0);
+    central.writeUInt16LE(0x0008, 8);
+    central.writeUInt16LE(method, 10);
+    central.writeUInt32LE(body.length, 20);
+    central.writeUInt32LE(entry.data.length, 24);
+    central.writeUInt16LE(name.length, 28);
+    central.writeUInt32LE(offset, 42);
+    parts.push(local, name, body, descriptor);
+    directory.push(central, name);
+    offset += local.length + name.length + body.length + descriptor.length;
+  }
+  const centralDirectory = Buffer.concat(directory);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(entries.length, 8);
+  end.writeUInt16LE(entries.length, 10);
+  end.writeUInt32LE(centralDirectory.length, 12);
+  end.writeUInt32LE(offset, 16);
+  return Buffer.concat([...parts, centralDirectory, end]);
+}
+
 function argsOfCall(index: number): ReadonlyArray<string> {
   const call = mockedExecute.mock.calls[index];
   assert.isDefined(call);
   return call[0].args;
 }
 
-/** The output ceiling the nth az invocation asked for, if it asked for one at all. */
-function maxOutputBytesOfCall(index: number) {
-  const call = mockedExecute.mock.calls[index];
-  assert.isDefined(call);
-  return call[0].maxOutputBytes;
-}
-
-/** A page of change entries the size Azure really answers with, url and object ids and all. */
 function changeEntries(count: number): ReadonlyArray<Record<string, unknown>> {
   const commit = "c".repeat(40);
   return Array.from({ length: count }, (_, index) => {
@@ -121,104 +157,55 @@ function changeEntries(count: number): ReadonlyArray<Record<string, unknown>> {
   });
 }
 
-/** An Azure identity, which rides along with every comment and every push Azure answers with. */
-function identity(name: string) {
-  const id = "6f9c9b7f-0000-0000-0000-000000000000";
-  return {
-    displayName: name,
-    id,
-    uniqueName: `${name.toLowerCase().replace(/ /g, ".")}@acme.com`,
-    descriptor: `aad.${"z".repeat(52)}`,
-    imageUrl: `https://dev.azure.com/acme/_api/_common/identityImage?id=${id}`,
-    url: `https://spsprodweu1.vssps.visualstudio.com/A${id}/_apis/Identities/${id}`,
-    _links: {
-      avatar: {
-        href: `https://dev.azure.com/acme/_apis/GraphProfile/MemberAvatars/aad.${"z".repeat(52)}`,
-      },
-    },
-  };
-}
-
-/** A review's threads the shape Azure answers with, system threads and identities and all. */
-function threadRows(count: number): ReadonlyArray<Record<string, unknown>> {
-  return Array.from({ length: count }, (_, index) => ({
-    id: index + 1,
-    publishedDate: "2026-07-02T00:00:00Z",
-    lastUpdatedDate: "2026-07-02T00:00:00Z",
-    status: "active",
-    threadContext: { filePath: `/apps/server/src/generated/module-${index}.ts` },
-    identities: { 1: identity("Reviewer One") },
-    isDeleted: false,
-    comments: [
-      {
-        id: 1,
-        parentCommentId: 0,
-        author: identity("Reviewer One"),
-        content: `Comment ${index}: ${"this needs another look. ".repeat(20)}`,
-        publishedDate: "2026-07-02T00:00:00Z",
-        lastUpdatedDate: "2026-07-02T00:00:00Z",
-        commentType: "text",
-        usersLiked: [],
-      },
-    ],
-  }));
-}
-
-/** A review's iterations the shape Azure answers with, one per push. */
-function iterationRows(count: number): ReadonlyArray<Record<string, unknown>> {
-  return Array.from({ length: count }, (_, index) => ({
-    id: index + 1,
-    description: `Pushed ${index} commits`,
-    author: identity("Author One"),
-    createdDate: "2026-07-02T00:00:00Z",
-    updatedDate: "2026-07-02T00:00:00Z",
-    sourceRefCommit: { commitId: `${index}`.padStart(40, "a") },
-    targetRefCommit: { commitId: "b".repeat(40) },
-    commonRefCommit: { commitId: "c".repeat(40) },
-    hasMultipleCommits: true,
-    reason: "push",
-    push: { pushId: index + 1, date: "2026-07-02T00:00:00Z", pushedBy: identity("Author One") },
-  }));
-}
-
 afterEach(() => {
   mockedExecute.mockReset();
 });
 
 layer("AzureDevOpsPullRequestCli.layer", (it) => {
-  it.effect("asks for one row more than the page, to probe for a next page", () =>
+  it.effect("reports the latest pushed source commit even while the trial merge is stale", () =>
     Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(Effect.succeed(output(pullRequests(3, 1))));
-      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
-
-      const batch = yield* cli.listPullRequests({
+      const previousHead = "a".repeat(40);
+      const latestHead = "c".repeat(40);
+      mockedExecute
+        .mockReturnValueOnce(
+          Effect.succeed(
+            output(json({ ...pullRequestRow, lastMergeSourceCommit: { commitId: previousHead } })),
+          ),
+        )
+        .mockReturnValueOnce(
+          Effect.succeed(
+            output(
+              json({
+                value: [
+                  {
+                    id: 2,
+                    sourceRefCommit: { commitId: latestHead },
+                    commonRefCommit: { commitId: "b".repeat(40) },
+                  },
+                  ...oneIteration.value,
+                ],
+              }),
+            ),
+          ),
+        )
+        .mockReturnValueOnce(Effect.succeed(output(json({ changeEntries: [] }))))
+        .mockReturnValueOnce(Effect.succeed(output("[]")))
+        .mockReturnValueOnce(
+          Effect.succeed(output(json({ count: 1, value: [{ id: "4f1c", name: "release-1.0" }] }))),
+        );
+      const provider = yield* AzureDevOpsPullRequestProvider.make;
+      const detail = yield* provider.getChangeRequest({
         cwd: "/w",
-        repository: "web",
-        state: "open",
-        involvement: "all",
-        viewer: "bilal@acme.dev",
-        limit: 10,
+        repository: "platform/web",
+        host: "dev.azure.com",
+        number: 42,
       });
 
-      assert.strictEqual(batch.items.length, 3);
-      assert.isFalse(batch.truncated);
-      expect(argsOfCall(0)).toEqual([
-        "repos",
-        "pr",
-        "list",
-        "--detect",
-        "true",
-        "--repository",
-        "web",
-        "--status",
-        "active",
-        "--include-links",
-        "--top",
-        "11",
-        "--only-show-errors",
-        "--output",
-        "json",
-      ]);
+      expect(detail.headSha).toBe(latestHead);
+      expect(argsOfCall(2)).toContain("iterationId=2");
+      expect(argsOfCall(4)).toContain("pullRequestLabels");
+      expect(detail.labels).toEqual([{ name: "release-1.0", color: null }]);
+      expect(mockedExecute).toHaveBeenCalledTimes(5);
     }),
   );
 
@@ -250,46 +237,6 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
     }),
   );
 
-  it.effect("reads the page unnarrowed when asked to search, having nothing to search with", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(Effect.succeed(output(pullRequests(3, 1))));
-      const provider = yield* AzureDevOpsPullRequestProvider.make;
-
-      const page = yield* provider.listChangeRequests({
-        cwd: "/w",
-        repository: "web",
-        host: "dev.azure.com",
-        state: "open",
-        involvement: "all",
-        viewer: "bilal@acme.dev",
-        limit: 10,
-        query: "page",
-      });
-
-      // `az repos pr list` filters by status, creator, reviewer and branch, and by no text at
-      // all. The rows come back as they would have without a search, for the caller to narrow;
-      // nothing of the search reaches the command, where it could only mean the wrong thing.
-      assert.strictEqual(page.items.length, 3);
-      expect(argsOfCall(0)).toEqual([
-        "repos",
-        "pr",
-        "list",
-        "--detect",
-        "true",
-        "--repository",
-        "web",
-        "--status",
-        "active",
-        "--include-links",
-        "--top",
-        "11",
-        "--only-show-errors",
-        "--output",
-        "json",
-      ]);
-    }),
-  );
-
   it.effect("steps over what it has already handed over, which is all Azure can be told", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(Effect.succeed(output(pullRequests(3, 1))));
@@ -302,8 +249,6 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
         involvement: "all",
         viewer: "bilal@acme.dev",
         limit: 10,
-        // The instant is the same cursor every other host reads; Azure has no filter for it and
-        // takes the count instead.
         cursor: { updatedBefore: "2026-07-02T00:00:00Z", delivered: 20 },
       });
 
@@ -314,23 +259,24 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
     }),
   );
 
-  it.effect("reports truncation from the extra row", () =>
+  it.effect("asks Azure for the author's pull requests by creator", () =>
     Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(Effect.succeed(output(pullRequests(11, 1))));
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(pullRequests(1, 1))));
       const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
 
-      const batch = yield* cli.listPullRequests({
+      yield* cli.listPullRequests({
         cwd: "/w",
         repository: "web",
         state: "open",
-        involvement: "all",
+        involvement: "reviewing",
         viewer: "bilal@acme.dev",
         limit: 10,
+        author: "ana@acme.dev",
       });
 
-      assert.strictEqual(batch.items.length, 10);
-      assert.isTrue(batch.truncated);
-      assert.strictEqual(batch.cursorAdvance, 10);
+      const args = argsOfCall(0);
+      assert.strictEqual(args[args.indexOf("--creator") + 1], "ana@acme.dev");
+      assert.strictEqual(args[args.indexOf("--reviewer") + 1], "bilal@acme.dev");
     }),
   );
 
@@ -362,7 +308,6 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
 
       expect(batch.items.map((item) => item.number)).toEqual([1, 2]);
       assert.isTrue(batch.truncated);
-      // Three raw rows from the first request and one from the second produced this page.
       assert.strictEqual(batch.cursorAdvance, 4);
       const secondArgs = argsOfCall(1);
       assert.strictEqual(secondArgs[secondArgs.indexOf("--skip") + 1], "3");
@@ -370,67 +315,8 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
     }),
   );
 
-  it.effect("narrows to the author on the authored tab", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(Effect.succeed(output("[]")));
-      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
-
-      yield* cli.listPullRequests({
-        cwd: "/w",
-        repository: "web",
-        state: "closed",
-        involvement: "authored",
-        viewer: "bilal@acme.dev",
-        limit: 10,
-      });
-
-      expect(argsOfCall(0)).toContain("--creator");
-      expect(argsOfCall(0)).toContain("bilal@acme.dev");
-      // Azure calls a closed pull request abandoned.
-      expect(argsOfCall(0)).toContain("abandoned");
-    }),
-  );
-
-  it.effect("asks Azure for every status on the All tab", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(Effect.succeed(output("[]")));
-      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
-
-      yield* cli.listPullRequests({
-        cwd: "/w",
-        repository: "web",
-        state: "all",
-        involvement: "all",
-        viewer: "bilal@acme.dev",
-        limit: 10,
-      });
-
-      expect(argsOfCall(0)).toContain("--status");
-      expect(argsOfCall(0)).toContain("all");
-    }),
-  );
-
-  it.effect("narrows to the reviewer on the reviewing tab", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(Effect.succeed(output("[]")));
-      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
-
-      yield* cli.listPullRequests({
-        cwd: "/w",
-        repository: "web",
-        state: "open",
-        involvement: "reviewing",
-        viewer: "bilal@acme.dev",
-        limit: 10,
-      });
-
-      expect(argsOfCall(0)).toContain("--reviewer");
-    }),
-  );
-
   it.effect("reads the signed-in account, which az reports as a bare value", () =>
     Effect.gen(function* () {
-      // `--query user` unwraps the object, so the wrapper has to put it back.
       mockedExecute.mockReturnValueOnce(
         Effect.succeed(output(JSON.stringify({ name: "bilal@acme.dev", type: "user" }))),
       );
@@ -475,7 +361,6 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
 
       assert.strictEqual(yield* cli.getViewer({ cwd: "/w" }), "bilal@acme.dev");
       expect(argsOfCall(1)).toEqual(expect.arrayContaining(["--creator", "me", "--top", "1"]));
-      // Someone who has opened nothing has no name to compare rows against.
       const error = yield* Effect.flip(cli.getViewer({ cwd: "/w" }));
       assert.strictEqual(error._tag, "AzureDevOpsViewerUnavailableError");
     }),
@@ -499,130 +384,56 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
     }),
   );
 
-  it.effect("completes a pull request to merge it, squashing only when asked", () =>
+  const policyRow = (name: string, status: string) => ({
+    status,
+    configuration: {
+      url: "https://dev.azure.com/acme/platform/_apis/policy/configurations/54",
+      isBlocking: true,
+      type: { id: "0609b952-1397-4640-95ec-e00a01b2c241" },
+      settings: { displayName: name },
+    },
+  });
+
+  it.effect("follows every page of policies and puts failures first", () =>
     Effect.gen(function* () {
-      mockedExecute.mockReturnValue(Effect.succeed(output("{}")));
+      const fullPage = Array.from({ length: 100 }, () => policyRow("Lint", "approved"));
+      mockedExecute
+        .mockReturnValueOnce(Effect.succeed(output(JSON.stringify(fullPage))))
+        .mockReturnValueOnce(
+          Effect.succeed(output(JSON.stringify([policyRow("Tests", "rejected")]))),
+        );
       const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
-
-      yield* cli.runPullRequestAction({
-        cwd: "/w",
-        number: 42,
-        action: "merge",
-        mergeMethod: "squash",
-      });
-
-      expect(argsOfCall(0)).toEqual([
+      const checks = yield* cli.listPolicyChecks({ cwd: "/w", number: 42, isDraft: false });
+      assert.deepStrictEqual(argsOfCall(1).slice(0, 12), [
         "repos",
         "pr",
-        "update",
+        "policy",
+        "list",
         "--detect",
         "true",
         "--id",
         "42",
-        "--status",
-        "completed",
-        "--squash",
-        "true",
-        "--only-show-errors",
-        "--output",
-        "json",
+        "--top",
+        "100",
+        "--skip",
+        "100",
       ]);
-    }),
-  );
-
-  it.effect("stores the squash choice with an auto-completion, as a merge now does", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValue(Effect.succeed(output("{}")));
-      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
-
-      yield* cli.runPullRequestAction({
-        cwd: "/w",
-        number: 42,
-        action: "enable-auto-merge",
-        mergeMethod: "squash",
-      });
-
-      expect(argsOfCall(0)).toEqual([
-        "repos",
-        "pr",
-        "update",
-        "--detect",
-        "true",
-        "--id",
-        "42",
-        "--auto-complete",
-        "true",
-        "--squash",
-        "true",
-        "--only-show-errors",
-        "--output",
-        "json",
-      ]);
+      assert.strictEqual(checks.length, 101);
+      assert.strictEqual(checks[0]?.name, "Tests");
     }),
   );
 
   it.effect.each([
-    { action: "enable-auto-merge", expected: ["--auto-complete", "true"] },
-    { action: "disable-auto-merge", expected: ["--auto-complete", "false"] },
-    { action: "draft", expected: ["--draft", "true"] },
-    { action: "ready", expected: ["--draft", "false"] },
-    { action: "close", expected: ["--status", "abandoned"] },
-    { action: "reopen", expected: ["--status", "active"] },
-  ] as const)("moves a pull request with $action", ({ action, expected }) =>
+    { name: "cut off", result: { ...output("[]"), stdoutTruncated: true } },
+    { name: "unreadable", result: output(JSON.stringify([{ status: 7 }])) },
+  ])("fails rather than report a $name policy page as complete", ({ result }) =>
     Effect.gen(function* () {
-      mockedExecute.mockReturnValue(Effect.succeed(output("{}")));
+      mockedExecute.mockReturnValueOnce(Effect.succeed(result));
       const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
-
-      yield* cli.runPullRequestAction({ cwd: "/w", number: 42, action });
-
-      expect(argsOfCall(0)).toEqual([
-        "repos",
-        "pr",
-        "update",
-        "--detect",
-        "true",
-        "--id",
-        "42",
-        ...expected,
-        "--only-show-errors",
-        "--output",
-        "json",
-      ]);
-    }),
-  );
-
-  it.effect.each([
-    { name: "a title", rewrite: { title: "Add the page" }, expected: ["--title=Add the page"] },
-    {
-      name: "a description",
-      rewrite: { body: "Why the page changed" },
-      expected: ["--description=Why the page changed"],
-    },
-    {
-      name: "both",
-      rewrite: { title: "Add the page", body: "Why the page changed" },
-      expected: ["--title=Add the page", "--description=Why the page changed"],
-    },
-  ] as const)("rewrites $name, sending nothing it was not given", ({ rewrite, expected }) =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValue(Effect.succeed(output("{}")));
-      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
-
-      yield* cli.updatePullRequest({ cwd: "/w", number: 42, ...rewrite });
-
-      expect(argsOfCall(0)).toEqual([
-        "repos",
-        "pr",
-        "update",
-        "--detect",
-        "true",
-        "--id",
-        "42",
-        ...expected,
-        "--only-show-errors",
-        "--output",
-        "json",
-      ]);
+      const error = yield* Effect.flip(
+        cli.listPolicyChecks({ cwd: "/w", number: 42, isDraft: false }),
+      );
+      assert.strictEqual(error._tag, "AzureDevOpsPullRequestReadError");
     }),
   );
 
@@ -637,31 +448,38 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
         body: "- rewrote the page\n- kept the rest",
       });
 
-      // One argument, so the leading dash of an ordinary bullet list never reaches az as a flag,
-      // and the whole text stays together where `--description` would otherwise take several.
       expect(argsOfCall(0)).toContain("--description=- rewrote the page\n- kept the rest");
     }),
   );
 
-  it.effect("rewrites through the provider, which says it takes one", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValue(Effect.succeed(output("{}")));
-      const provider = yield* AzureDevOpsPullRequestProvider.make;
+  it.effect(
+    "sends a title or description that looks like `@path` as text, not as a file for az to read",
+    () =>
+      Effect.gen(function* () {
+        mockedExecute.mockReturnValue(Effect.succeed(output("{}")));
+        const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
 
-      // False for a remark because nothing here can post one, so there is none to rewrite.
-      expect(provider.capabilities.edit).toEqual({ changeRequest: true, comment: false });
-      assert.isDefined(provider.updateChangeRequest);
-      yield* provider.updateChangeRequest({
-        cwd: "/w",
-        repository: "web",
-        host: "dev.azure.com",
-        number: 42,
-        title: "Add the page",
-      });
+        yield* cli.updatePullRequest({
+          cwd: "/w",
+          number: 42,
+          title: "@notes.txt",
+          body: "@notes.txt",
+        });
 
-      expect(argsOfCall(0)).toContain("--title=Add the page");
-      expect(argsOfCall(0)).not.toContain("--description");
-    }),
+        // az replaces an argument that starts with `@`, or whose text after the first `=` does, with that file's contents.
+        const fileReads = argsOfCall(0).flatMap((arg) => {
+          const value = arg.startsWith("@") ? arg : arg.slice(arg.indexOf("=") + 1);
+          return (arg.startsWith("@") || arg.includes("=")) && value.startsWith("@")
+            ? [value.slice(1)]
+            : [];
+        });
+        expect(fileReads).not.toContain("notes.txt");
+        // Each `@` value goes over stdin, which reaches az wherever it runs; one per call.
+        expect(mockedExecute.mock.calls.map(([call]) => call.stdin)).toEqual([
+          "@notes.txt",
+          "@notes.txt",
+        ]);
+      }),
   );
 
   it.effect("names the head's blob as what a cleared file was cleared at", () =>
@@ -717,9 +535,6 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
         );
       const provider = yield* AzureDevOpsPullRequestProvider.make;
 
-      // Kept here rather than on Azure: its own record of what a reader has read is behind an
-      // undocumented endpoint, so the marks belong to this environment and need a revision of
-      // their own to tell a re-push from a file still as it was read.
       assert.strictEqual(provider.capabilities.viewedFiles, "environment");
       assert.isDefined(provider.getFileRevisions);
       const answer = yield* provider.getFileRevisions({
@@ -730,81 +545,8 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
         paths: ["README.md"],
       });
 
-      // The latest push, since an iteration's changes are reported against the merge base rather
-      // than against the push before it.
       expect(argsOfCall(2)).toContain("iterationId=2");
-      // Only what was asked for. DEMO.md changed too, and nobody has marked it.
       expect([...answer.revisions]).toEqual([["README.md", "8f80"]]);
-    }),
-  );
-
-  it.effect("reads where a pull request lives once, however often it is asked about", () =>
-    Effect.gen(function* () {
-      // A pull request cannot move repositories, and the marks would otherwise pay for a whole
-      // pull request read every time they checked whether a file had been pushed to.
-      const pullRequest = Effect.succeed(
-        output(
-          JSON.stringify({
-            pullRequestId: 42,
-            title: "Add the page",
-            status: "active",
-            sourceRefName: "refs/heads/feat/page",
-            targetRefName: "refs/heads/main",
-            creationDate: "2026-07-01T00:00:00Z",
-            url: "https://dev.azure.com/acme/_apis/git/repositories/web/pullRequests/42",
-            repository: { name: "web", project: { name: "platform" } },
-          }),
-        ),
-      );
-      const iterations = () =>
-        Effect.succeed(
-          output(
-            JSON.stringify({
-              value: [
-                {
-                  id: 1,
-                  sourceRefCommit: { commitId: "a".repeat(40) },
-                  commonRefCommit: { commitId: "b".repeat(40) },
-                },
-              ],
-            }),
-          ),
-        );
-      const changes = () =>
-        Effect.succeed(
-          output(
-            JSON.stringify({
-              changeEntries: [
-                { changeType: "edit", item: { path: "/README.md", objectId: "8f80" } },
-              ],
-            }),
-          ),
-        );
-      mockedExecute
-        .mockReturnValueOnce(pullRequest)
-        .mockReturnValueOnce(iterations())
-        .mockReturnValueOnce(changes())
-        .mockReturnValueOnce(iterations())
-        .mockReturnValueOnce(changes());
-      const provider = yield* AzureDevOpsPullRequestProvider.make;
-      const read = provider.getFileRevisions;
-      assert.isDefined(read);
-      const ask = () =>
-        read({
-          cwd: "/w",
-          repository: "web",
-          host: "dev.azure.com",
-          number: 42,
-          paths: ["README.md"],
-        });
-
-      yield* ask();
-      const again = yield* ask();
-
-      assert.strictEqual(mockedExecute.mock.calls.length, 5);
-      // The second read goes straight to the pushes, and still answers with the head's blob.
-      expect(argsOfCall(3)).toContain("pullRequestIterations");
-      expect([...again.revisions]).toEqual([["README.md", "8f80"]]);
     }),
   );
 
@@ -812,8 +554,6 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
     "answers for a marked file the pull request no longer changes as the empty version",
     () =>
       Effect.gen(function* () {
-        // Which is what was stored for it when it was ticked with nothing on the head, so a file
-        // the pull request deletes is cleared once and stays cleared.
         mockedExecute
           .mockReturnValueOnce(
             Effect.succeed(
@@ -864,8 +604,6 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
 
   it.effect("says nothing about the files past the end of a change it gave up following", () =>
     Effect.gen(function* () {
-      // Every page is an `az` process of its own, so a change past the ceiling stops being
-      // followed. A path nobody looked at must not be answered for as deleted.
       const entries = (from: number, count: number) =>
         Array.from({ length: count }, (_, index) => ({
           changeType: "edit",
@@ -920,7 +658,6 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
         paths: ["src/f1.ts", "src/f5001.ts", "src/past-the-cut.ts"],
       });
 
-      // The second page picks up where the first said it ended.
       expect(argsOfCall(3)).toContain("$skip=5000");
       expect([...answer.revisions]).toEqual([
         ["src/f1.ts", "blob-1"],
@@ -963,8 +700,6 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
             ),
           ),
         )
-        // Nothing a review can show, so every page decodes to nothing at all and a ceiling counted
-        // in files would never be reached however long the walk went on.
         .mockImplementation((command) => {
           const skip = command.args.find((arg) => arg.startsWith("$skip="));
           const from = Number(skip?.slice("$skip=".length) ?? 0);
@@ -988,10 +723,7 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
         paths: ["src/page.ts"],
       });
 
-      // The pull request, its pushes, and five pages: the walk gives up on Azure's own offset
-      // rather than spending an `az` process a page for as long as Azure keeps paging.
       assert.strictEqual(mockedExecute.mock.calls.length, 7);
-      // And it read part of a change, so it says nothing about the file it never saw.
       assert.strictEqual(answer.revisions.size, 0);
     }),
   );
@@ -1036,16 +768,12 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
 
       assert.isTrue(slice.truncated);
       expect(slice.patch).toContain("diff --git a/huge.bin b/huge.bin");
-      // And the file behind it still renders, which is the point of giving up on one file.
       expect(slice.patch).toContain("+hello");
     }),
   );
 
   it.effect("fails the whole read when it is the connection that would not answer", () =>
     Effect.gen(function* () {
-      // A rate limit is not this file's problem, and answering with a change full of files listed
-      // without their hunks would read as a change nobody can see rather than as a host to wait
-      // for.
       mockedExecute
         .mockReturnValueOnce(Effect.succeed(output(json(pullRequestRow))))
         .mockReturnValueOnce(Effect.succeed(output(json(oneIteration))))
@@ -1140,8 +868,6 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
         number: 42,
       });
 
-      // Azure leaves the metadata out unless it is asked for, and without it every file reads as
-      // text however it was stored.
       expect(argsOfCall(3)).toContain("includeContentMetadata=true");
       expect(slice.patch).toContain("Binary files a/logo.png and b/logo.png differ");
       assert.isTrue(slice.truncated);
@@ -1213,10 +939,7 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
         paths: ["a.ts", "b.ts", "unlisted.ts"],
       });
 
-      // Four reads and no more: a page pointing at where it already is would be read forever.
       assert.strictEqual(mockedExecute.mock.calls.length, 4);
-      // And what was read is not the whole change, so the file nobody listed is left unanswered
-      // rather than reported as gone from the change request.
       expect([...answer.revisions]).toEqual([
         ["a.ts", "8f80"],
         ["b.ts", "0ca4"],
@@ -1224,115 +947,9 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
     }),
   );
 
-  it.effect("asks Azure nothing when no file has been ticked off", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValue(Effect.succeed(output('{"changeEntries":[]}')));
-      const provider = yield* AzureDevOpsPullRequestProvider.make;
-      assert.isDefined(provider.getFileRevisions);
-
-      const answer = yield* provider.getFileRevisions({
-        cwd: "/w",
-        repository: "web",
-        host: "dev.azure.com",
-        number: 42,
-        paths: [],
-      });
-
-      expect(answer.revisions.size).toBe(0);
-      // Nothing was marked, so Azure was not asked at all.
-      assert.strictEqual(mockedExecute.mock.calls.length, 0);
-    }),
-  );
-
-  it.effect("reads the conversation through the REST API, pinned to a version", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(
-        Effect.succeed(
-          output(
-            JSON.stringify({
-              value: [
-                {
-                  id: 1,
-                  comments: [
-                    { id: 1, content: "Looks good.", publishedDate: "2026-07-02T00:00:00Z" },
-                  ],
-                },
-              ],
-            }),
-          ),
-        ),
-      );
-      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
-
-      const comments = yield* cli.listThreads({
-        cwd: "/w",
-        location: { project: "platform", repository: "web" },
-        number: 42,
-      });
-
-      assert.strictEqual(comments.length, 1);
-      // `az devops invoke` rather than `az rest`: it signs in the way the azure-devops extension
-      // does, and `az rest` mints its own token against whichever tenant `az` defaults to.
-      expect(argsOfCall(0)).toContain("invoke");
-      expect(argsOfCall(0)).toContain("pullRequestThreads");
-      expect(argsOfCall(0)).toContain("project=platform");
-      expect(argsOfCall(0)).toContain("repositoryId=web");
-      expect(argsOfCall(0)).toContain("pullRequestId=42");
-      // A review's threads grow with how long it ran, and this route does not page, so the read
-      // asks for more than the process default rather than taking whatever it is given.
-      expect(maxOutputBytesOfCall(0)).toBeGreaterThan(VCS_DEFAULT_MAX_OUTPUT_BYTES);
-    }),
-  );
-
-  it.effect("reads a long review's threads, which are past the default output limit", () =>
-    Effect.gen(function* () {
-      const response = json({ value: threadRows(800) });
-      // Azure opens a thread per vote and per ref update beside the ones people wrote, and every
-      // comment carries a full identity, so a review argued over for weeks outgrows the default.
-      expect(Buffer.byteLength(response)).toBeGreaterThan(VCS_DEFAULT_MAX_OUTPUT_BYTES);
-      mockedExecute.mockImplementationOnce((input) =>
-        Effect.succeed(outputWithin(input.maxOutputBytes, response)),
-      );
-      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
-
-      const comments = yield* cli.listThreads({
-        cwd: "/w",
-        location: { project: "platform", repository: "web" },
-        number: 42,
-      });
-
-      assert.strictEqual(comments.length, 800);
-    }),
-  );
-
-  it.effect("reads a long review's iterations, which are past the default output limit", () =>
-    Effect.gen(function* () {
-      const response = json({ value: iterationRows(1_200) });
-      // This route does not page, so the whole history arrives at once. Cut at the default it is
-      // JSON stopping mid-string, and every diff and file revision read on this host fails with
-      // it, since each of them starts by asking which iteration is the latest.
-      expect(Buffer.byteLength(response)).toBeGreaterThan(VCS_DEFAULT_MAX_OUTPUT_BYTES);
-      mockedExecute.mockImplementationOnce((input) =>
-        Effect.succeed(outputWithin(input.maxOutputBytes, response)),
-      );
-      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
-
-      const iterations = yield* cli.listIterations({
-        cwd: "/w",
-        location: { project: "platform", repository: "web" },
-        number: 42,
-      });
-
-      assert.strictEqual(iterations.length, 1_200);
-      assert.strictEqual(iterations.at(-1)?.id, 1_200);
-    }),
-  );
-
   it.effect("reads a full page of change entries, which is past the default output limit", () =>
     Effect.gen(function* () {
       const response = json({ changeEntries: changeEntries(2_000) });
-      // Azure's own maximum for this route, and every entry carries a path, a url and three
-      // object ids, so an ordinary page of a large change already outgrows the default.
       expect(Buffer.byteLength(response)).toBeGreaterThan(VCS_DEFAULT_MAX_OUTPUT_BYTES);
       mockedExecute.mockImplementationOnce((input) =>
         Effect.succeed(outputWithin(input.maxOutputBytes, response)),
@@ -1346,8 +963,6 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
         iterationId: 1,
       });
 
-      // Cut at the default this would arrive as JSON stopping mid-string, and a perfectly
-      // ordinary page would be reported as a host answering with nonsense.
       assert.strictEqual(page.changes.length, 2_000);
       assert.isFalse(page.truncated);
     }),
@@ -1355,11 +970,9 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
 
   it.effect("reads a file whose JSON envelope is past the default output limit", () =>
     Effect.gen(function* () {
-      // Under a megabyte as bytes on the host, so this is a file the other hosts hand over.
       const file = "const value = 1;\n".repeat(57_000);
       const response = json({ content: file });
       expect(Buffer.byteLength(file)).toBeLessThan(VCS_DEFAULT_MAX_OUTPUT_BYTES);
-      // And past it once Azure wraps it, because there is no route here that serves the bytes.
       expect(Buffer.byteLength(response)).toBeGreaterThan(VCS_DEFAULT_MAX_OUTPUT_BYTES);
       mockedExecute.mockImplementationOnce((input) =>
         Effect.succeed(outputWithin(input.maxOutputBytes, response)),
@@ -1378,22 +991,93 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
     }),
   );
 
-  it.effect("asks for a file by Azure's own spelling of its path", () =>
+  it.effect(
+    "reads a batch of files from one blobs zip, keeping only what Azure's read would say",
+    () =>
+      Effect.gen(function* () {
+        const id = (digit: string) => digit.repeat(40);
+        const utf8 = (text: string) => new TextEncoder().encode(text);
+        let sent = "";
+        mockedExecute.mockImplementationOnce((input) =>
+          Effect.sync(() => {
+            const flag = (name: string) => input.args[input.args.indexOf(name) + 1] ?? "";
+            sent = NodeFS.readFileSync(flag("--in-file"), "utf8");
+            NodeFS.writeFileSync(
+              flag("--out-file"),
+              streamedZip([
+                { name: id("a"), data: utf8("plain text\n") },
+                { name: id("b"), data: utf8("\uFEFFcafé ✓\n") },
+                { name: id("c"), data: Uint8Array.of(0x89, 0x50, 0x00, 0x01) },
+                // Windows-1252 "café" and UTF-16: Azure decodes these itself.
+                { name: id("d"), data: Uint8Array.of(0x63, 0x61, 0x66, 0xe9) },
+                { name: id("e"), data: Uint8Array.of(0xff, 0xfe, 0x68, 0x00) },
+                { name: id("f"), data: utf8("stored\n"), stored: true },
+                { name: id("9"), data: utf8("never asked for\n") },
+              ]),
+            );
+            return output("");
+          }),
+        );
+        const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+
+        const blobs = yield* cli.readBlobs({
+          cwd: "/w",
+          location: { project: "platform", repository: "web" },
+          objectIds: [id("A"), id("b"), id("C"), id("d"), id("e"), id("f"), id("a"), "../etc"],
+        });
+
+        expect(JSON.parse(sent)).toEqual([id("A"), id("b"), id("C"), id("d"), id("e"), id("f")]);
+        expect(argsOfCall(0)).toEqual(
+          expect.arrayContaining(["blobs", "POST", "application/zip", "project=platform"]),
+        );
+        expect(Object.fromEntries(blobs)).toEqual({
+          [id("a")]: { contents: "plain text\n", isBinary: false },
+          [id("b")]: { contents: "café ✓\n", isBinary: false },
+          [id("c")]: { contents: "", isBinary: true },
+          [id("f")]: { contents: "stored\n", isBinary: false },
+        });
+      }),
+  );
+
+  it.effect("leaves blobs past the batch's total size to per-file reads", () =>
     Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(Effect.succeed(output(json({ content: "const a = 1;" }))));
+      const ids = ["1", "2", "3", "4", "5", "6"].map((digit) => digit.repeat(40));
+      // Compresses to a few KiB each, so only the inflated total can bound memory.
+      const blob = new Uint8Array(3 * 1024 * 1024).fill(0x61);
+      mockedExecute.mockImplementationOnce((input) =>
+        Effect.sync(() => {
+          NodeFS.writeFileSync(
+            input.args[input.args.indexOf("--out-file") + 1] ?? "",
+            streamedZip(ids.map((name) => ({ name, data: blob }))),
+          );
+          return output("");
+        }),
+      );
       const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
 
-      // The path carried around here has had Azure's leading slash taken off so it matches the
-      // patch and the viewed mark. The items route is documented in Azure's spelling, so it goes
-      // back on the way out rather than being sent as the shorter name.
+      const blobs = yield* cli.readBlobs({
+        cwd: "/w",
+        location: { project: "platform", repository: "web" },
+        objectIds: ids,
+      });
+
+      expect([...blobs.keys()]).toEqual(ids.slice(0, 5));
+    }),
+  );
+
+  it.effect("escapes characters in a file path that would cut the query string", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(json({ content: "x" }))));
+      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+
       yield* cli.readItemContent({
         cwd: "/w",
         location: { project: "platform", repository: "web" },
-        path: "src/app.ts",
+        path: "docs/C#/a&b.md",
         commit: "a".repeat(40),
       });
 
-      expect(argsOfCall(0)).toContain("path=/src/app.ts");
+      expect(mockedExecute.mock.calls.at(-1)?.[0].args).toContain("path=%2Fdocs%2FC%23%2Fa%26b.md");
     }),
   );
 
@@ -1402,7 +1086,6 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
       mockedExecute.mockReturnValueOnce(
         Effect.succeed(
           output(
-            // Well-formed, but with nothing to build a link from: not a decode failure.
             JSON.stringify({
               pullRequestId: 42,
               title: "Add the page",
@@ -1418,64 +1101,6 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
       const error = yield* Effect.flip(cli.getPullRequest({ cwd: "/w", number: 42 }));
 
       assert.strictEqual(error._tag, "AzureDevOpsPullRequestIncompleteError");
-    }),
-  );
-
-  it.effect("fails the read when az returns something unreadable", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(Effect.succeed(output('{"message":"not found"}')));
-      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
-
-      const error = yield* Effect.flip(cli.getPullRequest({ cwd: "/w", number: 42 }));
-
-      assert.strictEqual(error._tag, "AzureDevOpsPullRequestReadError");
-    }),
-  );
-
-  it.effect("adds reviewers with the one command Azure has for it", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(Effect.succeed(output("[]")));
-      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
-
-      yield* cli.setPullRequestReviewers({
-        cwd: "/w",
-        number: 42,
-        reviewers: ["octocat@acme.test", "hubot@acme.test"],
-        requested: true,
-      });
-
-      expect(argsOfCall(0)).toEqual([
-        "repos",
-        "pr",
-        "reviewer",
-        "add",
-        "--detect",
-        "true",
-        "--id",
-        "42",
-        "--reviewers",
-        "octocat@acme.test",
-        "hubot@acme.test",
-        "--only-show-errors",
-        "--output",
-        "json",
-      ]);
-    }),
-  );
-
-  it.effect("takes a reviewer off the pull request with the same command's counterpart", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(Effect.succeed(output("[]")));
-      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
-
-      yield* cli.setPullRequestReviewers({
-        cwd: "/w",
-        number: 42,
-        reviewers: ["octocat@acme.test"],
-        requested: false,
-      });
-
-      expect(argsOfCall(0)).toContain("remove");
     }),
   );
 

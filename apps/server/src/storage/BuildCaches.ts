@@ -11,7 +11,6 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cache from "effect/Cache";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
-import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -19,6 +18,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import type { PlatformError } from "effect/PlatformError";
 import * as Semaphore from "effect/Semaphore";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -73,7 +73,9 @@ export interface BuildCacheDiscovery {
   readonly unreadable: ReadonlyArray<string>;
 }
 
-class FolderUnreadable extends Data.TaggedError("FolderUnreadable")<{ readonly path: string }> {}
+class FolderUnreadable extends Schema.TaggedError<FolderUnreadable>()("FolderUnreadable", {
+  path: Schema.String,
+}) {}
 
 export function buildCacheInUse(
   cache: Pick<DiscoveredBuildCache, "lastBuildAt">,
@@ -348,11 +350,12 @@ const make = Effect.gen(function* () {
   /** Unknown activity counts as busy, so a failed read never clears a live worktree's cache. */
   const ownerBusy = Effect.gen(function* () {
     const now = yield* Clock.currentTimeMillis;
+    const settings = yield* settingsService.getSettings;
     const snapshot = yield* projections.getShellSnapshot();
     const cwds = (yield* openProviderSessionCwds(sql)).map((cwd) => path.resolve(cwd));
     const busy = new Set(
       snapshot.threads.flatMap((thread) =>
-        thread.worktreePath !== null && !storageCleanupThreadIdle(thread, now)
+        thread.worktreePath !== null && !storageCleanupThreadIdle(thread, now, settings)
           ? [path.resolve(thread.worktreePath)]
           : [],
       ),

@@ -9,9 +9,7 @@ import type {
 
 type NotificationOutcome = OrchestrationV2Notification["outcome"];
 
-/** A piece of background work an adapter can name, by kind. */
 export type BackgroundWork = {
-  /** Subagent title, command, or monitor description. */
   readonly label?: string | undefined;
 } & (
   | { readonly kind: "subagent"; readonly childThreadId?: ThreadId | undefined }
@@ -20,17 +18,21 @@ export type BackgroundWork = {
   | { readonly kind: "background_task" }
 );
 
-/** Background work an adapter saw finish or report, as the user should read it. */
 export type BackgroundWorkReport = BackgroundWork & { readonly outcome: NotificationOutcome };
 
 const LABEL_MAX_LENGTH = 80;
 
-function reportLabel(label: string | undefined): string | undefined {
+export function reportLabel(label: string | undefined): string | undefined {
   const firstLine = label?.trim().split("\n")[0]?.trim();
   if (firstLine === undefined || firstLine.length === 0) return undefined;
-  return firstLine.length > LABEL_MAX_LENGTH
-    ? `${firstLine.slice(0, LABEL_MAX_LENGTH - 1)}…`
-    : firstLine;
+  if (firstLine.length <= LABEL_MAX_LENGTH) return firstLine;
+  let end = LABEL_MAX_LENGTH - 1;
+  const previous = firstLine.charCodeAt(end - 1);
+  const next = firstLine.charCodeAt(end);
+  if (previous >= 0xd800 && previous <= 0xdbff && next >= 0xdc00 && next <= 0xdfff) {
+    end -= 1;
+  }
+  return `${firstLine.slice(0, end)}…`;
 }
 
 const KIND_NOUN: Record<BackgroundWork["kind"], readonly [string, string]> = {
@@ -69,11 +71,26 @@ function exitSuffix(report: BackgroundWorkReport): string {
     : "";
 }
 
-function namedReport(report: BackgroundWorkReport, capitalize: boolean): string {
+function namedReport(report: BackgroundWorkReport, capitalize: boolean, verb?: string): string {
   const noun = KIND_NOUN[report.kind][0];
   const label = reportLabel(report.label);
   const named = `${capitalize ? noun : noun.toLowerCase()}${label === undefined ? "" : ` "${label}"`}`;
-  return `${named}${exitSuffix(report)}`;
+  return `${named}${verb === undefined ? "" : ` ${verb}`}${exitSuffix(report)}`;
+}
+
+const OUTCOME_GROUPS = ["failed", "cancelled", "updated", "completed"] as const;
+
+function groupVerb(group: (typeof OUTCOME_GROUPS)[number], count: number): string {
+  switch (group) {
+    case "failed":
+      return "failed";
+    case "cancelled":
+      return count === 1 ? "was stopped" : "were stopped";
+    case "updated":
+      return "updated";
+    case "completed":
+      return "finished";
+  }
 }
 
 function joinNames(names: ReadonlyArray<string>): string {
@@ -83,7 +100,6 @@ function joinNames(names: ReadonlyArray<string>): string {
 
 function reportsSummary(
   reports: readonly [BackgroundWorkReport, ...ReadonlyArray<BackgroundWorkReport>],
-  outcome: NotificationOutcome,
 ): string {
   const [first] = reports;
   if (reports.length === 1) {
@@ -91,23 +107,32 @@ function reportsSummary(
     const noun = KIND_NOUN[first.kind][0];
     return `${noun}${label === undefined ? "" : ` "${label}"`} ${outcomeVerb(first.kind, first.outcome)}${exitSuffix(first)}`;
   }
-  const verb =
-    outcome === "failed"
-      ? "failed"
-      : outcome === "cancelled"
-        ? "were stopped"
-        : outcome === "updated"
-          ? "updated"
-          : "finished";
+  const groups = OUTCOME_GROUPS.flatMap((group) => {
+    const count = reports.filter(
+      (report) => (report.outcome === "unknown" ? "completed" : report.outcome) === group,
+    ).length;
+    return count === 0 ? [] : [{ group, count }];
+  });
   if (reports.length > 3 || reports.every((report) => reportLabel(report.label) === undefined)) {
     const kinds = new Set(reports.map((report) => report.kind));
-    const noun = kinds.size === 1 ? KIND_NOUN[first.kind][1] : "background tasks";
-    return `${reports.length} ${noun} ${verb}`;
+    const [noun, nouns] = kinds.size === 1 ? KIND_NOUN[first.kind] : KIND_NOUN.background_task;
+    return joinNames(
+      groups.map(
+        ({ group, count }, index) =>
+          `${count}${index === 0 ? ` ${count === 1 ? noun.toLowerCase() : nouns}` : ""} ${groupVerb(group, count)}`,
+      ),
+    );
   }
-  return `${joinNames(reports.map((report, index) => namedReport(report, index === 0)))} ${verb}`;
+  if (groups.length > 1) {
+    return joinNames(
+      reports.map((report, index) =>
+        namedReport(report, index === 0, outcomeVerb(report.kind, report.outcome)),
+      ),
+    );
+  }
+  return `${joinNames(reports.map((report, index) => namedReport(report, index === 0)))} ${groupVerb(groups[0]!.group, reports.length)}`;
 }
 
-/** Reports of one kind share it; mixed kinds are generic background work. */
 function reportsSource(
   reports: readonly [BackgroundWorkReport, ...ReadonlyArray<BackgroundWorkReport>],
 ): OrchestrationV2NotificationSource {
@@ -115,7 +140,6 @@ function reportsSource(
   if (rest.some((report) => report.kind !== first.kind)) return { kind: "background_task" };
   switch (first.kind) {
     case "subagent":
-      // One subagent is the thing the row opens; several open nothing.
       return rest.length === 0 && first.childThreadId !== undefined
         ? { kind: "subagent", childThreadId: first.childThreadId }
         : { kind: "subagent" };
@@ -126,10 +150,6 @@ function reportsSource(
   }
 }
 
-/**
- * A notification that says which background work a provider reported. Null
- * when nothing is known, so the caller keeps its generic notification.
- */
 export function backgroundWorkNotification(
   reports: readonly [BackgroundWorkReport, ...ReadonlyArray<BackgroundWorkReport>],
 ): OrchestrationV2Notification;
@@ -145,7 +165,7 @@ export function backgroundWorkNotification(
   return {
     source: reportsSource([first, ...rest]),
     outcome,
-    summary: reportsSummary([first, ...rest], outcome),
+    summary: reportsSummary([first, ...rest]),
   };
 }
 
@@ -162,14 +182,12 @@ function delegatedTaskReport(
           : "unknown";
   return {
     kind: "subagent",
-    // Delegated tasks are titled by their prompt unless the caller named them.
     label: task?.title?.trim() || task?.prompt,
     outcome,
     ...(task?.childThreadId == null ? {} : { childThreadId: task.childThreadId }),
   };
 }
 
-/** Summarizes the delegated tasks one completion delivery reports, out of all its parent run delegated. */
 function delegatedCompletionNotification(
   completion: NonNullable<OrchestrationV2ConversationMessage["delegatedCompletion"]>,
   tasks: ReadonlyArray<OrchestrationV2Subagent>,
@@ -208,7 +226,6 @@ function delegatedCompletionNotification(
   };
 }
 
-/** Keep the delivery message intact while projecting its trigger as an activity. */
 export function notificationTurnItem(
   item: OrchestrationV2TurnItem,
   message: Pick<OrchestrationV2ConversationMessage, "notification" | "delegatedCompletion">,
@@ -229,6 +246,7 @@ export function notificationTurnItem(
     createdBy: _createdBy,
     creationSource: _creationSource,
     scheduledTaskId: _scheduledTaskId,
+    modelSwitch: _modelSwitch,
     ...base
   } = item;
   return { ...base, type: "notification", ...notification };

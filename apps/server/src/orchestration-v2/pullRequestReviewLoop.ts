@@ -917,12 +917,15 @@ export function carryLinkAutomation(
 }
 
 /**
- * Archive, settle, Stop, and a stack-member unlink end a link's automation: the watch stops, and
- * a live author loop ends as stopped. A reviewer marker stays, so the reactor can still find the
- * loop, end it from the source side with the reason, and then release the marker.
+ * Archive, settle, Stop, and a stack-member unlink end a link's automation: the watch stops and is
+ * kept as `endedWatch`, and a live author loop ends as stopped. A reviewer marker stays, so the
+ * reactor can still find the loop, end it from the source side with the reason, and then release
+ * the marker.
  */
 export function endLinkAutomation(link: ThreadPullRequestLink, now: string): ThreadPullRequestLink {
-  const { watch: _ended, ...rest } = link;
+  const { watch, endedWatch, ...withoutWatch } = link;
+  const lastWatch = watch ?? endedWatch;
+  const rest = lastWatch === undefined ? withoutWatch : { ...withoutWatch, endedWatch: lastWatch };
   const loop = liveAuthorLoop(link);
   if (loop === undefined) return rest;
   return {

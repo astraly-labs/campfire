@@ -48,8 +48,8 @@ export const layer = Layer.effect(
     const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
     let preserved: HostedRecoveryState = emptyHostedState();
     let restored = false;
-    const preserve = (reattach: boolean) =>
-      Effect.gen(function* () {
+    const preserve = Effect.fn("HostedProviderRecovery.preserve")(
+      function* (reattach: boolean) {
         if (reattach && restored) return preserved;
         const threadIdsToPreserve = new Set<ThreadId>();
         const sessionIds = new Set<ProviderSessionId>();
@@ -240,16 +240,16 @@ export const layer = Layer.effect(
           if (runtime.externalLifetime) yield* runtime.externalLifetime.replay;
         if (reattach) restored = true;
         return preserved;
-      }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new Adapter.ProviderAdapterProtocolError({
-              driver: ProviderDriverKind.make("codex"),
-              detail: "Could not reattach the external Codex runtime.",
-              payload: cause,
-            }),
-        ),
-      );
+      },
+      Effect.mapError(
+        (cause) =>
+          new Adapter.ProviderAdapterProtocolError({
+            driver: ProviderDriverKind.make("codex"),
+            detail: "Could not reattach the external Codex runtime.",
+            payload: cause,
+          }),
+      ),
+    );
     return { preserve };
   }),
 );

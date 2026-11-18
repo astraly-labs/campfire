@@ -19,13 +19,34 @@ export interface NativeLayoutMetrics {
     readonly right: number;
   };
   readonly reservedRegions: ReadonlyArray<ReservedRegion>;
+  /** How far above the bottom edge UIKit floats a 48pt bottom bar, level with its tab bar. iOS 27.1+. */
+  readonly bottomBarInset?: number;
 }
 
-/**
- * Keep bottom controls in one usable region. A book-like fold selects the
- * larger side; a horizontal fold leaves the controls on the lower display.
- * Text and other scrollable content can continue to use the full canvas.
- */
+function isFullHeightDivision(region: ReservedRegion, metrics: NativeLayoutMetrics) {
+  return region.kind === "division" && region.height >= metrics.height / 2;
+}
+
+function sideOfDivision(left: number, right: number, x: number, endX: number) {
+  if (x <= left) return { left: Math.min(right, endX), right };
+  if (endX >= right) return { left, right: Math.max(left, x) };
+  return right - endX >= x - left ? { left: endX, right } : { left, right: x };
+}
+
+export function deriveContentSideInsets(metrics: NativeLayoutMetrics | null) {
+  if (!metrics) return { left: 0, right: 0 };
+  let left = metrics.safeArea.left;
+  let right = metrics.width - metrics.safeArea.right;
+  for (const region of metrics.reservedRegions) {
+    if (!isFullHeightDivision(region, metrics)) continue;
+    const x = Math.max(left, region.x);
+    const endX = Math.min(right, region.x + region.width);
+    if (endX <= x) continue;
+    ({ left, right } = sideOfDivision(left, right, x, endX));
+  }
+  return { left, right: metrics.width - right };
+}
+
 export function deriveBottomControlInsets(metrics: NativeLayoutMetrics | null) {
   if (!metrics) return { left: 0, right: 0, bottom: 0 };
   let left = metrics.safeArea.left;
@@ -37,11 +58,9 @@ export function deriveBottomControlInsets(metrics: NativeLayoutMetrics | null) {
     const y = Math.max(0, region.y);
     const endY = Math.min(bottom, region.y + region.height);
     if (endX <= x || endY <= y) continue;
-    if (region.kind === "division" && region.height >= metrics.height / 2) {
-      if (right - endX >= x - left) left = endX;
-      else right = x;
+    if (isFullHeightDivision(region, metrics)) {
+      ({ left, right } = sideOfDivision(left, right, x, endX));
     } else if (endY >= bottom - metrics.safeArea.bottom) {
-      // An occlusion at the bottom can also occupy just one corner.
       if (region.width >= right - left) bottom = y;
       else if (right - endX >= x - left) left = endX;
       else right = x;

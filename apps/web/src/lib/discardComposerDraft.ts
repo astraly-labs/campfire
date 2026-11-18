@@ -1,21 +1,18 @@
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 
+import { cancelPreparingComposerImages } from "../components/chat/preparingComposerImages";
 import {
   type ComposerThreadTarget,
   composerDraftHasUserContent,
+  composerTargetKey,
   resolveComposerDraftKey,
   useComposerDraftStore,
 } from "../composerDraftStore";
 import { showThreadUndoNotice } from "../hooks/showThreadUndoNotice";
-import * as ThreadUndo from "../hooks/threadUndo";
+import * as ThreadUndo from "@t3tools/client-runtime/state/thread-undo";
 import { releaseDraftAttachments } from "./attachmentUploadQueue";
 
-/**
- * Discards a draft's unsent content behind the sidebar undo notice. A new-thread
- * draft (DraftId) loses its whole session; a thread draft only loses its
- * composer content. Uploads are released once the undo window closes.
- */
 export function discardComposerDraft(target: ComposerThreadTarget): void {
   const store = useComposerDraftStore.getState();
   const key = resolveComposerDraftKey(store, target);
@@ -28,11 +25,25 @@ export function discardComposerDraft(target: ComposerThreadTarget): void {
   const discardsSession = typeof target === "string";
 
   const claim = ThreadUndo.begin("discard", key);
+  // The composer may key attachments by the target or by its resolved draft id; a late
+  // compression under either would recreate the draft.
+  cancelPreparingComposerImages(composerTargetKey(target));
+  cancelPreparingComposerImages(key);
   if (discardsSession) {
     store.clearDraftThread(target);
   } else {
     store.clearComposerContent(target);
   }
+
+  const releaseDiscardedDraft = () => {
+    releaseDraftAttachments([...draft.images, ...draft.files]);
+    // Draft-session removal already revoked these previews.
+    if (!discardsSession) {
+      for (const image of draft.images) {
+        if (image.previewUrl.startsWith("blob:")) URL.revokeObjectURL(image.previewUrl);
+      }
+    }
+  };
 
   showThreadUndoNotice({
     action: "Discarded",
@@ -41,7 +52,7 @@ export function discardComposerDraft(target: ComposerThreadTarget): void {
     undo: async () => {
       const current = useComposerDraftStore.getState().draftsByThreadKey[key];
       if (current && composerDraftHasUserContent(current)) {
-        releaseDraftAttachments([...draft.images, ...draft.files]);
+        releaseDiscardedDraft();
         return AsyncResult.failure(Cause.fail(new Error("The draft has new content.")));
       }
       useComposerDraftStore.setState((state) => {
@@ -54,7 +65,6 @@ export function discardComposerDraft(target: ComposerThreadTarget): void {
         return {
           draftsByThreadKey: {
             ...state.draftsByThreadKey,
-            // Removing a draft session revokes its image previews.
             [key]: discardsSession
               ? {
                   ...draft,
@@ -74,6 +84,6 @@ export function discardComposerDraft(target: ComposerThreadTarget): void {
       });
       return AsyncResult.success(undefined);
     },
-    commit: () => releaseDraftAttachments([...draft.images, ...draft.files]),
+    commit: releaseDiscardedDraft,
   });
 }

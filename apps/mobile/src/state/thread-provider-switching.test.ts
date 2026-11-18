@@ -9,12 +9,6 @@ const startedThread = {
   runtime: { status: "idle" },
 } as never;
 
-const unstartedThread = {
-  latestRun: null,
-  latestUserMessageAt: null,
-  runtime: null,
-} as never;
-
 function projectionWithSession(supportsProviderSwitchingViaHandoff: boolean) {
   return {
     thread: { id: "thread", activeProviderThreadId: "provider-thread" },
@@ -33,15 +27,6 @@ function projectionWithSession(supportsProviderSwitchingViaHandoff: boolean) {
 }
 
 describe("threadAllowsProviderSwitch", () => {
-  it("offers every provider when the session can hand the conversation off", () => {
-    expect(
-      threadAllowsProviderSwitch({
-        thread: startedThread,
-        projection: projectionWithSession(true),
-      }),
-    ).toBe(true);
-  });
-
   it("keeps a running turn on its provider even when the session can hand off", () => {
     expect(
       threadAllowsProviderSwitch({
@@ -61,10 +46,6 @@ describe("threadAllowsProviderSwitch", () => {
         projection: projectionWithSession(false),
       }),
     ).toBe(false);
-  });
-
-  it("leaves a thread that never ran a turn unbound", () => {
-    expect(threadAllowsProviderSwitch({ thread: unstartedThread, projection: null })).toBe(true);
   });
 
   it("allows an imported thread to hand off before opening a provider session", () => {

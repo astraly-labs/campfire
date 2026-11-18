@@ -8,7 +8,6 @@ function record(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
-/** Devin's typed extension metadata, captured from its native ACP stream. */
 export function normalizeDevinSessionUpdate(
   notification: AcpSchema.SessionNotification,
 ): AcpSchema.SessionNotification {
@@ -54,4 +53,11 @@ export function extractDevinSubagentUpdate(
     status: completed ? (completed.success === false ? "failed" : "completed") : "running",
     result: typeof completed?.summary === "string" ? completed.summary : null,
   };
+}
+
+// Devin's plan exit offers several allow_once options in no promised order; T3 never answers with bypass.
+export function devinAnswerablePermissionOptions(
+  request: AcpSchema.RequestPermissionRequest,
+): ReadonlyArray<AcpSchema.PermissionOption> {
+  return request.options.filter((option) => option.optionId.trim() !== "plan_bypass");
 }

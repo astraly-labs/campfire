@@ -1,30 +1,22 @@
 // @effect-diagnostics nodeBuiltinImport:off globalConsole:off -- The guard runs in Node's unhandled-rejection callback, outside an Effect runtime. stderr must match Node's default unhandled-rejection print.
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 
-import { Agent, createAgentPlatform } from "./sdk.ts";
+import { loadCursorSdk, loadCursorSqlite } from "./sdk.ts";
 
-/**
- * The Cursor Agent SDK runs in this process and spawns a shell for tool
- * calls. The command is Cursor's sandbox wrapper (`dump_zsh_state`,
- * `dump_bash_state`, `__CURSOR_SANDBOX_ENV_RESTORE`). A bad working directory
- * makes Node report `spawn /bin/zsh ENOENT`. The SDK listens for that error,
- * then rejects an internal promise nothing awaits. Node exits on that
- * unhandled rejection and takes the server with it.
- *
- * The guard ignores only that rejection. Every other unhandled rejection
- * still prints and exits when this is the process's only listener, matching
- * Node's default. `child_process.spawn` itself is left alone, so git,
- * terminals, and other providers keep their own error handling.
- */
+// The SDK leaves a shell-error promise unhandled, which would exit the server.
 const CURSOR_SHELL_SPAWN_MARKERS = [
   "dump_zsh_state",
   "dump_bash_state",
   "__CURSOR_SANDBOX_ENV_RESTORE",
 ] as const;
 
-export function isCursorShellSpawnFailure(reason: unknown): boolean {
+function isCursorShellSpawnFailure(reason: unknown): boolean {
   if (typeof reason !== "object" || reason === null) {
     return false;
   }
@@ -43,12 +35,53 @@ export function isCursorShellSpawnFailure(reason: unknown): boolean {
   );
 }
 
+/**
+ * The SDK writes final frames from promises nothing awaits. A closed stream rejects them
+ * with WriteIterableClosedError; an ended request body rejects them with the Aborted
+ * ConnectError its connect-node pump wraps around ERR_STREAM_WRITE_AFTER_END. The classes
+ * are minified, so only `name` identifies them.
+ */
+function isCursorClosedStreamWrite(reason: unknown): boolean {
+  if (!(reason instanceof Error)) {
+    return false;
+  }
+  if (reason.name === "WriteIterableClosedError") {
+    return true;
+  }
+  return (
+    reason.name === "ConnectError" &&
+    reason.cause instanceof Error &&
+    Reflect.get(reason.cause, "code") === "ERR_STREAM_WRITE_AFTER_END"
+  );
+}
+
+/**
+ * When the SDK's stall detector fires it aborts the request, then rejects a promise
+ * nothing awaits. The abort is the SDK's own recovery, so it must not stop the server.
+ * Only an abort raised from `onStall` counts; any other AbortError is still unexpected.
+ */
+function isCursorStallAbort(reason: unknown): boolean {
+  return (
+    reason instanceof Error &&
+    reason.name === "AbortError" &&
+    typeof reason.stack === "string" &&
+    /^\s+at (?:\S+\.)?onStall\b/m.test(reason.stack)
+  );
+}
+
 function onUnhandledRejection(reason: unknown): void {
   if (isCursorShellSpawnFailure(reason)) {
     console.error("Cursor shell spawn failed. The server will keep running.", reason);
     return;
   }
-  // Another handler registered besides this one owns the decision.
+  if (isCursorClosedStreamWrite(reason)) {
+    console.error("Cursor SDK wrote to a closed stream. The server will keep running.");
+    return;
+  }
+  if (isCursorStallAbort(reason)) {
+    console.error("Cursor SDK aborted a stalled request. The server will keep running.");
+    return;
+  }
   if (process.listenerCount("unhandledRejection") > 1) {
     return;
   }
@@ -56,28 +89,79 @@ function onUnhandledRejection(reason: unknown): void {
   process.exit(1);
 }
 
-/**
- * The SDK entry points that run agents in this process. Reaching them through
- * this service keeps the shell spawn guard armed while they are in use.
- */
+const decodeCursorCliConfig = Schema.decodeEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      network: Schema.optionalKey(
+        Schema.Struct({ useHttp1ForAgent: Schema.optionalKey(Schema.Boolean) }),
+      ),
+    }),
+  ),
+);
+
+// Proxies without HTTP/2 need this Cursor CLI setting, which the SDK never reads itself.
+const readCursorCliUseHttp1ForAgent = Effect.gen(function* () {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const { CURSOR_CONFIG_DIR, XDG_CONFIG_HOME } = yield* HostProcess.Environment;
+  const configDirectory = CURSOR_CONFIG_DIR?.trim()
+    ? CURSOR_CONFIG_DIR
+    : XDG_CONFIG_HOME?.trim()
+      ? path.join(XDG_CONFIG_HOME, "cursor")
+      : path.join(yield* HostProcess.HomeDirectory, ".cursor");
+  const configPath = path.join(configDirectory, "cli-config.json");
+  const config = yield* fileSystem.readFileString(configPath).pipe(
+    Effect.flatMap(decodeCursorCliConfig),
+    Effect.catchReason("PlatformError", "NotFound", () => Effect.undefined),
+    Effect.catch(() =>
+      Effect.logWarning("Cursor CLI config could not be read; using the default agent transport", {
+        path: configPath,
+      }).pipe(Effect.as(undefined)),
+    ),
+  );
+  return config?.network?.useHttp1ForAgent === true;
+}).pipe(Effect.withSpan("CursorSdk.readCliUseHttp1ForAgent"));
+
+/** Keeps the shell spawn guard armed while in-process agents run. */
 export class CursorSdk extends Context.Service<
   CursorSdk,
   {
-    readonly Agent: typeof Agent;
-    readonly createAgentPlatform: typeof createAgentPlatform;
+    readonly load: typeof loadCursorSdk;
+    readonly loadSqlite: typeof loadCursorSqlite;
   }
 >()("@t3tools/provider-cursor/server/CursorSdk") {}
 
 /** Provide once per process: a second guard would defer to the first and swallow real rejections. */
 export const layer = Layer.effect(
   CursorSdk,
-  Effect.acquireRelease(
-    Effect.sync(() => {
-      process.on("unhandledRejection", onUnhandledRejection);
-    }),
-    () =>
+  Effect.gen(function* () {
+    yield* Effect.acquireRelease(
       Effect.sync(() => {
-        process.off("unhandledRejection", onUnhandledRejection);
+        process.on("unhandledRejection", onUnhandledRejection);
       }),
-  ).pipe(Effect.as(CursorSdk.of({ Agent, createAgentPlatform }))),
+      () =>
+        Effect.sync(() => {
+          process.off("unhandledRejection", onUnhandledRejection);
+        }),
+    );
+    // The SDK picks the agent transport per process, so no provider instance can own this.
+    const useHttp1ForAgent = yield* readCursorCliUseHttp1ForAgent;
+    let configured = false;
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => {
+        if (configured) loadCursorSdk().Cursor.configure({ local: { useHttp1ForAgent: null } });
+      }),
+    );
+    return CursorSdk.of({
+      load: () => {
+        const sdk = loadCursorSdk();
+        if (useHttp1ForAgent && !configured) {
+          sdk.Cursor.configure({ local: { useHttp1ForAgent: true } });
+          configured = true;
+        }
+        return sdk;
+      },
+      loadSqlite: loadCursorSqlite,
+    });
+  }),
 );

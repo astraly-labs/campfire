@@ -23,7 +23,6 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { createProviderVersionAdvisory } from "./maintenanceResolver.ts";
 import { collectUint8StreamText } from "./collectStreamText.ts";
 
-// Localized cmd.exe "not recognized" messages for a missing executable.
 const WINDOWS_COMMAND_NOT_FOUND_PATTERNS = [
   /is not recognized as an internal or external command/i,
   /n.o . reconhecido como um comando interno/i,
@@ -33,7 +32,6 @@ const WINDOWS_COMMAND_NOT_FOUND_PATTERNS = [
   /wird nicht als interner oder externer befehl/i,
 ] as const;
 
-/** Whether a Windows exit means the command was not found rather than that it failed. */
 export const isWindowsCommandNotFound = Effect.fn("isWindowsCommandNotFound")(function* (
   code: number | null,
   stderr: string,
@@ -45,8 +43,20 @@ export const isWindowsCommandNotFound = Effect.fn("isWindowsCommandNotFound")(fu
 });
 
 export const DEFAULT_TIMEOUT_MS = 4_000;
-// Auth status checks involve disk/network lookups and can be slow on first run (especially Windows)
 export const AUTH_PROBE_TIMEOUT_MS = 10_000;
+
+export const resolveProviderProbeTimeoutMs = (
+  provider: string,
+  defaultTimeoutMs: number,
+  environment: NodeJS.ProcessEnv = process.env,
+): number => {
+  const timeoutMs = Number(environment[`T3CODE_${provider.toUpperCase()}_PROBE_TIMEOUT_MS`]);
+  // Overrides only extend: callers nest these deadlines and size optional work inside them
+  // against the defaults. Node timers overflow above a signed 32-bit delay.
+  return Number.isInteger(timeoutMs) && timeoutMs > defaultTimeoutMs && timeoutMs <= 2_147_483_647
+    ? timeoutMs
+    : defaultTimeoutMs;
+};
 
 export const COMPACT_SLASH_COMMAND = {
   name: "compact",
@@ -90,7 +100,6 @@ export interface ServerProviderPresentation {
   readonly showInteractionModeToggle?: boolean;
   readonly reportsContextWindow?: boolean;
   readonly supportedRuntimeModes?: ReadonlyArray<RuntimeMode>;
-  readonly requiresNewThreadForModelChange?: boolean;
   readonly supportsConversationRollback?: boolean;
 }
 
@@ -107,49 +116,70 @@ export function isCommandMissingCause(error: unknown): boolean {
   return error instanceof PlatformError.PlatformError && error.reason._tag === "NotFound";
 }
 
-export const spawnAndCollect = (binaryPath: string, command: ChildProcess.Command) =>
-  Effect.gen(function* () {
-    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const child = yield* spawner.spawn(command);
-    const [stdout, stderr, exitCode] = yield* Effect.all(
-      [
-        collectStreamAsString(child.stdout),
-        collectStreamAsString(child.stderr),
-        child.exitCode.pipe(Effect.map(Number)),
-      ],
-      { concurrency: "unbounded" },
-    );
-
-    const result: CommandResult = { stdout, stderr, code: exitCode };
-    if (yield* isWindowsCommandNotFound(exitCode, stderr)) {
-      return yield* new ProviderCommandNotFoundError({
-        binaryPath,
-        exitCode,
-        stdoutLength: stdout.length,
-        stderrLength: stderr.length,
-      });
-    }
-    return result;
-  }).pipe(Effect.scoped);
-
 /**
- * Return the first semantic version found in CLI output, or null. Accepts a
- * leading "v" (for example `opencode v2.0.3`).
+ * Environment for background status probes. A mise shim for a missing tool would otherwise
+ * download it on every refresh and leave a partial download behind when the probe times out.
+ * Sessions and user-started commands keep the plain environment, so mise still installs there.
  */
+export function providerProbeEnvironment(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return { ...environment, MISE_OFFLINE: "1" };
+}
+
+// A timed-out probe interrupts the child with SIGTERM and then waits for it to exit,
+// so a CLI that ignores SIGTERM would hold the caller's timeout open without this.
+const PROBE_FORCE_KILL_AFTER = "1 second";
+
+function withProbeForceKill(command: ChildProcess.Command): ChildProcess.Command {
+  if (!ChildProcess.isStandardCommand(command) || command.options.forceKillAfter !== undefined) {
+    return command;
+  }
+  return ChildProcess.make(command.command, command.args, {
+    ...command.options,
+    forceKillAfter: PROBE_FORCE_KILL_AFTER,
+  });
+}
+
+export const spawnAndCollect = Effect.fn("snapshotProbe.spawnAndCollect")(function* (
+  binaryPath: string,
+  command: ChildProcess.Command,
+) {
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const child = yield* spawner.spawn(withProbeForceKill(command));
+  const [stdout, stderr, exitCode] = yield* Effect.all(
+    [
+      collectStreamAsString(child.stdout),
+      collectStreamAsString(child.stderr),
+      child.exitCode.pipe(Effect.map(Number)),
+    ],
+    { concurrency: "unbounded" },
+  );
+
+  const result: CommandResult = { stdout, stderr, code: exitCode };
+  if (yield* isWindowsCommandNotFound(exitCode, stderr)) {
+    return yield* new ProviderCommandNotFoundError({
+      binaryPath,
+      exitCode,
+      stdoutLength: stdout.length,
+      stderrLength: stderr.length,
+    });
+  }
+  return result;
+}, Effect.scoped);
+
 export function parseGenericCliVersion(output: string): string | null {
-  // "opencode v2.0.3"-style output: the optional "v" has to be consumed first,
-  // since "v2" itself contains no word boundary.
+  // Consume v before the digits; v2 has no internal word boundary.
   const match = output.match(/\bv?(\d+\.\d+\.\d+)\b/);
   return match?.[1] ?? null;
 }
 
-/**
- * Append the user's custom models after the built-ins. A custom entry that
- * declares its own capabilities keeps them; a bare slug gets the driver's
- * default set. A named entry whose slug matches a built-in renames that
- * built-in instead (for example `{ "slug": "gpt-5.5", "name": "GPT" }` in
- * `settings.json`); other fields on such an entry are ignored.
- */
+/** A failed `--version` run reports no version: its output can be a wrapper's, such as mise's. */
+export function parseCliVersionResult(
+  result: CommandResult,
+  parse: (output: string) => string | null = parseGenericCliVersion,
+): string | null {
+  return result.code === 0 ? parse(`${result.stdout}\n${result.stderr}`) : null;
+}
+
 export function providerModelsFromSettings(
   builtInModels: ReadonlyArray<ServerProviderModel>,
   customModels: ReadonlyArray<CustomModelSetting>,
@@ -164,7 +194,6 @@ export function providerModelsFromSettings(
   const resolvedBuiltInModels = builtInModels.map((model) => {
     const name = nameOverrides.get(model.slug);
     if (!name) return model;
-    // The built-in short name would undo the override in compact UI.
     const { shortName: _shortName, ...rest } = model;
     return { ...rest, name };
   });
@@ -269,14 +298,13 @@ export function buildServerProvider(input: {
     ...(input.presentation.supportedRuntimeModes === undefined
       ? {}
       : { supportedRuntimeModes: [...input.presentation.supportedRuntimeModes] }),
-    ...(typeof input.presentation.requiresNewThreadForModelChange === "boolean"
-      ? { requiresNewThreadForModelChange: input.presentation.requiresNewThreadForModelChange }
-      : {}),
     enabled: input.enabled,
     installed: input.probe.installed,
     version: input.probe.version,
     status: input.enabled ? input.probe.status : "disabled",
     auth: input.probe.auth,
+    // Drivers with in-app setup replace these CLI-owned defaults.
+    setup: { canAuthenticate: false, canInstall: false },
     checkedAt: input.checkedAt,
     ...(input.probe.message ? { message: input.probe.message } : {}),
     models: input.models,

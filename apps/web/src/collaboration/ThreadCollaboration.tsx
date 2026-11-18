@@ -42,7 +42,7 @@ import {
 
 export function ThreadCollaborationProvider(props: {
   readonly thread: EnvironmentThreadShell;
-  readonly projection: OrchestrationV2ThreadProjection | null;
+  readonly projection: Pick<OrchestrationV2ThreadProjection, "sideThreads" | "messages"> | null;
   readonly cwd: string | undefined;
   readonly children: ReactNode;
 }) {

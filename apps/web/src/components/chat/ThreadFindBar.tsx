@@ -1,9 +1,13 @@
-import { useEffect, useRef, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { ChevronDownIcon, ChevronUpIcon, XIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { cn } from "~/lib/utils";
-import { formatThreadFindCount } from "./threadFind";
+import {
+  formatThreadFindCount,
+  nextThreadFindAnnouncement,
+  type ThreadFindAnnouncement,
+} from "./threadFind";
 import { THREAD_DETAILS_CARD_GAP } from "./threadDetailsCardLayout";
 
 interface ThreadFindBarProps {
@@ -14,6 +18,10 @@ interface ThreadFindBarProps {
   readonly status: "loading" | "error" | null;
   readonly onRetry: () => void;
   readonly activeIndex: number;
+  /** Bumped by each user search or step; background refreshes keep it. */
+  readonly navigationId: number;
+  /** Whether the label shows the outcome of `navigationId`: a count or a failure. */
+  readonly settled: boolean;
   readonly focusRequestId: number;
   readonly onQueryChange: (query: string) => void;
   readonly onNext: () => void;
@@ -21,22 +29,21 @@ interface ThreadFindBarProps {
   readonly onClose: () => void;
 }
 
-/**
- * Room the open bar takes at the top of the chat canvas: its `h-9` height plus
- * the shared 12px gap below it, so the details card starts on the same rhythm.
- */
 export const THREAD_FIND_BAR_RESERVED_HEIGHT = 36 + THREAD_DETAILS_CARD_GAP;
 
 export function ThreadFindBar(props: ThreadFindBarProps) {
   const inputRef = useRef<HTMLInputElement | null>(null);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- focuses and selects the input DOM node when the bar opens or a find shortcut fires
   useEffect(() => {
     if (!props.open) return;
     inputRef.current?.focus();
     inputRef.current?.select();
-  }, [props.focusRequestId, props.open]);
-
-  if (!props.open) return null;
+  }, [
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Each find shortcut bumps the request id, so an already-open bar refocuses and reselects its query.
+    props.focusRequestId,
+    props.open,
+  ]);
 
   const hasQuery = props.query.trim().length > 0;
   const noResults = hasQuery && !props.status && props.matchCount === 0;
@@ -46,6 +53,17 @@ export function ThreadFindBar(props: ThreadFindBarProps) {
   }
   if (props.status === "loading") label = "Searching…";
   if (props.status === "error") label = "Search failed";
+  const [storedAnnouncement, setAnnouncement] = useState<ThreadFindAnnouncement | null>(null);
+  const announcement = nextThreadFindAnnouncement(storedAnnouncement, {
+    navigationId: props.navigationId,
+    text: label,
+    settled: props.settled || props.status === "loading",
+    provisional: props.status !== null,
+  });
+  if (announcement !== storedAnnouncement) setAnnouncement(announcement);
+
+  if (!props.open) return null;
+
   const navigationDisabled =
     props.matchCount === 0 || props.status === "loading" || props.counting === true;
   const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
@@ -59,7 +77,6 @@ export function ThreadFindBar(props: ThreadFindBarProps) {
   };
 
   return (
-    // Fades in while the details popover slides out from under it.
     <div
       data-thread-find-bar
       className="absolute top-3 right-3 z-40 w-[min(var(--thread-details-panel-width),calc(100%-1.5rem))] transition-opacity duration-150 ease-out starting:opacity-0 motion-reduce:transition-none"
@@ -87,8 +104,11 @@ export function ThreadFindBar(props: ThreadFindBarProps) {
           onKeyDown={handleKeyDown}
         />
         <InputGroupAddon align="inline-end" inset="pill">
+          <span aria-live="polite" className="sr-only">
+            {announcement.text}
+          </span>
           <span
-            aria-live="polite"
+            aria-hidden
             className={cn(
               "min-w-10 text-center text-xs tabular-nums",
               noResults ? "text-destructive" : "text-muted-foreground",

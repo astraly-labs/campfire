@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import { expect } from "vite-plus/test";
@@ -193,7 +194,7 @@ const makeFixture = (maxBufferBytes?: number) =>
     return { host, connect, events, closed, counts: () => ({ opens, closes, starts }) };
   });
 
-it.layer(Layer.mergeAll(NodeServices.layer, McpProviderSessions.layer))(
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, McpProviderSessions.layer))(
   "Codex provider host V2",
   (it) => {
     it.effect(

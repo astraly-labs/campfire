@@ -26,13 +26,12 @@ export interface ProcessRunInput {
   readonly stdin?: string | undefined;
   /** Receives every stdout chunk, including bytes beyond the buffered output limit. */
   readonly onStdoutChunk?: ((chunk: Uint8Array) => void) | undefined;
+  /** Runs after successful spawn, before cancellation can interrupt acquisition. */
+  readonly onSpawn?: (() => void) | undefined;
   readonly maxOutputBytes?: number | undefined;
   readonly outputMode?: "error" | "truncate" | undefined;
   readonly truncatedMarker?: string | undefined;
-  /**
-   * On timeout, return a synthetic timedOut result.
-   * Partial stdout/stderr are not preserved.
-   */
+  /** Timed-out results discard partial stdout/stderr. */
   readonly timeoutBehavior?: "error" | "timedOutResult" | undefined;
 }
 
@@ -146,11 +145,10 @@ export class ProcessRunner extends Context.Service<
 >()("t3/processRunner") {}
 
 const DEFAULT_TIMEOUT = "60 seconds";
+// Keep SIGTERM-ignoring helpers from blocking timeouts or graceful shutdown.
+const FORCE_KILL_AFTER = "1 second";
 const DEFAULT_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 
-export { isWindowsCommandNotFound } from "@t3tools/provider-core/server/snapshotProbe";
-
-// Untraced: no attributes, and its time is the runProcessCore span. Errors fail that span.
 const collectText = Effect.fnUntraced(function* (input: {
   readonly command: string;
   readonly args: ReadonlyArray<string>;
@@ -265,8 +263,7 @@ function finalizeRunProcess<R>(
   );
 }
 
-/** The executable name without its directory, recorded as `process.command` on process spans. */
-export const commandName = (command: string) => command.replace(/^.*[\\/]/, "");
+const commandName = (command: string) => command.replace(/^.*[\\/]/, "");
 
 const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
   spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
@@ -283,7 +280,19 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
     input.env === undefined ? {} : { env: input.env, extendEnv },
   );
 
-  const child = yield* spawner
+  const toSpawnError = (cause: unknown) =>
+    new ProcessSpawnError({
+      command: input.command,
+      argumentCount: input.args.length,
+      cwd: input.cwd,
+      spawnCwd: input.spawnCwd,
+      resolvedCommand: spawnCommand.command,
+      resolvedArgumentCount: spawnCommand.args.length,
+      shell: spawnCommand.shell,
+      cause,
+    });
+
+  const spawn = spawner
     .spawn(
       ChildProcess.make(spawnCommand.command, spawnCommand.args, {
         ...((input.spawnCwd ?? input.cwd) ? { cwd: input.spawnCwd ?? input.cwd } : {}),
@@ -294,23 +303,20 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
             }
           : {}),
         shell: spawnCommand.shell,
+        forceKillAfter: FORCE_KILL_AFTER,
       }),
     )
     .pipe(
-      Effect.mapError(
-        (cause) =>
-          new ProcessSpawnError({
-            command: input.command,
-            argumentCount: input.args.length,
-            cwd: input.cwd,
-            spawnCwd: input.spawnCwd,
-            resolvedCommand: spawnCommand.command,
-            resolvedArgumentCount: spawnCommand.args.length,
-            shell: spawnCommand.shell,
-            cause,
-          }),
-      ),
+      Effect.mapError(toSpawnError),
+      // Synchronous spawn throws arrive as defects; recover them too so callers see typed spawn failures.
+      Effect.catchDefect((cause) => Effect.fail(toSpawnError(cause))),
     );
+  const child = yield* input.onSpawn === undefined
+    ? spawn
+    : spawn.pipe(
+        Effect.tap(() => Effect.sync(() => input.onSpawn?.())),
+        Effect.uninterruptible,
+      );
 
   const stdin = input.stdin;
   const onStdoutChunk = input.onStdoutChunk;
@@ -388,7 +394,7 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
   } satisfies ProcessRunOutput;
 });
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.fn("ProcessRunner.make")(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 

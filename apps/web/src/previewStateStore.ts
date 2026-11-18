@@ -1,10 +1,3 @@
-/**
- * Per-thread preview UI state.
- *
- * Each thread owns an independent atom. Most consumers read exactly one
- * thread; the desktop browser host uses the aggregate session atom because it
- * is the one place that must enumerate every live preview tab.
- */
 import { useAtomValue } from "@effect/atom-react";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
@@ -22,6 +15,7 @@ import { appAtomRegistry } from "./rpc/atomRegistry";
 
 export interface DesktopPreviewOverlay {
   hasWebContents: boolean;
+  navStatus: PreviewSessionSnapshot["navStatus"];
   canGoBack: boolean;
   canGoForward: boolean;
   loading: boolean;
@@ -43,11 +37,8 @@ export interface ThreadPreviewState {
   desktopOverlay: DesktopPreviewOverlay | null;
   desktopByTabId: Record<string, DesktopPreviewOverlay>;
   recentlySeenUrls: string[];
-  /** Whether the first authoritative tab list has arrived. */
   listLoaded: boolean;
-  /** Server process currently authoritative for revision ordering. */
   serverEpoch: string | null;
-  /** Latest ordered server revision applied from a list response or event. */
   serverRevision: number;
 }
 
@@ -75,8 +66,7 @@ export const previewStateAtom = Atom.family((threadKey: string) =>
   ),
 );
 
-// Only the Electron browser host needs a cross-thread view. Keep that index
-// separate so thread-local readers never subscribe to unrelated previews.
+// Only Electron needs this cross-thread index; separate it to avoid unrelated preview subscriptions.
 interface ActivePreviewThreadIndex {
   readonly keys: ReadonlySet<string>;
 }
@@ -96,7 +86,15 @@ const activePreviewSessionsAtom = Atom.make((get) => {
   return byThreadKey;
 }).pipe(Atom.withLabel("preview:active-sessions"));
 
-const changedPreviewThreadKeys = new Set<string>();
+/**
+ * Every thread whose preview state has been written. Panel tabs and the mini
+ * player follow those threads' states from a store this one cannot import
+ * (rightPanelStore -> closedViewStore -> lib/utils -> composerDraftStore ->
+ * previewStateStore is a cycle), so they subscribe through this index.
+ */
+export const previewThreadRefsAtom = Atom.make<ReadonlyMap<string, ScopedThreadRef>>(
+  new Map(),
+).pipe(Atom.keepAlive, Atom.withLabel("preview:thread-refs"));
 
 function syncActivePreviewThread(threadKey: string, state: ThreadPreviewState): void {
   const active = Object.keys(state.sessions).length > 0;
@@ -114,15 +112,17 @@ function updateThreadPreviewState(
   update: (current: ThreadPreviewState) => ThreadPreviewState,
 ): void {
   const threadKey = scopedThreadKey(ref);
+  // Indexed before the write so a new thread's subscribers see this change.
+  appAtomRegistry.update(previewThreadRefsAtom, (refs) =>
+    refs.has(threadKey) ? refs : new Map(refs).set(threadKey, ref),
+  );
   const atom = previewStateAtom(threadKey);
   let nextState = appAtomRegistry.get(atom);
   const changed = appAtomRegistry.modify(atom, (current) => {
     nextState = update(current);
     return [nextState !== current, nextState];
   });
-  if (!changed) return;
-  changedPreviewThreadKeys.add(threadKey);
-  syncActivePreviewThread(threadKey, nextState);
+  if (changed) syncActivePreviewThread(threadKey, nextState);
 }
 
 const dedupeRecentUrls = (existing: string[], url: string): string[] => {
@@ -170,6 +170,10 @@ export function useThreadPreviewState(ref: ScopedThreadRef | null | undefined): 
 
 export function useActivePreviewSessions(): Record<string, ThreadPreviewState> {
   return useAtomValue(activePreviewSessionsAtom);
+}
+
+export function readActivePreviewSessions(): Record<string, ThreadPreviewState> {
+  return appAtomRegistry.get(activePreviewSessionsAtom);
 }
 
 export function readThreadPreviewState(ref: ScopedThreadRef): ThreadPreviewState {
@@ -275,12 +279,7 @@ export function applyPreviewServerSnapshot(
   });
 }
 
-/**
- * Merge a server mutation without changing which tab the user is viewing.
- *
- * Commands such as resize can target background tabs. Their response is
- * authoritative for that tab, but it is not a request to focus the tab.
- */
+/** Updates background tabs without focusing them. */
 export function updatePreviewServerSnapshot(
   ref: ScopedThreadRef,
   snapshot: PreviewSessionSnapshot,
@@ -304,11 +303,6 @@ export function updatePreviewServerSnapshot(
   });
 }
 
-/**
- * Replace the local session index from an authoritative preview.list result.
- * Missing tabs are removed while the current active tab is preserved whenever
- * it still exists in the server result.
- */
 export function reconcilePreviewServerSessions(
   ref: ScopedThreadRef,
   result: PreviewListResult,
@@ -346,6 +340,21 @@ export function reconcilePreviewServerSessions(
         snapshots.some((snapshot) => snapshot.tabId === tabId),
       ),
     );
+    const desktopOverlay = activeTabId ? (desktopByTabId[activeTabId] ?? null) : null;
+    if (
+      sameServer &&
+      current.listLoaded &&
+      current.serverRevision === result.revision &&
+      current.activeTabId === activeTabId &&
+      current.snapshot === snapshot &&
+      current.desktopOverlay === desktopOverlay &&
+      current.recentlySeenUrls === recentlySeenUrls &&
+      haveSameValues(current.sessions, sessions) &&
+      haveSameValues(current.desktopByTabId, desktopByTabId) &&
+      current.suppressedTabIds.size === suppressedTabIds.size
+    ) {
+      return current;
+    }
     return {
       ...current,
       sessions,
@@ -353,13 +362,33 @@ export function reconcilePreviewServerSessions(
       activeTabId,
       snapshot,
       desktopByTabId,
-      desktopOverlay: activeTabId ? (desktopByTabId[activeTabId] ?? null) : null,
+      desktopOverlay,
       recentlySeenUrls,
       listLoaded: true,
       serverEpoch: result.serverEpoch,
       serverRevision: result.revision,
     };
   });
+}
+
+function haveSameValues<T>(left: Record<string, T>, right: Record<string, T>): boolean {
+  const keys = Object.keys(left);
+  return keys.length === Object.keys(right).length && keys.every((key) => left[key] === right[key]);
+}
+
+function sameDesktopNavStatus(
+  previous: DesktopPreviewOverlay["navStatus"],
+  next: DesktopPreviewOverlay["navStatus"],
+): boolean {
+  if (previous._tag === "Idle" || next._tag === "Idle") return previous._tag === next._tag;
+  return (
+    previous._tag === next._tag &&
+    previous.url === next.url &&
+    previous.title === next.title &&
+    (previous._tag !== "LoadFailed" ||
+      next._tag !== "LoadFailed" ||
+      (previous.code === next.code && previous.description === next.description))
+  );
 }
 
 function isPreviewStateEqual(
@@ -371,6 +400,7 @@ function isPreviewStateEqual(
     (previous !== null &&
       next !== null &&
       previous.hasWebContents === next.hasWebContents &&
+      sameDesktopNavStatus(previous.navStatus, next.navStatus) &&
       previous.canGoBack === next.canGoBack &&
       previous.canGoForward === next.canGoForward &&
       previous.loading === next.loading &&
@@ -458,11 +488,7 @@ export function setActivePreviewTab(ref: ScopedThreadRef, tabId: string): void {
   });
 }
 
-/**
- * Runs `action` once the thread's preview state has the tab, which a popup's
- * `opened` event may deliver after the stream that announced it. Gives up
- * after `timeoutMs`. Returns a cancel function.
- */
+/** Runs once the tab is known; popup opened events can arrive after their announcing stream. */
 export function whenPreviewTabKnown(
   ref: ScopedThreadRef,
   tabId: string,
@@ -500,10 +526,7 @@ export function isPreviewSupportedInRuntime(): boolean {
   return Boolean(window.desktopBridge?.preview);
 }
 
-/**
- * Forgets a deleted thread's previews. The server closes their sessions too,
- * but the desktop host keeps a page for every session held here.
- */
+/** Releases desktop-host pages as well as local session state. */
 export function clearThreadPreviewState(ref: ScopedThreadRef): void {
   updateThreadPreviewState(ref, (current) =>
     Object.keys(current.sessions).length === 0 ? current : EMPTY_THREAD_PREVIEW_STATE,
@@ -511,10 +534,10 @@ export function clearThreadPreviewState(ref: ScopedThreadRef): void {
 }
 
 export function resetPreviewStateForTests(): void {
-  for (const threadKey of changedPreviewThreadKeys) {
+  for (const threadKey of appAtomRegistry.get(previewThreadRefsAtom).keys()) {
     appAtomRegistry.set(previewStateAtom(threadKey), EMPTY_THREAD_PREVIEW_STATE);
   }
-  changedPreviewThreadKeys.clear();
+  appAtomRegistry.set(previewThreadRefsAtom, new Map());
   appAtomRegistry.set(activePreviewThreadKeysAtom, { keys: new Set<string>() });
 }
 

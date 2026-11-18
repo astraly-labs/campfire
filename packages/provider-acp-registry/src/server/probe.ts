@@ -1,3 +1,4 @@
+import { resolveProviderProbeTimeoutMs } from "@t3tools/provider-core/server/snapshotProbe";
 import {
   AcpRegistryListProvidersResult,
   AcpRegistryOperationError,
@@ -11,7 +12,7 @@ import {
   type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
 import { AcpRegistrySettings } from "../settings.ts";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -25,8 +26,14 @@ import type * as EffectAcpSchema from "effect-acp/compat";
 
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
-import { parseSessionModeState } from "@t3tools/provider-acp/server/runtimeModel";
-import { acpProviderOptionDescriptors } from "@t3tools/provider-acp/server/sessionConfig";
+import {
+  findModelConfigOption,
+  parseSessionModeState,
+} from "@t3tools/provider-acp/server/runtimeModel";
+import {
+  acpProviderOptionDescriptors,
+  flattenSelectChoices,
+} from "@t3tools/provider-acp/server/sessionConfig";
 import * as AcpRegistryRuntimeCoordinator from "./AcpRegistryRuntimeCoordinator.ts";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 
@@ -35,13 +42,13 @@ const MAX_MODELS = 256;
 const MAX_ID_LENGTH = 128;
 const MAX_NAME_LENGTH = 160;
 const MAX_DESCRIPTION_LENGTH = 1_024;
-const MAX_COMMANDS = 128;
 const MAX_COMMAND_LINE_LENGTH = 2_048;
-// Covers a cold package command launch and ACP initialization after registry
-// preparation globally installs the exact package.
-const PROBE_TIMEOUT_SECONDS = 60;
-const PROBE_TIMEOUT = `${PROBE_TIMEOUT_SECONDS} seconds`;
+const PROBE_TIMEOUT_MS = 60_000;
 const COMMAND_ADVERTISEMENT_GRACE = "500 millis";
+// Agents that fetch their catalog after session setup (Qoder CLI, OpenCode)
+// settle it in seconds, not milliseconds; commands arrive much sooner.
+const MODEL_ADVERTISEMENT_GRACE = "5 seconds";
+const PROBE_SESSION_DELETE_TIMEOUT = "5 seconds";
 
 const boundedText = (value: string, maximumLength: number): string =>
   value.trim().slice(0, maximumLength);
@@ -49,53 +56,79 @@ const boundedText = (value: string, maximumLength: number): string =>
 const boundedOpaqueValue = (value: string, maximumLength: number): string | undefined =>
   value.length > 0 && value === value.trim() && value.length <= maximumLength ? value : undefined;
 
+/**
+ * The session's reasoning option with the levels a model advertises in `_meta`, in the
+ * shape Grok uses. Null when the model has none, undefined when it says nothing.
+ */
+function advertisedReasoningEffort(
+  option: EffectAcpSchema.SessionConfigOption | undefined,
+  meta: Readonly<Record<string, unknown>> | null | undefined,
+): AcpRegistryProbeModel["reasoningEffort"] {
+  if (option?.type !== "select" || meta == null) return undefined;
+  if (meta.supportsReasoningEffort === false) return null;
+  if (!Array.isArray(meta.reasoningEfforts)) return undefined;
+  const options = meta.reasoningEfforts.flatMap((level: unknown) =>
+    typeof level === "object" &&
+    level !== null &&
+    "value" in level &&
+    typeof level.value === "string"
+      ? [
+          {
+            value: level.value,
+            name: "label" in level && typeof level.label === "string" ? level.label : level.value,
+          },
+        ]
+      : [],
+  );
+  const currentValue = typeof meta.reasoningEffort === "string" ? meta.reasoningEffort : "";
+  return (
+    acpProviderOptionDescriptors({
+      configOptions: [{ ...option, options, currentValue }],
+      modeState: undefined,
+    })[0] ?? null
+  );
+}
+
 export function normalizeAcpRegistryWebUrl(value: string): string | undefined {
   if (value.length > 2_048 || !URL.canParse(value)) return undefined;
   const url = new URL(value);
   return url.protocol === "https:" || url.protocol === "http:" ? url.href : undefined;
 }
 
-function modelConfigOptions(
-  configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined,
-): ReadonlyArray<EffectAcpSchema.SessionConfigSelectOption> {
-  return (configOptions ?? []).flatMap((option) => {
-    if (option.category !== "model" || option.type !== "select") return [];
-    return option.options.flatMap((candidate) =>
-      "value" in candidate ? [candidate] : candidate.options,
-    );
-  });
+function normalizedModel(id: string, candidate: AcpRegistryProbeModel): AcpRegistryProbeModel {
+  return {
+    id,
+    name: boundedText(candidate.name, MAX_NAME_LENGTH) || id,
+    description:
+      candidate.description === null
+        ? null
+        : boundedText(candidate.description, MAX_DESCRIPTION_LENGTH) || null,
+  };
 }
 
 function normalizeModels(
-  configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined,
+  candidates: ReadonlyArray<AcpRegistryProbeModel>,
+  currentModelId: string | null,
 ): ReadonlyArray<AcpRegistryProbeModel> {
-  // Model discovery is the model config option's base models; ACP has no
-  // other portable model inventory.
-  const candidates = modelConfigOptions(configOptions).map((model) => ({
-    id: model.value,
-    name: model.name,
-    description: model.description ?? null,
-  }));
   const seen = new Set<string>();
   const models: Array<AcpRegistryProbeModel> = [];
   for (const candidate of candidates) {
+    if (models.length === MAX_MODELS) break;
     const id = boundedOpaqueValue(candidate.id, MAX_ID_LENGTH);
     if (id === undefined || seen.has(id)) continue;
     seen.add(id);
-    models.push({
-      id,
-      name: boundedText(candidate.name, MAX_NAME_LENGTH) || id,
-      description:
-        candidate.description === null
-          ? null
-          : boundedText(candidate.description, MAX_DESCRIPTION_LENGTH) || null,
-    });
-    if (models.length === MAX_MODELS) break;
+    models.push(normalizedModel(id, candidate));
+  }
+  // Keep the running model visible even when its advertised position exceeds the cap.
+  if (currentModelId !== null && models.length === MAX_MODELS && !seen.has(currentModelId)) {
+    const current = candidates.find((candidate) => candidate.id === currentModelId);
+    if (current !== undefined) {
+      models[MAX_MODELS - 1] = normalizedModel(currentModelId, current);
+    }
   }
   return models;
 }
 
-/** Agent spawn recipe used to compose runnable terminal-auth command lines. */
 export interface AcpRegistryAuthSpawnContext {
   readonly command: string;
   readonly args: ReadonlyArray<string>;
@@ -171,27 +204,60 @@ export interface AcpRegistryLiveConfiguration {
   readonly models: ReadonlyArray<AcpRegistryProbeModel>;
   readonly currentModelId: string | null;
   readonly configOptions: AcpRegistryProbeResult["configOptions"];
+  readonly modelOptionIds?: NonNullable<AcpRegistryProbeResult["modelOptionIds"]>;
+  // A single model from an explicit select is the agent's deliberate catalog
+  // (e.g. an entitlement change), not a cold-start placeholder.
+  readonly modelsFromModelSelect?: boolean;
 }
 
-/** Normalizes volatile session configuration using the same bounds as discovery probes. */
 export function normalizeAcpRegistryLiveConfiguration(
   configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
   modeState?: Parameters<typeof acpProviderOptionDescriptors>[0]["modeState"],
+  modelState?: EffectAcpSchema.SessionModelState | null,
 ): AcpRegistryLiveConfiguration {
-  const modelOption = configOptions.find(
-    (option) => option.category === "model" && option.type === "select",
-  );
+  const modelOption = findModelConfigOption(configOptions);
+  const currentModelId =
+    modelOption?.type === "select" ? modelOption.currentValue : modelState?.currentModelId;
+  const candidates =
+    modelOption === undefined
+      ? (modelState?.availableModels ?? []).map((model) => ({
+          id: model.modelId,
+          name: model.name,
+          description: model.description ?? null,
+        }))
+      : flattenSelectChoices(modelOption.options).map((model) => ({
+          id: model.value,
+          name: model.name,
+          description: model.description ?? null,
+        }));
   const boundedCurrentModelId =
-    modelOption?.type === "select"
-      ? (boundedOpaqueValue(modelOption.currentValue, MAX_ID_LENGTH) ?? null)
-      : null;
-  const models = normalizeModels(configOptions);
+    currentModelId === undefined
+      ? null
+      : (boundedOpaqueValue(currentModelId, MAX_ID_LENGTH) ?? null);
+  const effortOption = configOptions.find((option) => option.category === "thought_level");
+  const models = normalizeModels(candidates, boundedCurrentModelId).map((model) => {
+    const reasoningEffort = advertisedReasoningEffort(
+      effortOption,
+      modelState?.availableModels.find((info) => info.modelId === model.id)?._meta,
+    );
+    return reasoningEffort === undefined ? model : { ...model, reasoningEffort };
+  });
+  const descriptors = acpProviderOptionDescriptors({ configOptions, modeState });
+  const modelOptionIds = new Set(
+    configOptions
+      .filter((option) => option.category === "thought_level" || option.category === "model_config")
+      .map((option) => option.id),
+  );
   return {
     models,
     currentModelId: models.some((model) => model.id === boundedCurrentModelId)
       ? boundedCurrentModelId
       : null,
-    configOptions: acpProviderOptionDescriptors({ configOptions, modeState }),
+    configOptions: descriptors,
+    modelOptionIds: descriptors
+      .filter((descriptor) => modelOptionIds.has(descriptor.id))
+      .map((descriptor) => descriptor.id),
+    modelsFromModelSelect: modelOption !== undefined,
   };
 }
 
@@ -200,14 +266,23 @@ const emptyAcpRegistryAvailableCommands = (): AcpRegistryAvailableCommands => ({
   skills: [],
 });
 
-/** Splits the latest ACP command advertisement into T3's `/` and `$` menus. */
+export function acpRegistryAdvertisesModelCatalog(
+  configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined,
+  modelState?: EffectAcpSchema.SessionModelState | null,
+): boolean {
+  const modelOption = findModelConfigOption(configOptions);
+  return (
+    (modelOption !== undefined && flattenSelectChoices(modelOption.options).length > 1) ||
+    (modelState?.availableModels?.length ?? 0) > 1
+  );
+}
+
 export function normalizeAcpRegistryCommands(
   commands: ReadonlyArray<EffectAcpSchema.AvailableCommand>,
 ): AcpRegistryAvailableCommands {
   const seen = new Set<string>();
   const slashCommands: Array<ServerProviderSlashCommand> = [];
   const skills: Array<ServerProviderSkill> = [];
-  let accepted = 0;
   for (const command of commands) {
     const name = boundedOpaqueValue(command.name, MAX_ID_LENGTH);
     if (name === undefined) continue;
@@ -233,27 +308,31 @@ export function normalizeAcpRegistryCommands(
         ...(hint ? { input: { hint } } : {}),
       });
     }
-    accepted += 1;
-    if (accepted === MAX_COMMANDS) break;
   }
   return { slashCommands, skills };
 }
 
-/** Builds the bounded wire result from a successfully created disposable ACP session. */
 export function acpRegistryProbeResult(
   instanceId: ProviderInstanceId,
   started: AcpSessionRuntime.AcpSessionRuntimeStartResult,
   icon: string | null = null,
   spawn?: AcpRegistryAuthSpawnContext,
+  liveConfiguration?: AcpRegistryLiveConfiguration,
 ): AcpRegistryProbeResult {
-  const liveConfiguration = normalizeAcpRegistryLiveConfiguration(
-    started.sessionSetupResult.configOptions ?? [],
-    parseSessionModeState(started.sessionSetupResult),
-  );
+  const configuration =
+    liveConfiguration ??
+    normalizeAcpRegistryLiveConfiguration(
+      started.sessionSetupResult.configOptions ?? [],
+      parseSessionModeState(started.sessionSetupResult),
+      started.sessionSetupResult.models,
+    );
   return AcpRegistryProbeResult.make({
     instanceId,
     ready: true,
     icon,
+    ...(started.initializeResult.agentInfo?.version?.trim()
+      ? { agentVersion: boundedText(started.initializeResult.agentInfo.version, MAX_ID_LENGTH) }
+      : {}),
     authMethods: normalizeAcpRegistryAuthMethods(started.initializeResult.authMethods, spawn),
     sessionManagement: {
       canList: started.initializeResult.agentCapabilities?.sessionCapabilities?.list != null,
@@ -263,7 +342,7 @@ export function acpRegistryProbeResult(
       canDelete: started.initializeResult.agentCapabilities?.sessionCapabilities?.delete != null,
       canConfigureProviders: started.initializeResult.agentCapabilities?.providers != null,
     },
-    ...liveConfiguration,
+    ...configuration,
   });
 }
 
@@ -306,24 +385,28 @@ export type AcpRegistryConfigurationProbe<Requirements = never> = (
   input: AcpRegistryConfigurationProbeInput,
 ) => Effect.Effect<AcpRegistryConfigurationProbeResult, AcpRegistryOperationError, Requirements>;
 
-/** Starts and immediately disposes an ACP session for one already-decoded configuration. */
 export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeConfiguration")(
   function* (
     input: AcpRegistryConfigurationProbeInput,
   ): Effect.fn.Return<
     AcpRegistryConfigurationProbeResult,
     AcpRegistryOperationError,
-    AcpRegistrySupport.AcpRegistryCatalog | ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto
+    | AcpRegistrySupport.AcpRegistryCatalog
+    | ChildProcessSpawner.ChildProcessSpawner
+    | SecureRandom.SecureRandom
   > {
     const catalog = yield* AcpRegistrySupport.AcpRegistryCatalog;
+    const probeTimeoutMs = resolveProviderProbeTimeoutMs(
+      "acp_registry",
+      PROBE_TIMEOUT_MS,
+      input.environment,
+    );
     const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const crypto = yield* Crypto.Crypto;
+    const random = yield* SecureRandom.SecureRandom;
     const pty = yield* Effect.serviceOption(PtyAdapter.PtyAdapter);
 
     const result = yield* Effect.gen(function* () {
-      // Resolution may install a missing registry package. Keep it inside the
-      // probe deadline so a provider refresh cannot inherit the installer's
-      // much longer timeout.
+      // Resolution may install packages; bound it by the probe deadline.
       const resolved = yield* catalog
         .resolve(input.settings, input.cwd, input.environment)
         .pipe(Effect.mapError(AcpRegistrySupport.toAcpRegistryOperationError));
@@ -357,7 +440,7 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
           Layer.provide(
             Layer.mergeAll(
               Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
-              Layer.succeed(Crypto.Crypto, crypto),
+              Layer.succeed(SecureRandom.SecureRandom, random),
             ),
           ),
         ),
@@ -369,6 +452,10 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
         emptyAcpRegistryAvailableCommands(),
       );
       const commandsAdvertised = yield* Deferred.make<void>();
+      const configOptionsRef = yield* Ref.make<
+        ReadonlyArray<EffectAcpSchema.SessionConfigOption> | undefined
+      >(undefined);
+      const modelsAdvertised = yield* Deferred.make<void>();
       yield* runtime.handleElicitation((request) =>
         Effect.gen(function* () {
           if (
@@ -400,12 +487,23 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
       );
       yield* runtime.handleSessionUpdate((notification) => {
         const update = notification.update;
-        return update.sessionUpdate === "available_commands_update"
-          ? Ref.set(commandsRef, normalizeAcpRegistryCommands(update.availableCommands)).pipe(
-              Effect.andThen(Deferred.succeed(commandsAdvertised, undefined)),
-              Effect.asVoid,
-            )
-          : Effect.void;
+        if (update.sessionUpdate === "available_commands_update") {
+          return Ref.set(commandsRef, normalizeAcpRegistryCommands(update.availableCommands)).pipe(
+            Effect.andThen(Deferred.succeed(commandsAdvertised, undefined)),
+            Effect.asVoid,
+          );
+        }
+        if (update.sessionUpdate === "config_option_update") {
+          const hasAdvertisedModels = acpRegistryAdvertisesModelCatalog(update.configOptions);
+          return Ref.set(configOptionsRef, update.configOptions).pipe(
+            Effect.andThen(
+              hasAdvertisedModels
+                ? Deferred.succeed(modelsAdvertised, undefined).pipe(Effect.asVoid)
+                : Effect.void,
+            ),
+          );
+        }
+        return Effect.void;
       });
       const startResult = yield* Effect.result(runtime.start());
       if (Result.isFailure(startResult)) {
@@ -416,19 +514,54 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
         );
       }
       const started = startResult.success;
-      yield* Deferred.await(commandsAdvertised).pipe(
-        Effect.timeoutOption(COMMAND_ADVERTISEMENT_GRACE),
+      // Agents that persist sessions (OpenCode) would otherwise keep one empty session per probe.
+      // The runtime only sends session/delete when the agent advertises it.
+      yield* Effect.addFinalizer(() =>
+        runtime
+          .deleteSession(started.sessionId)
+          .pipe(Effect.timeoutOption(PROBE_SESSION_DELETE_TIMEOUT), Effect.ignore),
       );
-      return { resolved, started, commands: yield* Ref.get(commandsRef) };
+      const hasInitialModels = acpRegistryAdvertisesModelCatalog(
+        started.sessionSetupResult.configOptions,
+        started.sessionSetupResult.models,
+      );
+
+      yield* Effect.all(
+        [
+          hasInitialModels
+            ? Effect.void
+            : Deferred.await(modelsAdvertised).pipe(
+                Effect.timeoutOption(MODEL_ADVERTISEMENT_GRACE),
+              ),
+          Deferred.await(commandsAdvertised).pipe(
+            Effect.timeoutOption(COMMAND_ADVERTISEMENT_GRACE),
+          ),
+        ],
+        { concurrency: "unbounded" },
+      );
+
+      // config_option_update replaces the full option set, so an empty notice is authoritative.
+      const liveConfiguration = normalizeAcpRegistryLiveConfiguration(
+        (yield* Ref.get(configOptionsRef)) ?? (yield* runtime.getConfigOptions),
+        (yield* runtime.getModeState) ?? parseSessionModeState(started.sessionSetupResult),
+        started.sessionSetupResult.models,
+      );
+
+      return {
+        resolved,
+        started,
+        commands: yield* Ref.get(commandsRef),
+        liveConfiguration,
+      };
     }).pipe(
       Effect.scoped,
       Effect.timeoutOrElse({
-        duration: PROBE_TIMEOUT,
+        duration: probeTimeoutMs,
         orElse: () =>
           Effect.fail(
             new AcpRegistryOperationError({
               reason: "probe_failed",
-              message: `The ACP agent did not resolve and create a test session within ${PROBE_TIMEOUT_SECONDS} seconds. Package installation or agent startup may be slow; this check retries on the next provider refresh.`,
+              message: `The ACP agent did not resolve and create a test session within ${probeTimeoutMs / 1_000} seconds. Package installation or agent startup may be slow; this check retries on the next provider refresh.`,
             }),
           ),
       }),
@@ -445,6 +578,7 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
           command: result.resolved.spawn.command,
           args: result.resolved.spawn.args,
         },
+        result.liveConfiguration,
       ),
       slashCommands: result.commands.slashCommands,
       skills: result.commands.skills,
@@ -458,7 +592,7 @@ const makeAcpRegistryManagementRuntime = Effect.fn("AcpRegistryProbe.makeManagem
   function* (input: AcpRegistryManagementInput) {
     const catalog = yield* AcpRegistrySupport.AcpRegistryCatalog;
     const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const crypto = yield* Crypto.Crypto;
+    const random = yield* SecureRandom.SecureRandom;
     const runtimeCoordinator = yield* Effect.serviceOption(
       AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator,
     );
@@ -482,7 +616,7 @@ const makeAcpRegistryManagementRuntime = Effect.fn("AcpRegistryProbe.makeManagem
         Layer.provide(
           Layer.mergeAll(
             Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
-            Layer.succeed(Crypto.Crypto, crypto),
+            Layer.succeed(SecureRandom.SecureRandom, random),
           ),
         ),
       ),

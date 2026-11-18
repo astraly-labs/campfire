@@ -1,9 +1,8 @@
 import type { PreviewMiniPlayerFrame } from "../preview/previewMiniPlayerLayout";
 import { DETAILS_CARD_CLEARANCE } from "./chatCanvasLayout";
 
-/** Inset of the card from the canvas edges; the find bar shares it to line up. */
 export const THREAD_DETAILS_CARD_GAP = 12;
-// Keep in sync with --thread-details-panel-width, which sizes the popover and the find bar.
+// Keep in sync with --thread-details-panel-width.
 const THREAD_DETAILS_CARD_WIDTH = 280;
 
 export function resolveThreadDetailsCardDensity(
@@ -15,31 +14,31 @@ export function resolveThreadDetailsCardDensity(
   return "essential";
 }
 
-/**
- * The card pins to the top right while a readable chat lane fits beside it.
- * The chat canvas decides whether chat moves over to make room.
- */
 export function resolveThreadDetailsCardLayout({
   container,
+  narrowestWidth = container.width,
   lane,
   frame,
   overlapsDetailsCard = false,
   topInset = 0,
 }: {
   container: { width: number; height: number };
+  // While a panel animates the container, the card fits only if it fits at both ends.
+  narrowestWidth?: number;
   lane: { padding: number; minChatWidth: number };
   frame: PreviewMiniPlayerFrame | null;
   overlapsDetailsCard?: boolean;
-  /** Space taken above the card, such as the open find bar. */
   topInset?: number;
 }) {
   const gap = THREAD_DETAILS_CARD_GAP;
   const width = THREAD_DETAILS_CARD_WIDTH;
   const x = container.width - width - gap;
-  if (x - DETAILS_CARD_CLEARANCE - lane.padding < lane.minChatWidth) return null;
+  // The transition ends are sampled once, so a resize mid-animation can leave them
+  // wider than the container is now.
+  const fitWidth = Math.min(narrowestWidth, container.width);
+  if (fitWidth - width - gap - DETAILS_CARD_CLEARANCE - lane.padding < lane.minChatWidth)
+    return null;
   const y = gap + topInset;
-  // Resizing consumes the height above the player. Dragging first tries to
-  // clear the full card and folds it only when there is no readable placement.
   const height =
     overlapsDetailsCard && frame && frame.x + frame.width > x - gap && frame.x < x + width + gap
       ? Math.min(container.height - y - gap, frame.y - y - gap)

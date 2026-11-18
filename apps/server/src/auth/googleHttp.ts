@@ -5,11 +5,7 @@ import * as Option from "effect/Option";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
-import {
-  GOOGLE_OIDC_TRANSACTION_COOKIE,
-  GoogleOidcIdentityNotAllowedError,
-  googleOidcFlowForConfig,
-} from "./GoogleOidc.ts";
+import { GOOGLE_OIDC_TRANSACTION_COOKIE, googleOidcFlowForConfig } from "./GoogleOidc.ts";
 import * as SessionStore from "./SessionStore.ts";
 import { deriveAuthClientMetadata } from "./utils.ts";
 import * as ServerConfig from "../config.ts";
@@ -158,11 +154,11 @@ const googleOidcCallbackRouteLayer = HttpRouter.add(
               noStore(
                 clearTransactionCookie(
                   HttpServerResponse.text(
-                    error instanceof GoogleOidcIdentityNotAllowedError
+                    error._tag === "GoogleOidcIdentityNotAllowedError"
                       ? "This Google account is not allowed to access Campfire."
                       : "Google sign-in could not be completed.",
                     {
-                      status: error instanceof GoogleOidcIdentityNotAllowedError ? 403 : 400,
+                      status: error._tag === "GoogleOidcIdentityNotAllowedError" ? 403 : 400,
                     },
                   ),
                   secureCookies,

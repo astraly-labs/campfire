@@ -1590,10 +1590,14 @@ describe("link automation", () => {
     assert.deepStrictEqual(carryLinkAutomation(undefined, rebuilt), rebuilt);
   });
 
-  it("ends the watch and a live author loop as stopped, in its budget", () => {
+  it("ends the watch, keeping it as endedWatch, and a live author loop as stopped, in its budget", () => {
     assert.deepStrictEqual(
       endLinkAutomation({ ...link, watch, reviewLoop: authorLoop(of3.fixing(2)) }, LATER),
-      { ...link, reviewLoop: authorLoop({ ...ended("stopped", 2), endedAt: LATER }) },
+      {
+        ...link,
+        endedWatch: watch,
+        reviewLoop: authorLoop({ ...ended("stopped", 2), endedAt: LATER }),
+      },
     );
     assert.deepStrictEqual(
       endLinkAutomation({ ...link, reviewLoop: authorLoop(scoping(5), NOTE) }, LATER),
@@ -1606,6 +1610,7 @@ describe("link automation", () => {
 
     assert.deepStrictEqual(endLinkAutomation({ ...link, watch, reviewLoop: endedLoop }, LATER), {
       ...link,
+      endedWatch: watch,
       reviewLoop: endedLoop,
     });
     assert.deepStrictEqual(endLinkAutomation({ ...link, reviewLoop: marker }, LATER), {

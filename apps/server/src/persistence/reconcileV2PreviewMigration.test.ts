@@ -27,26 +27,16 @@ const seedPreview = Effect.gen(function* () {
   `;
 });
 
+// A preview already ran V2 (61) at 59, so the upgrade applies everything after 58 except V2.
+const migrationsAfterPreview = migrationManifest.filter(([id]) => id >= 59 && id !== 61);
+
 describe("V2 preview upgrade", () => {
   it.effect("upgrades a published preview without replaying V2 or losing import progress", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       yield* seedPreview;
       const imports = yield* sql`SELECT * FROM orchestration_v2_legacy_imports`;
-      assert.deepStrictEqual(yield* runMigrations(), [
-        [59, "PullRequestFilesViewed"],
-        [60, "ProjectionThreadsAutoSettleDisabledAt"],
-        [62, "RemoveRedundantProjectionIndexes"],
-        [63, "ScheduledTaskWebhooks"],
-        [64, "WebhookRelayDeliveries"],
-        [65, "McpAppModelContext"],
-        [66, "ThreadSnapshotWindowIndexes"],
-        [67, "PullRequestReviewGuides"],
-        [68, "CampfireV2Collaboration"],
-        [69, "AuthSessionEmail"],
-        [70, "UserMemory"],
-        [71, "ScheduledTaskThreadOrigin"],
-      ]);
+      assert.deepStrictEqual(yield* runMigrations(), migrationsAfterPreview);
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);
       const history = yield* sql<{ readonly migration_id: number; readonly name: string }>`
@@ -121,20 +111,7 @@ describe("V2 preview upgrade", () => {
       );
       assert.strictEqual((yield* sql`SELECT * FROM orchestration_v2_legacy_imports`).length, 1);
       yield* sql`DROP TRIGGER fail_preview_upgrade`;
-      assert.deepStrictEqual(yield* runMigrations(), [
-        [59, "PullRequestFilesViewed"],
-        [60, "ProjectionThreadsAutoSettleDisabledAt"],
-        [62, "RemoveRedundantProjectionIndexes"],
-        [63, "ScheduledTaskWebhooks"],
-        [64, "WebhookRelayDeliveries"],
-        [65, "McpAppModelContext"],
-        [66, "ThreadSnapshotWindowIndexes"],
-        [67, "PullRequestReviewGuides"],
-        [68, "CampfireV2Collaboration"],
-        [69, "AuthSessionEmail"],
-        [70, "UserMemory"],
-        [71, "ScheduledTaskThreadOrigin"],
-      ]);
+      assert.deepStrictEqual(yield* runMigrations(), migrationsAfterPreview);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 

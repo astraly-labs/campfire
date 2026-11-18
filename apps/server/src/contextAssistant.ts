@@ -22,7 +22,7 @@ import type {
   ProviderAdapterV2SessionRuntime,
 } from "@t3tools/provider-core/server/ProviderAdapter";
 import * as Schema from "effect/Schema";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -40,7 +40,7 @@ const MAX_TRANSCRIPT_CHARS = 48_000;
 const EVENT_BUFFER_CAPACITY = 2_048;
 
 interface ContextAssistantDependencies {
-  readonly crypto: Crypto.Crypto;
+  readonly random: SecureRandom.SecureRandom["Service"];
   readonly projections: Pick<ProjectionStoreV2Shape, "getThreadProjection">;
   readonly projects: Pick<ProjectStoreV2["Service"], "getShell">;
   readonly adapters: Pick<ProviderAdapterRegistryV2Shape, "get">;
@@ -173,7 +173,7 @@ export function makeContextAssistantManager(dependencies: ContextAssistantDepend
           code: "source_not_found",
           message: "The source project no longer exists.",
         });
-      const uuid = yield* dependencies.crypto.randomUUIDv4;
+      const uuid = yield* dependencies.random.uuidV4();
       const threadId = ThreadId.make(`context-assistant:${uuid}`);
       const providerSessionId = ProviderSessionId.make(`context-assistant:${uuid}`);
       const runtimePolicy = {
@@ -320,7 +320,7 @@ export function makeContextAssistantManager(dependencies: ContextAssistantDepend
       ProviderAdapterV2Error | ContextAssistantError
     >(EVENT_BUFFER_CAPACITY);
     const ordinal = ++session.ordinal;
-    const uuid = yield* dependencies.crypto.randomUUIDv4.pipe(Effect.orDie);
+    const uuid = yield* dependencies.random.uuidV4();
     const runId = RunId.make(`briefing:${uuid}`);
     const textByMessage = new Map<string, string>();
     const belongsToTurn = (event: ProviderAdapterV2Event) => {

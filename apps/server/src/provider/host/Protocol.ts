@@ -16,7 +16,6 @@ import {
   OrchestrationV2RuntimeRequest,
   ProviderApprovalDecision,
   ProviderDriverKind,
-  ProviderInstanceEnvironment,
   ProviderInstanceId,
   ProviderSessionId,
   ProviderTurnId,
@@ -56,9 +55,18 @@ export const McpSession = Schema.Struct({
   capabilities: Schema.optionalKey(Schema.Array(Schema.String)),
   agentDeviceEnvironment: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
 });
+// The server resolves secret references before handing a configuration to the host.
+const ResolvedEnvironment = Schema.Array(
+  Schema.Struct({
+    name: Schema.String,
+    value: Schema.String,
+    sensitive: Schema.Boolean,
+    valueRedacted: Schema.optionalKey(Schema.Boolean),
+  }),
+);
 export const Configuration = Schema.Struct({
   config: CodexSettings,
-  environment: ProviderInstanceEnvironment,
+  environment: ResolvedEnvironment,
 });
 export const EffectiveRuntime = Schema.Struct({
   revision: Schema.String,
@@ -188,6 +196,8 @@ export const McpResourceInput = Schema.Struct({ ...McpToolsInput.fields, uri: Sc
 export const McpTools = Schema.Array(
   Schema.Struct({
     name: Schema.String,
+    // Apps reject a tool without one; see ProviderAdapterV2McpTool.
+    inputSchema: Schema.Unknown,
     _meta: Schema.optionalKey(Schema.Unknown),
     annotations: Schema.optionalKey(Schema.Unknown),
   }),

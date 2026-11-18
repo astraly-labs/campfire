@@ -20,13 +20,15 @@ import type { MediaActionSource } from "../media/MediaActions";
 import { resolveProtocolRelativeMediaUrl } from "../media/mediaContent";
 
 export interface ExpandedImageItem {
-  /** A loadable URL, or null when the dialog must mint one from `asset` first. */
   src: string | null;
   name: string;
+  mimeType?: string;
   type?: "video";
+  /** Revoke this owned object URL; other blob URLs belong to the timeline. */
+  ownsSrc?: boolean;
   source?: SnapShotSource;
+  onCopySnapshot?: (() => Promise<void>) | undefined;
   autoPlay?: boolean;
-  /** Authored remote destination to open when embedding fails, never a generated asset URL. */
   originalUrl?: string;
   srcFragment?: string;
   actionsSource?: MediaActionSource;
@@ -37,12 +39,6 @@ export interface ExpandedImagePreview {
   index: number;
 }
 
-/** Wraps navigation in either direction, including offsets beyond a complete cycle. */
-export function wrapExpandedImageIndex(index: number, imageCount: number): number {
-  return imageCount > 0 ? ((index % imageCount) + imageCount) % imageCount : 0;
-}
-
-/** Resolves a chat media reference on its owning environment, without downloading its bytes. */
 export async function resolveMarkdownMediaPreview(input: {
   source: string;
   resolvedFilePath?: string | undefined;
@@ -110,7 +106,7 @@ export async function resolveMarkdownMediaPreview(input: {
 
 export function buildAttachmentVideoAsset(
   environmentId: EnvironmentId,
-  attachment: ChatFileAttachment,
+  attachment: Pick<ChatFileAttachment, "id" | "name" | "mimeType">,
 ): NonNullable<MediaActionSource["asset"]> {
   return {
     environmentId,
@@ -123,7 +119,6 @@ export function buildAttachmentVideoAsset(
   };
 }
 
-/** Opens a persisted video through the same signed-asset dialog used by message media. */
 export function buildAttachmentVideoPreview(
   environmentId: EnvironmentId,
   attachment: ChatFileAttachment,
@@ -168,17 +163,33 @@ export function attachVideoThumbnail(video: HTMLVideoElement, file: File): () =>
 export function buildExpandedImagePreview(
   images: ReadonlyArray<ChatImageAttachment | ComposerFileAttachment>,
   selectedImageId: string,
+  onCopySnapshot?: (id: string) => Promise<void>,
 ): ExpandedImagePreview | null {
   const selected = images.find((image) => image.id === selectedImageId);
   if (selected?.type === "file" && selected.file && isVideoAttachment(selected)) {
     return {
-      images: [{ src: URL.createObjectURL(selected.file), name: selected.name, type: "video" }],
+      images: [
+        {
+          src: URL.createObjectURL(selected.file),
+          name: selected.name,
+          type: "video",
+          ownsSrc: true,
+        },
+      ],
       index: 0,
     };
   }
   const previewableImages = images.flatMap((image) =>
     image.type === "image" && image.previewUrl
-      ? [{ id: image.id, src: image.previewUrl, name: image.name, source: image.source }]
+      ? [
+          {
+            id: image.id,
+            src: image.previewUrl,
+            name: image.name,
+            mimeType: image.mimeType,
+            source: image.source,
+          },
+        ]
       : [],
   );
   if (previewableImages.length === 0) {
@@ -192,7 +203,13 @@ export function buildExpandedImagePreview(
     images: previewableImages.map((image) => ({
       src: image.src,
       name: image.name,
-      ...(image.source?.kind === "snap-shot" ? { source: image.source } : {}),
+      mimeType: image.mimeType,
+      ...(image.source?.kind === "snap-shot"
+        ? {
+            source: image.source,
+            onCopySnapshot: onCopySnapshot ? () => onCopySnapshot(image.id) : undefined,
+          }
+        : {}),
     })),
     index: selectedIndex,
   };

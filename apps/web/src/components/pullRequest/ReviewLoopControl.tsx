@@ -11,6 +11,7 @@ import { ArrowUpRightIcon, CircleStopIcon, RepeatIcon } from "lucide-react";
 import { useState, type ComponentProps } from "react";
 
 import { useServerConfigs, useThreadShell } from "~/state/entities";
+import { useEnvironmentProviders } from "~/state/environments";
 import { useEnvironmentScope } from "~/state/session";
 import { threadEnvironment } from "~/state/threads";
 import { useOrchestrationCommand } from "~/state/use-orchestration-command";
@@ -48,6 +49,8 @@ export function useReviewLoop(
   const configs = useServerConfigs();
   const config = environmentId === null ? undefined : configs.get(environmentId);
   const supported = config?.environment.capabilities.pullRequestReviewLoop === true;
+  const providersByEnvironment = useEnvironmentProviders();
+  const providers = environmentId === null ? undefined : providersByEnvironment.get(environmentId);
   const canOperate = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
   const thread = useThreadShell(threadRef);
   const link = thread === null ? null : findReviewLoopLink(thread.pullRequests, pullRequest);
@@ -67,7 +70,7 @@ export function useReviewLoop(
           sourceShell: loop.role === "reviewer" ? other : null,
           reviewerLabel:
             loop.role === "author" && other !== null
-              ? modelSelectionLabel(config?.providers ?? [], other.modelSelection)
+              ? modelSelectionLabel(providers ?? [], other.modelSelection)
               : null,
         });
   const host = link?.host ?? pullRequest.host;

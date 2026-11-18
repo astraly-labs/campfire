@@ -19,8 +19,9 @@ import {
   getAppModelOptionsForInstance,
   resolveAppModelSelectionForInstance,
 } from "~/modelSelection";
-import { deriveProviderInstanceEntries, sortProviderInstanceEntries } from "~/providerInstances";
-import { readThreadShell, useServerConfigs, useThreadShell } from "~/state/entities";
+import { providerInstanceEntriesFor } from "~/providerInstances";
+import { readThreadShell, useThreadShell } from "~/state/entities";
+import { useEnvironmentProviders } from "~/state/environments";
 import { threadEnvironment } from "~/state/threads";
 import { useOrchestrationCommand } from "~/state/use-orchestration-command";
 import { buildThreadRouteParams } from "~/threadRoutes";
@@ -66,11 +67,11 @@ export function ReviewLoopDialog({
   const { environmentId } = threadRef;
   const navigate = useNavigate();
   const thread = useThreadShell(threadRef);
-  const providers = useServerConfigs().get(environmentId)?.providers ?? EMPTY_PROVIDERS;
+  const providers = useEnvironmentProviders().get(environmentId) ?? EMPTY_PROVIDERS;
   const settings = useEnvironmentSettings(environmentId);
   const allEntries = useMemo(
-    () => sortProviderInstanceEntries(deriveProviderInstanceEntries(providers)),
-    [providers],
+    () => providerInstanceEntriesFor(providers, settings, null),
+    [providers, settings],
   );
   const instanceEntries = useMemo(
     () =>
@@ -228,13 +229,11 @@ export function ReviewLoopDialog({
                   {reviewerEntry === undefined ? null : (
                     <TraitsPicker
                       provider={reviewerEntry.driverKind}
+                      instanceId={reviewer.instanceId}
                       models={reviewerEntry.models}
                       model={reviewer.model}
-                      prompt=""
-                      onPromptChange={() => {}}
                       modelOptions={reviewer.options ?? []}
                       allowPromptInjectedEffort={false}
-                      planModeEnabled={settings.planModeEnabled}
                       disabled={starting}
                       onModelOptionsChange={(options) => {
                         setPicked(

@@ -1,12 +1,3 @@
-/**
- * WorkspacePaths - Effect service contract for workspace path handling.
- *
- * Owns normalization and validation of workspace roots plus safe resolution of
- * workspace-root-relative paths.
- *
- * @module WorkspacePaths
- */
-
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -89,11 +80,9 @@ export const WorkspacePathsError = Schema.Union([
 ]);
 export type WorkspacePathsError = typeof WorkspacePathsError.Type;
 
-/** Service tag for workspace path normalization and resolution. */
 export class WorkspacePaths extends Context.Service<
   WorkspacePaths,
   {
-    /** Normalize a user-provided workspace root and verify it exists as a directory. */
     readonly normalizeWorkspaceRoot: (
       workspaceRoot: string,
       options?: { readonly createIfMissing?: boolean },
@@ -104,11 +93,6 @@ export class WorkspacePaths extends Context.Service<
       | WorkspaceRootStatFailedError
       | WorkspaceRootNotDirectoryError
     >;
-    /**
-     * Resolve a relative path within a validated workspace root.
-     *
-     * Rejects absolute paths and traversal attempts outside the workspace root.
-     */
     readonly resolveRelativePathWithinRoot: (input: {
       workspaceRoot: string;
       relativePath: string;
@@ -119,11 +103,7 @@ export class WorkspacePaths extends Context.Service<
   }
 >()("t3/workspace/WorkspacePaths") {}
 
-function toPosixRelativePath(input: string): string {
-  return input.replaceAll("\\", "/");
-}
-
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
@@ -195,16 +175,18 @@ export const make = Effect.gen(function* () {
 
   const resolveRelativePathWithinRoot: WorkspacePaths["Service"]["resolveRelativePathWithinRoot"] =
     Effect.fn("WorkspacePaths.resolveRelativePathWithinRoot")(function* (input) {
-      const normalizedInputPath = input.relativePath.trim();
-      if (path.isAbsolute(normalizedInputPath)) {
+      if (path.isAbsolute(input.relativePath)) {
         return yield* new WorkspacePathOutsideRootError({
           workspaceRoot: input.workspaceRoot,
           relativePath: input.relativePath,
         });
       }
 
-      const absolutePath = path.resolve(input.workspaceRoot, normalizedInputPath);
-      const relativeToRoot = toPosixRelativePath(path.relative(input.workspaceRoot, absolutePath));
+      const absolutePath = path.resolve(input.workspaceRoot, input.relativePath);
+      // Only the host separator becomes `/`: on POSIX `\` is a file name character.
+      const relativeToRoot = path
+        .relative(input.workspaceRoot, absolutePath)
+        .replaceAll(path.sep, "/");
       if (
         relativeToRoot.length === 0 ||
         relativeToRoot === "." ||

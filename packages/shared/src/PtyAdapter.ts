@@ -1,18 +1,7 @@
-/**
- * PtyAdapter - Terminal PTY adapter service contract.
- *
- * Defines the process primitives required by terminal session management
- * without binding to a specific PTY implementation.
- *
- * @module PtyAdapter
- */
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-/**
- * PtySpawnError - Error type for PTY spawn failures.
- */
 export class PtySpawnError extends Schema.TaggedError<PtySpawnError>()("PtySpawnError", {
   adapter: Schema.String,
   shell: Schema.optional(Schema.String),
@@ -34,9 +23,14 @@ export interface PtyExitEvent {
   signal: number | null;
 }
 
+/** What a PTY receives for client terminal input, whose `binary` data is one byte per code unit. */
+export function ptyInput(data: string, binary: boolean | undefined): string | Buffer {
+  return binary ? Buffer.from(data, "latin1") : data;
+}
+
 export interface PtyProcess {
   readonly pid: number;
-  write(data: string): void;
+  write(data: string | Buffer): void;
   resize(cols: number, rows: number): void;
   kill(signal?: string): void;
   onData(callback: (data: string) => void): () => void;
@@ -52,15 +46,9 @@ export interface PtySpawnInput {
   env: NodeJS.ProcessEnv;
 }
 
-/**
- * PtyAdapter - Service tag for PTY process integration.
- */
 export class PtyAdapter extends Context.Service<
   PtyAdapter,
   {
-    /**
-     * Spawn a PTY process for a terminal session.
-     */
     readonly spawn: (input: PtySpawnInput) => Effect.Effect<PtyProcess, PtySpawnError>;
   }
 >()("@t3tools/shared/PtyAdapter") {}

@@ -117,132 +117,124 @@ function toSnapshot(state: PresenceState, nowMs: number): PresenceSnapshot {
   };
 }
 
-export const make = (options?: PresenceOptions) =>
-  Effect.gen(function* () {
-    const capacity = normalizePositiveInt(options?.capacity, DEFAULT_CAPACITY);
-    const presenceTtlMs = normalizePositiveInt(options?.presenceTtlMs, DEFAULT_PRESENCE_TTL_MS);
-    const typingTtlMs = normalizePositiveInt(options?.typingTtlMs, DEFAULT_TYPING_TTL_MS);
-    const sweepIntervalMs = normalizePositiveInt(
-      options?.sweepIntervalMs,
-      DEFAULT_SWEEP_INTERVAL_MS,
-    );
-    const state = yield* Ref.make<PresenceState>({ revision: 0, entries: new Map() });
-    const changes = yield* PubSub.sliding<PresenceSnapshot>(1);
+export const make = Effect.fn("Presence.make")(function* (options?: PresenceOptions) {
+  const capacity = normalizePositiveInt(options?.capacity, DEFAULT_CAPACITY);
+  const presenceTtlMs = normalizePositiveInt(options?.presenceTtlMs, DEFAULT_PRESENCE_TTL_MS);
+  const typingTtlMs = normalizePositiveInt(options?.typingTtlMs, DEFAULT_TYPING_TTL_MS);
+  const sweepIntervalMs = normalizePositiveInt(options?.sweepIntervalMs, DEFAULT_SWEEP_INTERVAL_MS);
+  const state = yield* Ref.make<PresenceState>({ revision: 0, entries: new Map() });
+  const changes = yield* PubSub.sliding<PresenceSnapshot>(1);
 
-    const publish = (next: PresenceState, nowMs: number) =>
-      PubSub.publish(changes, toSnapshot(next, nowMs)).pipe(Effect.asVoid);
+  const publish = (next: PresenceState, nowMs: number) =>
+    PubSub.publish(changes, toSnapshot(next, nowMs)).pipe(Effect.asVoid);
 
-    const touch: Presence["Service"]["touch"] = (input) =>
-      Effect.gen(function* () {
-        const nowMs = yield* Clock.currentTimeMillis;
-        const result = yield* Ref.modify(state, (current) => {
-          const nextEntry: InternalEntry = {
-            connectionId: input.connectionId,
-            sessionId: input.sessionId,
-            user: input.user,
-            threadId: input.focus.threadId,
-            typing: input.focus.typing,
-            lastSeenAtMs: nowMs,
-            typingSeenAtMs: input.focus.typing ? nowMs : null,
-          };
-          const nextEntries = new Map(current.entries);
-          if (!nextEntries.has(input.connectionId) && nextEntries.size >= capacity) {
-            const oldest = Array.from(nextEntries.values()).toSorted(
-              (left, right) =>
-                left.lastSeenAtMs - right.lastSeenAtMs ||
-                left.connectionId.localeCompare(right.connectionId),
-            )[0];
-            if (oldest !== undefined) nextEntries.delete(oldest.connectionId);
-          }
-          nextEntries.set(input.connectionId, nextEntry);
-          const changed = visibleState(current.entries) !== visibleState(nextEntries);
-          const next = changed
-            ? { revision: current.revision + 1, entries: nextEntries }
-            : { ...current, entries: nextEntries };
-          return [{ next, changed }, next] as const;
-        });
-        if (result.changed) yield* publish(result.next, nowMs);
-        return {
-          revision: result.next.revision,
-          serverTime: DateTime.formatIso(DateTime.makeUnsafe(nowMs)),
-        };
-      });
-
-    const drop: Presence["Service"]["drop"] = (connectionId) =>
-      Effect.gen(function* () {
-        const nowMs = yield* Clock.currentTimeMillis;
-        const result = yield* Ref.modify(state, (current) => {
-          if (!current.entries.has(connectionId)) {
-            return [{ next: current, changed: false }, current];
-          }
-          const entries = new Map(current.entries);
-          entries.delete(connectionId);
-          const changed = visibleState(current.entries) !== visibleState(entries);
-          const next = changed
-            ? { revision: current.revision + 1, entries }
-            : { ...current, entries };
-          return [{ next, changed }, next];
-        });
-        if (result.changed) yield* publish(result.next, nowMs);
-      });
-
-    const snapshot = Effect.gen(function* () {
-      const nowMs = yield* Clock.currentTimeMillis;
-      return toSnapshot(yield* Ref.get(state), nowMs);
+  const touch: Presence["Service"]["touch"] = Effect.fn("Presence.touch")(function* (input) {
+    const nowMs = yield* Clock.currentTimeMillis;
+    const result = yield* Ref.modify(state, (current) => {
+      const nextEntry: InternalEntry = {
+        connectionId: input.connectionId,
+        sessionId: input.sessionId,
+        user: input.user,
+        threadId: input.focus.threadId,
+        typing: input.focus.typing,
+        lastSeenAtMs: nowMs,
+        typingSeenAtMs: input.focus.typing ? nowMs : null,
+      };
+      const nextEntries = new Map(current.entries);
+      if (!nextEntries.has(input.connectionId) && nextEntries.size >= capacity) {
+        const oldest = Array.from(nextEntries.values()).toSorted(
+          (left, right) =>
+            left.lastSeenAtMs - right.lastSeenAtMs ||
+            left.connectionId.localeCompare(right.connectionId),
+        )[0];
+        if (oldest !== undefined) nextEntries.delete(oldest.connectionId);
+      }
+      nextEntries.set(input.connectionId, nextEntry);
+      const changed = visibleState(current.entries) !== visibleState(nextEntries);
+      const next = changed
+        ? { revision: current.revision + 1, entries: nextEntries }
+        : { ...current, entries: nextEntries };
+      return [{ next, changed }, next] as const;
     });
-
-    const sweep = Effect.gen(function* () {
-      const nowMs = yield* Clock.currentTimeMillis;
-      const result = yield* Ref.modify(state, (current) => {
-        let changed = false;
-        const entries = new Map<string, InternalEntry>();
-        for (const entry of current.entries.values()) {
-          if (nowMs - entry.lastSeenAtMs > presenceTtlMs) {
-            changed = true;
-            continue;
-          }
-          if (
-            entry.typing &&
-            (entry.typingSeenAtMs === null || nowMs - entry.typingSeenAtMs > typingTtlMs)
-          ) {
-            entries.set(entry.connectionId, {
-              ...entry,
-              typing: false,
-              typingSeenAtMs: null,
-            });
-            changed = true;
-          } else {
-            entries.set(entry.connectionId, entry);
-          }
-        }
-        if (!changed) return [{ next: current, changed: false }, current];
-        const visiblyChanged = visibleState(current.entries) !== visibleState(entries);
-        const next = visiblyChanged
-          ? { revision: current.revision + 1, entries }
-          : { ...current, entries };
-        return [{ next, changed: visiblyChanged }, next];
-      });
-      if (result.changed) yield* publish(result.next, nowMs);
-    });
-
-    yield* sweep.pipe(
-      Effect.repeat(Schedule.spaced(Duration.millis(sweepIntervalMs))),
-      Effect.forkScoped,
-    );
-
-    const snapshots = Stream.unwrap(
-      PubSub.subscribe(changes).pipe(
-        Effect.map((subscription) => {
-          const updates = Stream.fromEffect(PubSub.take(subscription)).pipe(
-            Stream.repeat(Schedule.forever),
-          );
-          return Stream.concat(Stream.fromEffect(snapshot), updates);
-        }),
-      ),
-    );
-
-    return Presence.of({ touch, drop, snapshot, snapshots });
+    if (result.changed) yield* publish(result.next, nowMs);
+    return {
+      revision: result.next.revision,
+      serverTime: DateTime.formatIso(DateTime.makeUnsafe(nowMs)),
+    };
   });
+
+  const drop: Presence["Service"]["drop"] = Effect.fn("Presence.drop")(function* (connectionId) {
+    const nowMs = yield* Clock.currentTimeMillis;
+    const result = yield* Ref.modify(state, (current) => {
+      if (!current.entries.has(connectionId)) {
+        return [{ next: current, changed: false }, current];
+      }
+      const entries = new Map(current.entries);
+      entries.delete(connectionId);
+      const changed = visibleState(current.entries) !== visibleState(entries);
+      const next = changed ? { revision: current.revision + 1, entries } : { ...current, entries };
+      return [{ next, changed }, next];
+    });
+    if (result.changed) yield* publish(result.next, nowMs);
+  });
+
+  const snapshot = Effect.gen(function* () {
+    const nowMs = yield* Clock.currentTimeMillis;
+    return toSnapshot(yield* Ref.get(state), nowMs);
+  });
+
+  const sweep = Effect.gen(function* () {
+    const nowMs = yield* Clock.currentTimeMillis;
+    const result = yield* Ref.modify(state, (current) => {
+      let changed = false;
+      const entries = new Map<string, InternalEntry>();
+      for (const entry of current.entries.values()) {
+        if (nowMs - entry.lastSeenAtMs > presenceTtlMs) {
+          changed = true;
+          continue;
+        }
+        if (
+          entry.typing &&
+          (entry.typingSeenAtMs === null || nowMs - entry.typingSeenAtMs > typingTtlMs)
+        ) {
+          entries.set(entry.connectionId, {
+            ...entry,
+            typing: false,
+            typingSeenAtMs: null,
+          });
+          changed = true;
+        } else {
+          entries.set(entry.connectionId, entry);
+        }
+      }
+      if (!changed) return [{ next: current, changed: false }, current];
+      const visiblyChanged = visibleState(current.entries) !== visibleState(entries);
+      const next = visiblyChanged
+        ? { revision: current.revision + 1, entries }
+        : { ...current, entries };
+      return [{ next, changed: visiblyChanged }, next];
+    });
+    if (result.changed) yield* publish(result.next, nowMs);
+  });
+
+  yield* sweep.pipe(
+    Effect.repeat(Schedule.spaced(Duration.millis(sweepIntervalMs))),
+    Effect.forkScoped,
+  );
+
+  const snapshots = Stream.unwrap(
+    PubSub.subscribe(changes).pipe(
+      Effect.map((subscription) => {
+        const updates = Stream.fromEffect(PubSub.take(subscription)).pipe(
+          Stream.repeat(Schedule.forever),
+        );
+        return Stream.concat(Stream.fromEffect(snapshot), updates);
+      }),
+    ),
+  );
+
+  return Presence.of({ touch, drop, snapshot, snapshots });
+});
 
 export const layer = Layer.effect(Presence, make());
 

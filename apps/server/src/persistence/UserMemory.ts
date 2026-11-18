@@ -53,7 +53,7 @@ const make = Effect.gen(function* () {
         );
 
   return UserMemoryRepository.of({
-    get: (subject) =>
+    get: Effect.fn("UserMemoryRepository.get")((subject) =>
       findNote(subject).pipe(
         Effect.map(Option.map((row) => row.content)),
         Effect.mapError((cause) =>
@@ -62,13 +62,15 @@ const make = Effect.gen(function* () {
             : new PersistenceSqlError({ operation: "UserMemoryRepository.get", cause }),
         ),
       ),
-    set: ({ subject, content }) =>
+    ),
+    set: Effect.fn("UserMemoryRepository.set")(({ subject, content }) =>
       writeNote(subject, content.trim()).pipe(
         Effect.asVoid,
         Effect.mapError(
           (cause) => new PersistenceSqlError({ operation: "UserMemoryRepository.set", cause }),
         ),
       ),
+    ),
   });
 });
 

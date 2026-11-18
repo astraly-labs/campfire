@@ -1,19 +1,95 @@
 import { useNavigation, useRoute, StackActions } from "@react-navigation/native";
-import { nativePullRequestDestination } from "../lib/pullRequestNavigation";
-import { useCallback } from "react";
-import { Platform } from "react-native";
-import { CommonActions } from "@react-navigation/native";
-import { androidWorkspaceNavigationState } from "../lib/android-workspace-navigation";
+import { resolveIssueLinkTarget } from "@t3tools/client-runtime/issue-links";
+import {
+  nativePullRequestDestination,
+  pullRequestCandidateForIssueLink,
+} from "../lib/pullRequestNavigation";
+import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { useThreadShell } from "../state/entities";
+import { useProjects, useThreadShell } from "../state/entities";
 import { tryOpenExternalUrl } from "../lib/openExternalUrl";
+import { appAtomRegistry } from "../state/atom-registry";
+import { environmentServerConfigsAtom } from "../state/server";
+import { composerPullRequests } from "../state/pull-requests";
+import { useAtomQueryRunner } from "../state/use-atom-query-runner";
+import { withKnownPullRequestSummary } from "../state/use-thread-pr";
 
-/** Use the thread's environment; the shared router resolves the repository's project there. */
+let linkNavigationId = 0;
+const nextLinkNavigationId = () => ++linkNavigationId;
+
+type PullRequestContext = { readonly environmentId: string; readonly projectId: string };
+
+// Avoid useRoute so layouts without route context can open any thread's pull requests.
+export function useNavigateToPullRequest(options?: { readonly replace?: boolean }) {
+  const navigation = useNavigation();
+  const projects = useProjects();
+  const replace = options?.replace;
+  const readPreview = useAtomQueryRunner(composerPullRequests.preview, {
+    reportFailure: false,
+    reportDefect: false,
+  });
+  return async (url: string, context: PullRequestContext | null) => {
+    // Read at press time so a config push does not hand every link a new handler.
+    const serverConfigs = appAtomRegistry.get(environmentServerConfigsAtom);
+    const destination = nativePullRequestDestination(url, context, projects, (environmentId) =>
+      serverConfigs.has(environmentId),
+    );
+    if (!destination) {
+      // An issue link from the same text opens the issue; anything else leaves for the browser.
+      const environmentId = context && EnvironmentId.make(context.environmentId);
+      const issue =
+        environmentId && serverConfigs.get(environmentId)?.environment.capabilities.issues === true
+          ? resolveIssueLinkTarget({
+              url,
+              projects: projects.filter((project) => project.environmentId === environmentId),
+              preferredProjectId: context.projectId,
+            })
+          : null;
+      if (!issue || !environmentId) return tryOpenExternalUrl(url, "pull-request");
+      const candidate = pullRequestCandidateForIssueLink(url, issue.ref);
+      if (candidate) {
+        const preview = await readPreview({ environmentId, input: candidate.target });
+        if (preview._tag === "Success") {
+          const params = withKnownPullRequestSummary({
+            ...candidate.target,
+            environmentId,
+            ...(candidate.navigationUrl
+              ? { navigationUrl: candidate.navigationUrl, navigationId: nextLinkNavigationId() }
+              : {}),
+          });
+          if (replace) navigation.dispatch(StackActions.replace("PullRequest", params));
+          else navigation.dispatch(StackActions.push("PullRequest", params));
+          return true;
+        }
+        // A dropped connection says nothing about what the link names; the browser knows.
+        if (isAtomCommandInterrupted(preview)) return tryOpenExternalUrl(url, "pull-request");
+      }
+      const issueParams = {
+        environmentId,
+        projectId: issue.ref.projectId,
+        tracker: issue.ref.tracker,
+        ...(issue.ref.host === undefined ? {} : { host: issue.ref.host }),
+        scope: issue.ref.scope,
+        issueKey: issue.ref.key,
+      };
+      if (replace) navigation.dispatch(StackActions.replace("Issue", issueParams));
+      else navigation.dispatch(StackActions.push("Issue", issueParams));
+      return true;
+    }
+    const params = withKnownPullRequestSummary({
+      ...destination,
+      ...(destination.navigationUrl ? { navigationId: nextLinkNavigationId() } : {}),
+    });
+    if (replace) navigation.dispatch(StackActions.replace("PullRequest", params));
+    else navigation.dispatch(StackActions.push("PullRequest", params));
+    return true;
+  };
+}
+
 export function useOpenPullRequest(options?: {
   readonly replace?: boolean;
-  readonly context?: { readonly environmentId: string; readonly projectId: string };
+  readonly context?: PullRequestContext;
 }) {
-  const navigation = useNavigation();
   const route = useRoute();
   const routeContext = route.params as
     | {
@@ -35,26 +111,12 @@ export function useOpenPullRequest(options?: {
   );
   const projectId =
     options?.context?.projectId ?? first(routeContext?.projectId) ?? thread?.projectId;
-  const replace = options?.replace;
-  return useCallback(
-    async (url: string) => {
-      const params = nativePullRequestDestination(
-        url,
-        environmentId && projectId
-          ? { environmentId: String(environmentId), projectId: String(projectId) }
-          : null,
-      );
-      if (!params) return tryOpenExternalUrl(url, "pull-request");
-      if (Platform.OS === "android")
-        navigation.dispatch((state) =>
-          CommonActions.reset(
-            androidWorkspaceNavigationState(state, { name: "PullRequest", params }),
-          ),
-        );
-      else if (replace) navigation.dispatch(StackActions.replace("PullRequest", params));
-      else navigation.navigate("PullRequest", params);
-      return true;
-    },
-    [environmentId, projectId, navigation, replace],
-  );
+  const navigateToPullRequest = useNavigateToPullRequest({ replace: options?.replace });
+  return (url: string) =>
+    navigateToPullRequest(
+      url,
+      environmentId && projectId
+        ? { environmentId: String(environmentId), projectId: String(projectId) }
+        : null,
+    );
 }

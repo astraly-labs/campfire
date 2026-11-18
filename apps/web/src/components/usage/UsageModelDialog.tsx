@@ -1,6 +1,5 @@
 import { formatPercent, formatTokens, formatUsd } from "@t3tools/shared/usageFormat";
 import { isModelCostUnknown, type ModelTotals } from "@t3tools/shared/usageMerge";
-import { useMemo } from "react";
 
 import { mergeAnsweredUsage, type EnvironmentUsageStatus } from "../../state/usage";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
@@ -31,13 +30,9 @@ export interface UsageChartWindow {
   readonly resolution: "day" | "hour";
   readonly timeZone: string;
   readonly referenceTime: string | undefined;
+  readonly hour12: boolean;
 }
 
-/**
- * One model's usage in the current window, opened from the Breakdown list.
- * The trend and mixes come from the same merge as the page, narrowed to this
- * model's buckets.
- */
 export function UsageModelDialog({
   model,
   environments,
@@ -53,15 +48,11 @@ export function UsageModelDialog({
   readonly onSetPrice: () => void;
   readonly onClose: () => void;
 }) {
-  const usage = useMemo(
-    () =>
-      mergeAnsweredUsage(
-        environments,
-        (bucket) => bucket.provider === model.provider && bucket.model === model.model,
-      ),
-    [environments, model.provider, model.model],
+  const usage = mergeAnsweredUsage(
+    environments,
+    (bucket) => bucket.provider === model.provider && bucket.model === model.model,
   );
-  const providers = useMemo(() => [model.provider], [model.provider]);
+  const providers = [model.provider];
   const presentation = PROVIDER_PRESENTATION[model.provider];
   const costUnknown = isModelCostUnknown(model);
   const hitRate = cacheHitRate(model);
@@ -97,14 +88,14 @@ export function UsageModelDialog({
         </DialogHeader>
         <DialogPanel>
           <div className="flex flex-col gap-8">
-            <div className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-4">
+            <dl className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-4">
               {stats.map((stat) => (
                 <div key={stat.label} className="flex min-w-0 flex-col gap-0.5">
-                  <span className="text-xs text-muted-foreground">{stat.label}</span>
-                  <span className="text-2xl font-semibold text-foreground">{stat.value}</span>
+                  <dt className="text-xs text-muted-foreground">{stat.label}</dt>
+                  <dd className="text-2xl font-semibold text-foreground">{stat.value}</dd>
                 </div>
               ))}
-            </div>
+            </dl>
 
             {/* Unpriced cost is unknown, not zero, so its trend shows tokens. */}
             <UsageProviderChart
@@ -117,6 +108,7 @@ export function UsageModelDialog({
               referenceTime={chartWindow.referenceTime}
               resolution={chartWindow.resolution}
               timeZone={chartWindow.timeZone}
+              hour12={chartWindow.hour12}
             />
 
             <div className="grid gap-x-10 gap-y-8 sm:grid-cols-2">
@@ -156,7 +148,6 @@ export function UsageModelDialog({
   );
 }
 
-/** What the faster speeds cost above standard rates, beside the speed bar. */
 export function SpeedPremium({ premiumUsd }: { readonly premiumUsd: number }) {
   return (
     <span className="text-xs text-muted-foreground">

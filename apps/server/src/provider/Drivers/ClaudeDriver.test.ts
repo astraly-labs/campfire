@@ -6,6 +6,8 @@ import * as TestClock from "effect/testing/TestClock";
 
 import { makeCapabilitiesProbeCache } from "./ClaudeDriver.ts";
 
+const isDefined = <A>(value: A | undefined) => value !== undefined;
+
 const countingProbe = <A>(results: ReadonlyArray<Effect.Effect<A | undefined, string>>) =>
   Effect.gen(function* () {
     const calls = yield* Ref.make(0);
@@ -17,11 +19,8 @@ const countingProbe = <A>(results: ReadonlyArray<Effect.Effect<A | undefined, st
 
 it.effect("retries a probe that found no capabilities instead of caching the miss", () =>
   Effect.gen(function* () {
-    const { calls, probe } = yield* countingProbe([
-      Effect.succeed(undefined),
-      Effect.succeed("ok"),
-    ]);
-    const cache = yield* makeCapabilitiesProbeCache(probe);
+    const { calls, probe } = yield* countingProbe([Effect.undefined, Effect.succeed("ok")]);
+    const cache = yield* makeCapabilitiesProbeCache(probe, isDefined);
 
     assert.strictEqual(yield* Cache.get(cache, "probe"), undefined);
     assert.strictEqual(yield* Cache.get(cache, "probe"), "ok");
@@ -35,7 +34,7 @@ it.effect("retries a probe that failed instead of caching the failure", () =>
       Effect.fail("spawn ENOENT"),
       Effect.succeed("ok"),
     ]);
-    const cache = yield* makeCapabilitiesProbeCache(probe);
+    const cache = yield* makeCapabilitiesProbeCache(probe, isDefined);
 
     assert.strictEqual(yield* Effect.flip(Cache.get(cache, "probe")), "spawn ENOENT");
     assert.strictEqual(yield* Cache.get(cache, "probe"), "ok");
@@ -46,7 +45,7 @@ it.effect("retries a probe that failed instead of caching the failure", () =>
 it.effect("reuses a successful probe until its five-minute TTL expires", () =>
   Effect.gen(function* () {
     const { calls, probe } = yield* countingProbe([Effect.succeed("ok")]);
-    const cache = yield* makeCapabilitiesProbeCache(probe);
+    const cache = yield* makeCapabilitiesProbeCache(probe, isDefined);
 
     yield* Cache.get(cache, "probe");
     yield* TestClock.adjust("4 minutes");

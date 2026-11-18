@@ -106,32 +106,34 @@ const make = Effect.gen(function* () {
     return messages.at(-1)?.author ?? null;
   });
 
-  const withCurrentAuthor = (
+  const withCurrentAuthor = Effect.fn("TurnAuthorService.withCurrentAuthor")(function* (
     threadId: ThreadId,
     operation: TurnAuthorMemoryError["operation"],
     use: (subject: string) => Effect.Effect<Option.Option<string>, UserMemoryRepositoryError>,
-  ) =>
-    Effect.gen(function* () {
-      const author = yield* currentAuthor(threadId).pipe(
-        Effect.mapError((cause) => new TurnAuthorMemoryError({ threadId, operation, cause })),
-      );
-      if (author === null) return yield* new TurnAuthorUnknownError({ threadId });
-      const memory = yield* use(author.subject).pipe(
-        Effect.mapError((cause) => new TurnAuthorMemoryError({ threadId, operation, cause })),
-      );
-      return {
-        author: { displayName: author.displayName },
-        memory: Option.getOrNull(memory),
-      } satisfies TurnAuthorMemory;
-    });
+  ) {
+    const author = yield* currentAuthor(threadId).pipe(
+      Effect.mapError((cause) => new TurnAuthorMemoryError({ threadId, operation, cause })),
+    );
+    if (author === null) return yield* new TurnAuthorUnknownError({ threadId });
+    const memory = yield* use(author.subject).pipe(
+      Effect.mapError((cause) => new TurnAuthorMemoryError({ threadId, operation, cause })),
+    );
+    return {
+      author: { displayName: author.displayName },
+      memory: Option.getOrNull(memory),
+    } satisfies TurnAuthorMemory;
+  });
 
   return TurnAuthorService.of({
     providerText,
-    readMemory: (threadId) => withCurrentAuthor(threadId, "read", memories.get),
-    replaceMemory: ({ threadId, content }) =>
+    readMemory: Effect.fn("TurnAuthorService.readMemory")((threadId) =>
+      withCurrentAuthor(threadId, "read", memories.get),
+    ),
+    replaceMemory: Effect.fn("TurnAuthorService.replaceMemory")(({ threadId, content }) =>
       withCurrentAuthor(threadId, "replace", (subject) =>
         memories.set({ subject, content }).pipe(Effect.andThen(memories.get(subject))),
       ),
+    ),
   });
 });
 

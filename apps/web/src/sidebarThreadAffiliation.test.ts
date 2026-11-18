@@ -33,6 +33,8 @@ const snapshot: SidebarProjectSnapshot = {
   ],
   memberProjectRefs: [{ environmentId, projectId }],
   remoteEnvironmentLabels: [],
+  pinned: false,
+  archived: false,
 };
 
 function thread(id: string, subject: string): SidebarThreadSummary {

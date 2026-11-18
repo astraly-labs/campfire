@@ -14,12 +14,11 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
-import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
@@ -132,7 +131,7 @@ const privateInput = {
 };
 const unsupported = () => Effect.die("Unexpected provider operation in private briefing");
 const makeHarness = Effect.fn(function* (openGate?: Deferred.Deferred<void>) {
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const opened = yield* Queue.unbounded<{
     readonly events: Queue.Queue<ProviderAdapterV2Event>;
     readonly started: Queue.Queue<ProviderAdapterV2TurnInput>;
@@ -225,7 +224,7 @@ const makeHarness = Effect.fn(function* (openGate?: Deferred.Deferred<void>) {
       }),
   };
   const manager = makeContextAssistantManager({
-    crypto,
+    random,
     projections: {
       getThreadProjection: () =>
         Effect.sync(() => {
@@ -233,7 +232,7 @@ const makeHarness = Effect.fn(function* (openGate?: Deferred.Deferred<void>) {
           return source;
         }),
     },
-    projects: { getShell: () => Effect.succeed(Option.some(sourceProject)) },
+    projects: { getShell: () => Effect.succeedSome(sourceProject) },
     adapters: { get: () => Effect.succeed(adapter) },
   });
   yield* Effect.addFinalizer(() => manager.closeAll);

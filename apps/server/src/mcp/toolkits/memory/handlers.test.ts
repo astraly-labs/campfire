@@ -152,7 +152,7 @@ const layerProjections = ProjectionStore.layer.pipe(
   Layer.provideMerge(SqlitePersistence.layerMemory),
 );
 const layerMemoryTools = McpHttpServer.layerMemoryToolkit.pipe(
-  Layer.provideMerge(McpServer.McpServer.layer),
+  Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
   Layer.provide(liveThreadsLayer),
   Layer.provide(TurnAuthorService.layer),
   Layer.provideMerge(layerProjections),
@@ -215,7 +215,7 @@ it.effect("rejects memory longer than the limit without storing it", () =>
     const rejected = yield* callTool("alice", "memory_update", {
       content: "x".repeat(TurnAuthorService.USER_MEMORY_MAX_CHARS + 1),
     }).pipe(Effect.flip);
-    expect(rejected._tag).toBe("InvalidParams");
+    expect(rejected).toBeInstanceOf(McpSchema.InvalidParams);
     expect((yield* callTool("alice", "memory_read")).structuredContent).toEqual({
       author: { displayName: "Alice" },
       memory: null,

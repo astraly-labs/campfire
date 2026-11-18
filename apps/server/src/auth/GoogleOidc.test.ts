@@ -1,5 +1,7 @@
 import { it } from "@effect/vitest";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Layer from "effect/Layer";
 import * as Effect from "effect/Effect";
 import * as Ref from "effect/Ref";
 import { expect } from "vite-plus/test";
@@ -28,7 +30,7 @@ const alice: GoogleOidcIdentity = {
   displayName: "Alice Example",
 };
 
-it.layer(NodeServices.layer)("GoogleOidcFlow", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("GoogleOidcFlow", (it) => {
   it.effect("binds state, nonce, PKCE, browser cookie, and one-time completion", () =>
     Effect.gen(function* () {
       const exchangeInputs = yield* Ref.make<

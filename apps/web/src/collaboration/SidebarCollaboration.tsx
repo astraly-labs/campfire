@@ -17,7 +17,7 @@ import { isGoogleOwnedByCurrentAccount } from "../sidebarThreadAffiliation";
 import { useProjects } from "../state/entities";
 import { usePrimaryEnvironmentId } from "../state/environments";
 import { useUiStateStore } from "../uiStateStore";
-import { usePullRequestResolution } from "../lib/sourceControlActions";
+import { usePullRequestResolutionState as usePullRequestResolution } from "../state/sourceControlActions";
 import { CollaborationAvatar } from "./CollaborationAvatar";
 import { useGoogleTeam } from "./googleTeam";
 

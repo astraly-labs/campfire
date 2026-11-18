@@ -19,11 +19,6 @@ import {
   liveAuthorLoop,
   reviewerMarker,
 } from "@t3tools/shared/pullRequestReviewLoop";
-import {
-  normalizeThreadPullRequestKey,
-  threadPullRequestKeysEqual,
-  threadPullRequestsOf,
-} from "@t3tools/shared/threadPullRequests";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -35,6 +30,11 @@ import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
+import {
+  normalizeThreadPullRequestKey,
+  threadPullRequestKeysEqual,
+  threadPullRequestsOf,
+} from "../sourceControl/threadPullRequests.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as Orchestrator from "./Orchestrator.ts";
@@ -160,13 +160,14 @@ export const make = Effect.gen(function* () {
         Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeedNone }),
       );
 
-  const reviewerLabel = (model: ModelSelection) =>
-    Effect.gen(function* () {
-      const instance = yield* providerInstances.getInstance(model.instanceId);
-      const name =
-        instance === undefined ? undefined : (yield* instance.snapshot.getSnapshot).displayName;
-      return `${name ?? model.instanceId} · ${model.model}`;
-    });
+  const reviewerLabel = Effect.fn("PullRequestReviewLoopService.reviewerLabel")(function* (
+    model: ModelSelection,
+  ) {
+    const instance = yield* providerInstances.getInstance(model.instanceId);
+    const name =
+      instance === undefined ? undefined : (yield* instance.snapshot.getSnapshot).displayName;
+    return `${name ?? model.instanceId} · ${model.model}`;
+  });
 
   const continuationsPending = (runs: ReadonlyArray<OrchestrationV2Run>) =>
     Effect.forEach(
@@ -213,12 +214,18 @@ export const make = Effect.gen(function* () {
         ? records.runs.find((run) => run.id === progress.run.id)
         : undefined;
     if (settled === undefined) return { progress, resultText: null };
-    const output = yield* projections.getThreadRecords(threadId, ["messages", "turnItems"], {
-      messageRoles: ["assistant"],
-      messageRunIds: [settled.id],
-      turnItemRunId: settled.id,
-      turnItemTypes: ["assistant_message", "error"],
-    });
+    const output = yield* projections.getThreadRecords(
+      threadId,
+      ["messages", "turnItems", "providerTurns"],
+      {
+        messageRoles: ["assistant"],
+        messageRunIds: [settled.id],
+        turnItemRunId: settled.id,
+        turnItemTypes: ["assistant_message", "error"],
+        // The result names the model that ran when it differs from the one selected.
+        providerTurnAttemptIds: settled.activeAttemptId === null ? [] : [settled.activeAttemptId],
+      },
+    );
     const result = subagentResultForRun(output, settled);
     return {
       progress,
@@ -400,15 +407,16 @@ export const make = Effect.gen(function* () {
     Effect.withSpan("PullRequestReviewLoopService.sweep"),
   );
 
-  const start: PullRequestReviewLoopService["Service"]["start"] = () =>
-    Effect.gen(function* () {
-      yield* forkParked(
-        Stream.runForEach(threads.streamDomainEvents, (event) =>
-          triggers(event) ? advanceThread(event.threadId) : Effect.void,
-        ).pipe(Effect.catchCause(logFailure("review loop event stream failed", {}))),
-      );
-      yield* forkParked(sweep.pipe(Effect.repeat(Schedule.spaced(SWEEP_INTERVAL)), Effect.asVoid));
-    });
+  const start: PullRequestReviewLoopService["Service"]["start"] = Effect.fn(
+    "PullRequestReviewLoopService.start",
+  )(function* () {
+    yield* forkParked(
+      Stream.runForEach(threads.streamDomainEvents, (event) =>
+        triggers(event) ? advanceThread(event.threadId) : Effect.void,
+      ).pipe(Effect.catchCause(logFailure("review loop event stream failed", {}))),
+    );
+    yield* forkParked(sweep.pipe(Effect.repeat(Schedule.spaced(SWEEP_INTERVAL)), Effect.asVoid));
+  });
 
   return PullRequestReviewLoopService.of({ start, sweep, advanceThread });
 });
