@@ -365,6 +365,36 @@ PATH="$campfire_maintenance_bin:$PATH" CAMPFIRE_TARGET_RETENTION_DAYS=1 \
 [ -d "$campfire_cache_root/notes" ] || fail "folder without a cargo marker was cleaned"
 [ -d "$campfire_cache_root/recent-build" ] || fail "cargo target with a recent build was cleaned"
 
+campfire_agent_root="$campfire_fixture/hand-made-worktrees"
+mkdir -p "$campfire_agent_root/idle/target" "$campfire_agent_root/idle/src" "$campfire_agent_root/fresh/target" \
+  "$campfire_agent_root/busy/target" "$campfire_agent_root/busy/src" "$campfire_agent_root/unmarked/target"
+touch "$campfire_agent_root/idle/target/CACHEDIR.TAG" "$campfire_agent_root/fresh/target/CACHEDIR.TAG" \
+  "$campfire_agent_root/busy/target/CACHEDIR.TAG" "$campfire_agent_root/idle/src/lib.rs"
+touch -t 202001010000 "$campfire_agent_root/idle/target" "$campfire_agent_root/busy/target" \
+  "$campfire_agent_root/unmarked/target"
+(cd "$campfire_agent_root/busy/src" && exec sleep 60) &
+campfire_agent_busy_pid=$!
+PATH="$campfire_maintenance_bin:$PATH" CAMPFIRE_TARGET_RETENTION_DAYS=1 \
+  CAMPFIRE_CARGO_WORKTREE_ROOTS="$campfire_fixture/unplugged-drive/agents:$campfire_agent_root" \
+  "$campfire_repo_root/ops/macos/campfire-worktree-maintenance.sh" \
+  "$campfire_maintenance_home" 7 --dry-run >"$campfire_fixture/maintenance-agents.stdout" 2>&1
+[ -d "$campfire_agent_root/idle/target" ] || fail "dry-run removed the target of an idle worktree"
+grep -q "would clean: $campfire_agent_root/idle/target" "$campfire_fixture/maintenance-agents.stdout" ||
+  fail "dry-run does not list the target of an idle worktree"
+PATH="$campfire_maintenance_bin:$PATH" CAMPFIRE_TARGET_RETENTION_DAYS=1 \
+  CAMPFIRE_CARGO_WORKTREE_ROOTS="$campfire_fixture/unplugged-drive/agents:$campfire_agent_root" \
+  "$campfire_repo_root/ops/macos/campfire-worktree-maintenance.sh" \
+  "$campfire_maintenance_home" 7 >"$campfire_fixture/maintenance-agents.stdout" 2>&1
+kill "$campfire_agent_busy_pid" 2>/dev/null || true
+wait "$campfire_agent_busy_pid" 2>/dev/null || true
+[ ! -e "$campfire_agent_root/idle/target" ] || fail "old target of an idle worktree was not cleaned"
+[ -f "$campfire_agent_root/idle/src/lib.rs" ] || fail "cleaning a target touched the worktree around it"
+[ -d "$campfire_agent_root/fresh/target" ] || fail "fresh target of a worktree was cleaned"
+[ -d "$campfire_agent_root/busy/target" ] || fail "target of a worktree a process runs from was cleaned"
+[ -d "$campfire_agent_root/unmarked/target" ] || fail "target folder without a cargo marker was cleaned"
+grep -q '"status":"ok".*"unreadableRoots":0' "$campfire_fixture/maintenance-agents.stdout" ||
+  fail "a worktree folder on an unplugged drive was reported as unreadable"
+
 PATH="$campfire_maintenance_bin:$PATH" \
   "$campfire_repo_root/ops/macos/campfire-worktree-maintenance.sh" \
   "$campfire_maintenance_home" 0 >/dev/null 2>&1

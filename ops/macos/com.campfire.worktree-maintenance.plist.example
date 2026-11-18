@@ -24,6 +24,8 @@
     <string>3</string>
     <key>CAMPFIRE_CARGO_TARGET_ROOTS</key>
     <string>/Volumes/Example/cargo-targets</string>
+    <key>CAMPFIRE_CARGO_WORKTREE_ROOTS</key>
+    <string>/Users/example/project/.claude/worktrees</string>
   </dict>
   <key>StartInterval</key>
   <integer>900</integer>
