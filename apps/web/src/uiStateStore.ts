@@ -311,7 +311,7 @@ export function markThreadUnread(
   };
 }
 
-export function setThreadAffiliation(
+function setThreadAffiliation(
   state: UiState,
   threadKey: string,
   override: ThreadAffiliationOverride | null,

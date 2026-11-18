@@ -128,108 +128,104 @@ function normalizeReturnTo(value: string | undefined): string | undefined {
   return `${resolved.pathname}${resolved.search}${resolved.hash}`;
 }
 
-export function makeGoogleOidcFlow<R>(
+export const makeGoogleOidcFlow = Effect.fn("GoogleOidc.makeFlow")(function* <R>(
   config: GoogleOidcConfig,
   tokenClient: GoogleOidcTokenClient<R>,
-): Effect.Effect<GoogleOidcFlow<R>, never, SecureRandom.SecureRandom | Digest.Digest> {
-  return Effect.gen(function* () {
-    const random = yield* SecureRandom.SecureRandom;
-    const digest = yield* Digest.Digest;
-    const randomBase64Url = (bytes = 32) =>
-      random.randomBytes(bytes).pipe(Effect.map(Base64Url.encode));
-    const pending = yield* Ref.make(new Map<string, PendingTransaction>());
+) {
+  const random = yield* SecureRandom.SecureRandom;
+  const digest = yield* Digest.Digest;
+  const randomBase64Url = (bytes = 32) =>
+    random.randomBytes(bytes).pipe(Effect.map(Base64Url.encode));
+  const pending = yield* Ref.make(new Map<string, PendingTransaction>());
 
-    const begin: GoogleOidcFlow<R>["begin"] = Effect.fn("GoogleOidcFlow.begin")(
-      function* (returnTo) {
-        const normalizedReturnTo = normalizeReturnTo(returnTo);
-        if (normalizedReturnTo === undefined) {
-          return yield* new GoogleOidcTransactionError({ reason: "invalid_return_to" });
-        }
-        const now = yield* Clock.currentTimeMillis;
-        const transaction: PendingTransaction = {
-          state: yield* randomBase64Url(),
-          nonce: yield* randomBase64Url(),
-          codeVerifier: yield* randomBase64Url(48),
-          binding: yield* randomBase64Url(),
-          returnTo: normalizedReturnTo,
-          expiresAtMs: now + TRANSACTION_TTL_MS,
-        };
-        const accepted = yield* Ref.modify(pending, (current) => {
-          const next = new Map(Array.from(current).filter(([, entry]) => entry.expiresAtMs > now));
-          if (next.size >= MAX_PENDING_TRANSACTIONS) {
-            return [false, next] as const;
-          }
-          next.set(transaction.state, transaction);
-          return [true, next] as const;
-        });
-        if (!accepted) {
-          return yield* new GoogleOidcTransactionError({ reason: "too_many_pending" });
-        }
+  const begin: GoogleOidcFlow<R>["begin"] = Effect.fn("GoogleOidcFlow.begin")(function* (returnTo) {
+    const normalizedReturnTo = normalizeReturnTo(returnTo);
+    if (normalizedReturnTo === undefined) {
+      return yield* new GoogleOidcTransactionError({ reason: "invalid_return_to" });
+    }
+    const now = yield* Clock.currentTimeMillis;
+    const transaction: PendingTransaction = {
+      state: yield* randomBase64Url(),
+      nonce: yield* randomBase64Url(),
+      codeVerifier: yield* randomBase64Url(48),
+      binding: yield* randomBase64Url(),
+      returnTo: normalizedReturnTo,
+      expiresAtMs: now + TRANSACTION_TTL_MS,
+    };
+    const accepted = yield* Ref.modify(pending, (current) => {
+      const next = new Map(Array.from(current).filter(([, entry]) => entry.expiresAtMs > now));
+      if (next.size >= MAX_PENDING_TRANSACTIONS) {
+        return [false, next] as const;
+      }
+      next.set(transaction.state, transaction);
+      return [true, next] as const;
+    });
+    if (!accepted) {
+      return yield* new GoogleOidcTransactionError({ reason: "too_many_pending" });
+    }
 
-        const authorizationUrl = new URL(GOOGLE_AUTHORIZATION_ENDPOINT);
-        authorizationUrl.search = new URLSearchParams({
-          client_id: config.clientId,
-          redirect_uri: config.redirectUri.toString(),
-          response_type: "code",
-          scope: "openid email profile",
-          state: transaction.state,
-          nonce: transaction.nonce,
-          code_challenge: yield* digest
-            .digest(Digest.sha256, new TextEncoder().encode(transaction.codeVerifier))
-            .pipe(Effect.map(Base64Url.encode)),
-          code_challenge_method: "S256",
-          prompt: "select_account",
-        }).toString();
-        return {
-          authorizationUrl,
-          binding: transaction.binding,
-          expiresAtMs: transaction.expiresAtMs,
-        };
-      },
-    );
-
-    const complete: GoogleOidcFlow<R>["complete"] = Effect.fn("GoogleOidcFlow.complete")(
-      function* (input) {
-        if (!input.state || !input.code || !input.binding) {
-          return yield* new GoogleOidcTransactionError({ reason: "invalid_state" });
-        }
-        const now = yield* Clock.currentTimeMillis;
-        const transaction = yield* Ref.modify(pending, (current) => {
-          const candidate = current.get(input.state);
-          const next = new Map(current);
-          next.delete(input.state);
-          return [candidate, next] as const;
-        });
-        if (
-          transaction === undefined ||
-          transaction.expiresAtMs <= now ||
-          !timingSafeEqualBase64Url(transaction.binding, input.binding)
-        ) {
-          return yield* new GoogleOidcTransactionError({ reason: "expired_or_replayed" });
-        }
-
-        const identity = yield* tokenClient.exchangeAndVerify({
-          code: input.code,
-          codeVerifier: transaction.codeVerifier,
-          nonce: transaction.nonce,
-        });
-        if (!config.allowedEmails.includes(identity.email.toLowerCase())) {
-          return yield* new GoogleOidcIdentityNotAllowedError({ email: identity.email });
-        }
-        return { identity, returnTo: transaction.returnTo };
-      },
-    );
-
-    return { begin, complete };
+    const authorizationUrl = new URL(GOOGLE_AUTHORIZATION_ENDPOINT);
+    authorizationUrl.search = new URLSearchParams({
+      client_id: config.clientId,
+      redirect_uri: config.redirectUri.toString(),
+      response_type: "code",
+      scope: "openid email profile",
+      state: transaction.state,
+      nonce: transaction.nonce,
+      code_challenge: yield* digest
+        .digest(Digest.sha256, new TextEncoder().encode(transaction.codeVerifier))
+        .pipe(Effect.map(Base64Url.encode)),
+      code_challenge_method: "S256",
+      prompt: "select_account",
+    }).toString();
+    return {
+      authorizationUrl,
+      binding: transaction.binding,
+      expiresAtMs: transaction.expiresAtMs,
+    };
   });
-}
+
+  const complete: GoogleOidcFlow<R>["complete"] = Effect.fn("GoogleOidcFlow.complete")(
+    function* (input) {
+      if (!input.state || !input.code || !input.binding) {
+        return yield* new GoogleOidcTransactionError({ reason: "invalid_state" });
+      }
+      const now = yield* Clock.currentTimeMillis;
+      const transaction = yield* Ref.modify(pending, (current) => {
+        const candidate = current.get(input.state);
+        const next = new Map(current);
+        next.delete(input.state);
+        return [candidate, next] as const;
+      });
+      if (
+        transaction === undefined ||
+        transaction.expiresAtMs <= now ||
+        !timingSafeEqualBase64Url(transaction.binding, input.binding)
+      ) {
+        return yield* new GoogleOidcTransactionError({ reason: "expired_or_replayed" });
+      }
+
+      const identity = yield* tokenClient.exchangeAndVerify({
+        code: input.code,
+        codeVerifier: transaction.codeVerifier,
+        nonce: transaction.nonce,
+      });
+      if (!config.allowedEmails.includes(identity.email.toLowerCase())) {
+        return yield* new GoogleOidcIdentityNotAllowedError({ email: identity.email });
+      }
+      return { identity, returnTo: transaction.returnTo };
+    },
+  );
+
+  return { begin, complete };
+});
 
 const GoogleTokenResponse = Schema.Struct({
   id_token: Schema.String,
 });
 const decodeGoogleTokenResponse = Schema.decodeUnknownEffect(GoogleTokenResponse);
 
-export const makeGoogleOidcTokenClient = Effect.fn("makeGoogleOidcTokenClient")(function* (
+const makeGoogleOidcTokenClient = Effect.fn("makeGoogleOidcTokenClient")(function* (
   config: GoogleOidcConfig,
 ): Effect.fn.Return<GoogleOidcTokenClient, never, HttpClient.HttpClient> {
   const httpClient = yield* HttpClient.HttpClient;
@@ -306,34 +302,21 @@ export const makeGoogleOidcTokenClient = Effect.fn("makeGoogleOidcTokenClient")(
 
 const productionFlows = new WeakMap<GoogleOidcConfig, GoogleOidcFlow<HttpClient.HttpClient>>();
 
-export function googleOidcFlowForConfig(
+export const googleOidcFlowForConfig = Effect.fn("GoogleOidc.flowForConfig")(function* (
   config: GoogleOidcConfig,
-): Effect.Effect<
-  GoogleOidcFlow<HttpClient.HttpClient>,
-  never,
-  SecureRandom.SecureRandom | Digest.Digest
-> {
-  return Effect.gen(function* () {
-    const cached = productionFlows.get(config);
-    if (cached !== undefined) return cached;
-    const tokenClient: GoogleOidcTokenClient<HttpClient.HttpClient> = {
-      exchangeAndVerify: (input) =>
-        makeGoogleOidcTokenClient(config).pipe(
-          Effect.flatMap((client) => client.exchangeAndVerify(input)),
-        ),
-    };
-    const flow = yield* makeGoogleOidcFlow(config, tokenClient);
-    productionFlows.set(config, flow);
-    return flow;
-  });
-}
-
-export function setGoogleOidcFlowForTesting(
-  config: GoogleOidcConfig,
-  flow: GoogleOidcFlow<HttpClient.HttpClient>,
-): void {
+) {
+  const cached = productionFlows.get(config);
+  if (cached !== undefined) return cached;
+  const tokenClient: GoogleOidcTokenClient<HttpClient.HttpClient> = {
+    exchangeAndVerify: (input) =>
+      makeGoogleOidcTokenClient(config).pipe(
+        Effect.flatMap((client) => client.exchangeAndVerify(input)),
+      ),
+  };
+  const flow = yield* makeGoogleOidcFlow(config, tokenClient);
   productionFlows.set(config, flow);
-}
+  return flow;
+});
 
 export function googleOidcBindingCookie(input: {
   readonly binding: string;
@@ -346,16 +329,5 @@ export function googleOidcBindingCookie(input: {
     "Path=/auth/google",
     `Max-Age=${Math.floor(TRANSACTION_TTL_MS / 1_000)}`,
     ...(input.secure ? ["Secure"] : []),
-  ].join("; ");
-}
-
-export function clearGoogleOidcBindingCookie(secure: boolean): string {
-  return [
-    `${GOOGLE_OIDC_TRANSACTION_COOKIE}=`,
-    "HttpOnly",
-    "SameSite=Lax",
-    "Path=/auth/google",
-    "Max-Age=0",
-    ...(secure ? ["Secure"] : []),
   ].join("; ");
 }

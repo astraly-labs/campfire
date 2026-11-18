@@ -39,6 +39,8 @@
         "setup-worktree.ts",
         "sign-macos.ts",
         "prepare-server-compile-cache.cjs",
+        // Upstream's release workflow runs it; Campfire keeps its own workflows.
+        "resolve-nightly-release.ts",
         "smoke-desktop-app.ts",
         "verify-windows-desktop-artifact.ts",
       ],
@@ -101,7 +103,12 @@
     "apps/web": {
       // Worktree setup (scripts/setup-worktree.ts) runs this directly, and evidence
       // fixtures run under node.
-      "entry": ["scripts/warm-dep-cache.ts", "test/fixtures/**/*.mjs"],
+      // Upstream's release workflow runs verify-built-boot; Campfire keeps its own workflows.
+      "entry": [
+        "scripts/warm-dep-cache.ts",
+        "scripts/verify-built-boot.ts",
+        "test/fixtures/**/*.mjs",
+      ],
       // UI component modules are copied and adapted as cohesive sets. Keep their
       // named subcomponents even before they have callers; the file audit still
       // reports an entire component module when nothing imports it.

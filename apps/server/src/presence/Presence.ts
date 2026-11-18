@@ -117,7 +117,7 @@ function toSnapshot(state: PresenceState, nowMs: number): PresenceSnapshot {
   };
 }
 
-export const make = Effect.fn("Presence.make")(function* (options?: PresenceOptions) {
+const make = Effect.fn("Presence.make")(function* (options?: PresenceOptions) {
   const capacity = normalizePositiveInt(options?.capacity, DEFAULT_CAPACITY);
   const presenceTtlMs = normalizePositiveInt(options?.presenceTtlMs, DEFAULT_PRESENCE_TTL_MS);
   const typingTtlMs = normalizePositiveInt(options?.typingTtlMs, DEFAULT_TYPING_TTL_MS);
@@ -239,10 +239,3 @@ export const make = Effect.fn("Presence.make")(function* (options?: PresenceOpti
 export const layer = Layer.effect(Presence, make());
 
 export const layerTest = (options?: PresenceOptions) => Layer.effect(Presence, make(options));
-
-export const limits = {
-  capacity: DEFAULT_CAPACITY,
-  presenceTtlMs: DEFAULT_PRESENCE_TTL_MS,
-  typingTtlMs: DEFAULT_TYPING_TTL_MS,
-  sweepIntervalMs: DEFAULT_SWEEP_INTERVAL_MS,
-} as const;

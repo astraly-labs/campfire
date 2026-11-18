@@ -192,7 +192,7 @@ function latestStartedRun(
 }
 
 /** Remove only work owned by a runtime the external host positively identified. */
-export function withoutHostedRuntimeWork(
+function withoutHostedRuntimeWork(
   projection: ProjectionStore.ProjectionRuntimeRecoveryState,
   hosted: HostedRecoveryState,
 ): ProjectionStore.ProjectionRuntimeRecoveryState {

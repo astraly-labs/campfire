@@ -16,7 +16,6 @@ import { ChatImageAttachment, UploadChatImageAttachment } from "./chatAttachment
 
 export const ThreadKind = Schema.Literals(["default", "review"]);
 export type ThreadKind = typeof ThreadKind.Type;
-export const DEFAULT_THREAD_KIND: ThreadKind = "default";
 
 export const CollaborationUser = Schema.Struct({
   subject: TrimmedNonEmptyString,

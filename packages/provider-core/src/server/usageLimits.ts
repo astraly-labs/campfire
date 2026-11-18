@@ -89,11 +89,11 @@ export function applyUsageLimitsUpdate(input: {
       changed = true;
     }
   }
-  if (!changed && previous !== undefined) {
+  if (!changed && previous !== undefined && previous.unavailable === undefined) {
     return previous;
   }
-  const unavailable =
-    previous === undefined ? { reason: "probeFailed" as const } : previous.unavailable;
+  // Streamed windows replace a probe that could not read them; before any probe they stay marked.
+  const unavailable = previous === undefined ? { reason: "probeFailed" as const } : undefined;
   return {
     ...makeUsageLimits({ checkedAt: input.checkedAt, windows: merged.values() }),
     ...(previous?.resetCredits !== undefined ? { resetCredits: previous.resetCredits } : {}),

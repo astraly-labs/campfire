@@ -243,7 +243,7 @@ const migrationEntries = [
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
 
-export const makeMigrationLoader = (throughId?: number) =>
+const makeMigrationLoader = (throughId?: number) =>
   Migrator.fromRecord(
     Object.fromEntries(
       migrationEntries

@@ -575,7 +575,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
   };
   // A team quote's jump opens the fold that hides its message, and never closes one.
   const expandRevealedRun = (runId: RunId) => {
-    setExpandedRunIds((existing) => (existing.has(runId) ? existing : new Set(existing).add(runId)));
+    setExpandedRunIds((existing) =>
+      existing.has(runId) ? existing : new Set(existing).add(runId),
+    );
   };
   const onToggleWorkGroup = (groupId: string, anchorKey: string) => {
     preserveDisclosurePosition(

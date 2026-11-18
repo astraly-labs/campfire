@@ -44,7 +44,7 @@ function owningProject(snapshot: SidebarProjectSnapshot, thread: SidebarThreadSu
   );
 }
 
-export function isThreadOwnedByGoogleAccount(input: {
+function isThreadOwnedByGoogleAccount(input: {
   readonly snapshot: SidebarProjectSnapshot;
   readonly thread: SidebarThreadSummary;
   readonly currentGoogleSubject: string | null;

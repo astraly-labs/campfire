@@ -2,7 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId, PresenceEntry, ThreadId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
-import { useEffect, useMemo } from "react";
+import { useEffect } from "react";
 
 import { useAtomCommand } from "../state/use-atom-command";
 import { presenceEnvironment } from "../state/presence";
@@ -52,15 +52,13 @@ export function viewersForThread(
 export function useThreadPresence(environmentId: EnvironmentId, threadId: ThreadId) {
   const result = useAtomValue(presenceEnvironment.snapshot({ environmentId, input: {} }));
   const snapshot = Option.getOrNull(AsyncResult.value(result));
-  const viewers = useMemo(
-    () => viewersForThread(snapshot?.entries ?? [], threadId),
-    [snapshot, threadId],
-  );
+  const viewers = viewersForThread(snapshot?.entries ?? [], threadId);
   const heartbeat = useAtomCommand(presenceEnvironment.heartbeat, {
     reportDefect: false,
     reportFailure: false,
   });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- holds the heartbeat timer and typing listener while the thread is open
   useEffect(() => {
     let disposed = false;
     const send = () => {
@@ -85,8 +83,3 @@ export function useThreadPresence(environmentId: EnvironmentId, threadId: Thread
 
   return viewers;
 }
-
-export const presenceTiming = {
-  heartbeatIntervalMs: HEARTBEAT_INTERVAL_MS,
-  typingTtlMs: TYPING_TTL_MS,
-} as const;

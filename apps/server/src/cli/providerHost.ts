@@ -27,7 +27,7 @@ export class CodexProviderHostStartupError extends Schema.TaggedError<CodexProvi
   { cause: Schema.Defect() },
 ) {}
 
-export const runCodexProviderHost = Effect.fn("runCodexProviderHost")(function* (
+const runCodexProviderHost = Effect.fn("runCodexProviderHost")(function* (
   config: ServerConfig["Service"],
   socketPath: string,
 ) {
@@ -86,12 +86,18 @@ export const runCodexProviderHost = Effect.fn("runCodexProviderHost")(function* 
                     { discard: true },
                   ),
                 ),
-              openSession: (input, runtime, sessionScope) =>
-                Effect.gen(function* () {
+              openSession: Effect.fn("ProviderHost.openSession")(
+                function* (input, runtime, _sessionScope) {
                   const local =
                     runtime === undefined ? adapter : yield* make(Effect.succeed(runtime));
                   return yield* local.openSession(input);
-                }).pipe(Effect.provideService(Scope.Scope, sessionScope), Effect.provide(context)),
+                },
+                (effect, _input, _runtime, sessionScope) =>
+                  effect.pipe(
+                    Effect.provideService(Scope.Scope, sessionScope),
+                    Effect.provide(context),
+                  ),
+              ),
               close: () => runPromise(Scope.close(scope, Exit.void)),
             };
           },
