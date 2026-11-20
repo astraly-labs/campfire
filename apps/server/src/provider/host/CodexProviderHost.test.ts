@@ -496,6 +496,21 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, McpProviderSession
       }),
     );
 
+    it.effect("stops a running direct session as soon as its instance is rebuilt as managed", () =>
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture();
+        const scope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+        const direct = yield* fixture.connect(scope);
+        const running = yield* direct
+          .openSession(openInput)
+          .pipe(Effect.provideService(Scope.Scope, scope));
+        yield* running.startTurn(turn);
+        yield* fixture.connect(scope, managed);
+        expect(fixture.counts()).toEqual({ opens: 1, starts: 1, closes: 1 });
+      }),
+    );
+
     it.effect("never reattaches a direct session to an instance that now names another home", () =>
       Effect.gen(function* () {
         const fixture = yield* makeFixture();
