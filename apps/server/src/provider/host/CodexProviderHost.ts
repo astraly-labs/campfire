@@ -89,6 +89,7 @@ interface InstanceState {
   pendingConfig?: typeof Protocol.Configuration.Type;
   readonly sessions: Map<ProviderSessionId, HostedSession>;
   readonly openingSessions: Map<ProviderSessionId, Promise<HostedSession>>;
+  readonly stoppingSessions: Map<ProviderSessionId, Promise<void>>;
   readonly commands: Map<string, Promise<Protocol.ServerMessage>>;
   readonly mcpSessions: Map<string, typeof Protocol.McpSession.Type>;
   readonly outbox: Map<number, { event: HostEvent; bytes: number }>;
@@ -160,6 +161,7 @@ export async function startCodexProviderHostServer(options: CodexProviderHostSer
         replay: false,
         sessions: new Map(),
         openingSessions: new Map(),
+        stoppingSessions: new Map(),
         commands: new Map(),
         mcpSessions: new Map(),
         outbox: new Map(),
@@ -172,14 +174,23 @@ export async function startCodexProviderHostServer(options: CodexProviderHostSer
     }
     return state;
   };
-  const stopSession = async (state: InstanceState, id: ProviderSessionId) => {
-    const session = state.sessions.get(id) ?? (await state.openingSessions.get(id));
-    if (!session) return;
-    state.sessions.delete(id);
-    for (const [threadId, config] of state.mcpSessions)
-      if (config.providerSessionId === id) state.mcpSessions.delete(threadId);
-    if (session.eventFiber) await Effect.runPromise(Fiber.interrupt(session.eventFiber));
-    await Effect.runPromise(Scope.close(session.scope, Exit.void));
+  // A later close or open of the id waits for this one, so one id never runs twice.
+  const stopSession = (state: InstanceState, id: ProviderSessionId): Promise<void> => {
+    const stopping = state.stoppingSessions.get(id);
+    if (stopping) return stopping;
+    const stop = (async () => {
+      const session = state.sessions.get(id) ?? (await state.openingSessions.get(id));
+      if (!session) return;
+      state.sessions.delete(id);
+      for (const [threadId, config] of state.mcpSessions)
+        if (config.providerSessionId === id) state.mcpSessions.delete(threadId);
+      if (session.eventFiber) await Effect.runPromise(Fiber.interrupt(session.eventFiber));
+      await Effect.runPromise(Scope.close(session.scope, Exit.void));
+    })().finally(() => {
+      if (state.stoppingSessions.get(id) === stop) state.stoppingSessions.delete(id);
+    });
+    state.stoppingSessions.set(id, stop);
+    return stop;
   };
   const failInstance = (state: InstanceState, detail: string) => {
     state.failed = detail;
@@ -331,6 +342,7 @@ export async function startCodexProviderHostServer(options: CodexProviderHostSer
           ? await options.checkRuntime({ instanceId, configuration, runtime: effectiveRuntime })
           : undefined;
         if (problem !== undefined) throw protocolError(problem);
+        await state.stoppingSessions.get(input.providerSessionId)?.catch(() => undefined);
         const existing = state.sessions.get(input.providerSessionId);
         if (existing) return await reuse(existing);
         let opening = state.openingSessions.get(input.providerSessionId);

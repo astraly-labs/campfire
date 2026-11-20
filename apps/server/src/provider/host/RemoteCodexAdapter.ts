@@ -11,6 +11,7 @@ import * as Adapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
@@ -262,15 +263,40 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
       ),
     );
   yield* call("configure", Protocol.Configuration, Schema.Void, options.configuration);
-  const stopSession = (sessionId: ProviderSessionId) =>
-    Effect.sync(() => launches.delete(sessionId)).pipe(
-      Effect.andThen(call("closeSession", Schema.Void, Schema.Void, undefined, sessionId)),
-      Effect.timeout("2 seconds"),
-      Effect.interruptible,
-      Effect.mapError((cause) =>
-        error("Could not confirm the hosted Codex session stopped.", cause),
+  // The host answers a close once the session has stopped, which can be after its caller gave up.
+  const stopping = new Map<
+    ProviderSessionId,
+    Deferred.Deferred<void, Adapter.ProviderAdapterV2Error>
+  >();
+  const stopSession = Effect.fn("RemoteCodexAdapter.stopSession")(
+    function* (sessionId: ProviderSessionId) {
+      launches.delete(sessionId);
+      let stopped = stopping.get(sessionId);
+      if (stopped === undefined) {
+        const close = yield* Deferred.make<void, Adapter.ProviderAdapterV2Error>();
+        stopping.set(sessionId, close);
+        runFork(
+          call("closeSession", Schema.Void, Schema.Void, undefined, sessionId).pipe(
+            Effect.onExit((exit) =>
+              Effect.sync(() => {
+                if (stopping.get(sessionId) === close) stopping.delete(sessionId);
+              }).pipe(Effect.andThen(Deferred.done(close, exit))),
+            ),
+          ),
+        );
+        stopped = close;
+      }
+      return yield* Deferred.await(stopped);
+    },
+    (effect) =>
+      effect.pipe(
+        Effect.timeout("2 seconds"),
+        Effect.interruptible,
+        Effect.mapError((cause) =>
+          error("Could not confirm the hosted Codex session stopped.", cause),
+        ),
       ),
-    );
+  );
   const mcpForThread = (threadId: ThreadId | null) =>
     threadId === null
       ? Effect.succeed([])
@@ -330,6 +356,10 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
       ),
     ),
     openSession: Effect.fn("RemoteCodexAdapter.openSession")(function* (input) {
+      if (stopping.has(input.providerSessionId))
+        return yield* error(
+          `Hosted Codex session ${input.providerSessionId} has not confirmed that it stopped. Retry once it stops.`,
+        );
       const queue = yield* Queue.bounded<
         Adapter.ProviderAdapterV2Event,
         Adapter.ProviderAdapterV2Error
