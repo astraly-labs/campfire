@@ -359,6 +359,45 @@ const sendPipelined = (
       }),
   );
 
+// Subscribes the client to a fake host process with this id, then hands each client frame on.
+const acceptAs = (
+  socket: NodeNet.Socket,
+  hostId: string,
+  handle: (message: Protocol.ClientMessage) => void,
+) => {
+  let buffer = "";
+  socket.setEncoding("utf8");
+  socket.on("data", (chunk: string) => {
+    buffer += chunk;
+    for (let end = buffer.indexOf("\n"); end >= 0; end = buffer.indexOf("\n")) {
+      handle(Protocol.decode(Protocol.ClientMessage, JSON.parse(buffer.slice(0, end))));
+      buffer = buffer.slice(end + 1);
+    }
+  });
+  socket.write(
+    Protocol.encodeServer({
+      type: "subscribed",
+      protocolVersion: Protocol.PROTOCOL_VERSION,
+      hostId,
+      lease: 1,
+      committed: 0,
+    }),
+  );
+};
+const answer = (socket: NodeNet.Socket, message: Protocol.ClientMessage) => {
+  if (message.type !== "command") return;
+  socket.write(
+    Protocol.encodeServer({
+      type: "response",
+      requestId: message.requestId,
+      result:
+        message.operation === "capabilities"
+          ? Protocol.encode(Protocol.Capabilities, CodexProviderCapabilitiesV2)
+          : Protocol.encode(Schema.Void, undefined),
+    }),
+  );
+};
+
 const makeFixture = (
   options: {
     readonly maxBufferBytes?: number;
@@ -1040,6 +1079,68 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, McpProviderSession
         expect(yield* Fiber.join(connecting)).toMatchObject({
           _tag: "ProviderAdapterProtocolError",
           detail: expect.stringContaining("without an answer"),
+        });
+      }),
+    );
+    it.effect(
+      "finishes startup on the host that answers after a restart during configuration",
+      () =>
+        Effect.gen(function* () {
+          let epoch = 0;
+          const host = yield* fakeHost((socket) => {
+            const current = ++epoch;
+            acceptAs(socket, `host-${current}`, (message) =>
+              current === 1 ? socket.destroy() : answer(socket, message),
+            );
+          });
+          expect(yield* remote(host.socketPath).pipe(Effect.exit)).toMatchObject({
+            _tag: "Success",
+          });
+          expect(epoch).toBe(2);
+        }),
+    );
+    it.effect("keeps serving when a restarted host drops the answer to its configuration", () =>
+      Effect.gen(function* () {
+        let epoch = 0;
+        const first = Promise.withResolvers<NodeNet.Socket>();
+        const thirdConfigured = Promise.withResolvers<void>();
+        const host = yield* fakeHost((socket) => {
+          const current = ++epoch;
+          if (current === 1) first.resolve(socket);
+          acceptAs(socket, `host-${current}`, (message) => {
+            if (current === 2 && message.type === "command") return socket.destroy();
+            answer(socket, message);
+            if (current === 3) thirdConfigured.resolve();
+          });
+        });
+        const client = yield* remote(host.socketPath);
+        (yield* Effect.promise(() => first.promise)).destroy();
+        yield* Effect.promise(() => thirdConfigured.promise);
+        expect(yield* client.getCapabilities().pipe(Effect.exit)).toMatchObject({
+          _tag: "Success",
+          value: CodexProviderCapabilitiesV2,
+        });
+      }),
+    );
+    it.effect("closes cleanly while a restarted host has not answered its configuration", () =>
+      Effect.gen(function* () {
+        let epoch = 0;
+        const first = Promise.withResolvers<NodeNet.Socket>();
+        const configuring = Promise.withResolvers<void>();
+        const host = yield* fakeHost((socket) => {
+          const current = ++epoch;
+          if (current === 1) first.resolve(socket);
+          acceptAs(socket, `host-${current}`, (message) => {
+            if (current === 1) answer(socket, message);
+            else if (message.type === "command") configuring.resolve();
+          });
+        });
+        const scope = yield* Scope.make();
+        yield* remote(host.socketPath).pipe(Effect.provideService(Scope.Scope, scope));
+        (yield* Effect.promise(() => first.promise)).destroy();
+        yield* Effect.promise(() => configuring.promise);
+        expect(yield* Scope.close(scope, Exit.void).pipe(Effect.exit)).toMatchObject({
+          _tag: "Success",
         });
       }),
     );
