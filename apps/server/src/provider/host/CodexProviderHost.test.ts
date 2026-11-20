@@ -39,6 +39,7 @@ import {
   type CodexEffectiveRuntime,
 } from "../CodexManagedRuntime.ts";
 import { startCodexProviderHostServer } from "./CodexProviderHost.ts";
+import type * as Protocol from "./Protocol.ts";
 import { makeRemoteCodexAdapter, type RemoteCodexAdapterOptions } from "./RemoteCodexAdapter.ts";
 
 const instanceId = ProviderInstanceId.make("codex");
@@ -163,7 +164,7 @@ const makeFixture = (maxBufferBytes?: number) =>
     let opens = 0;
     let closes = 0;
     let starts = 0;
-    const homes: Array<string | undefined> = [];
+    const runtimes: Array<typeof Protocol.EffectiveRuntime.Type | undefined> = [];
     const unsupported = Effect.fail(
       new Adapter.ProviderAdapterProtocolError({ driver, detail: "Unused fake operation." }),
     );
@@ -212,7 +213,7 @@ const makeFixture = (maxBufferBytes?: number) =>
             adapter,
             setMcpSessions: async () => {},
             openSession: (input, runtime, scope) =>
-              Effect.sync(() => homes.push(runtime?.config.homePath)).pipe(
+              Effect.sync(() => runtimes.push(runtime)).pipe(
                 Effect.andThen(adapter.openSession(input)),
                 Effect.provideService(Scope.Scope, scope),
               ),
@@ -236,7 +237,8 @@ const makeFixture = (maxBufferBytes?: number) =>
       events,
       closed,
       counts: () => ({ opens, closes, starts }),
-      homes: () => [...homes],
+      homes: () => runtimes.map((runtime) => runtime?.config.homePath),
+      launchArgs: () => runtimes.map((runtime) => runtime?.config.launchArgs),
     };
   });
 
@@ -345,6 +347,30 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, McpProviderSession
           ).toMatchObject(refused);
           expect(fixture.homes()).toEqual([managedHome]);
         }),
+    );
+
+    it.effect("reopens a managed session that still names a replaced server's token broker", () =>
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture();
+        const firstScope = yield* Scope.make();
+        const first = yield* fixture.connect(firstScope, managed);
+        yield* first.openSession(openInput).pipe(Effect.provideService(Scope.Scope, firstScope));
+        yield* Scope.close(firstScope, Exit.void);
+        const nextScope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(nextScope, Exit.void));
+        const nextRuntime = brokeredRuntime("/tmp/t3-token-next/s");
+        const next = yield* fixture.connect(nextScope, {
+          ...managed,
+          resolveRuntime: Effect.succeed(nextRuntime),
+        });
+        expect(yield* next.hostedSessions!).toEqual([]);
+        yield* next.openSession(openInput).pipe(Effect.provideService(Scope.Scope, nextScope));
+        expect(fixture.launchArgs()).toEqual([
+          managedRuntime.config.launchArgs,
+          nextRuntime.config.launchArgs,
+        ]);
+        expect(fixture.counts()).toMatchObject({ opens: 2, closes: 1 });
+      }),
     );
 
     it.effect("refuses a managed runtime with another home or without its token broker", () =>
