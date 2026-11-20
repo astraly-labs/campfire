@@ -1,3 +1,5 @@
+// @effect-diagnostics nodeBuiltinImport:off - a raw socket client speaks the host protocol like an older server.
+import * as NodeNet from "node:net";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
@@ -39,7 +41,7 @@ import {
   type CodexEffectiveRuntime,
 } from "../CodexManagedRuntime.ts";
 import { startCodexProviderHostServer } from "./CodexProviderHost.ts";
-import type * as Protocol from "./Protocol.ts";
+import * as Protocol from "./Protocol.ts";
 import { makeRemoteCodexAdapter, type RemoteCodexAdapterOptions } from "./RemoteCodexAdapter.ts";
 
 const instanceId = ProviderInstanceId.make("codex");
@@ -154,6 +156,65 @@ const managed: ServerSide = {
   resolveRuntime: Effect.succeed(managedRuntime),
 };
 
+type RawCommand = Pick<
+  Extract<Protocol.ClientMessage, { readonly type: "command" }>,
+  "operation" | "payload" | "sessionId" | "effectiveRuntime"
+>;
+// Sends each command after the previous reply, without the checks of the current adapter.
+const sendRaw = (socketPath: string, commands: ReadonlyArray<RawCommand>) =>
+  Effect.promise(
+    () =>
+      new Promise<ReadonlyArray<Protocol.ServerMessage>>((resolve) => {
+        const socket = NodeNet.createConnection(socketPath);
+        socket.setEncoding("utf8");
+        const replies: Array<Protocol.ServerMessage> = [];
+        let buffer = "";
+        let lease = 0;
+        const sendNext = () => {
+          const command = commands[replies.length];
+          if (command === undefined) {
+            socket.destroy();
+            resolve(replies);
+            return;
+          }
+          const id = `raw:${replies.length}`;
+          socket.write(
+            Protocol.encodeClient({
+              type: "command",
+              lease,
+              commandId: id,
+              requestId: id,
+              ...command,
+            }),
+          );
+        };
+        socket.on("data", (chunk: string) => {
+          buffer += chunk;
+          for (let end = buffer.indexOf("\n"); end >= 0; end = buffer.indexOf("\n")) {
+            const message = Protocol.decode(
+              Protocol.ServerMessage,
+              JSON.parse(buffer.slice(0, end)),
+            );
+            buffer = buffer.slice(end + 1);
+            if (message.type === "subscribed") lease = message.lease;
+            else if (message.type === "response" || message.type === "error") replies.push(message);
+            else continue;
+            sendNext();
+          }
+        });
+        socket.once("connect", () =>
+          socket.write(
+            Protocol.encodeClient({
+              type: "subscribe",
+              protocolVersion: Protocol.PROTOCOL_VERSION,
+              instanceId,
+              after: 0,
+            }),
+          ),
+        );
+      }),
+  );
+
 const makeFixture = (maxBufferBytes?: number) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -164,7 +225,10 @@ const makeFixture = (maxBufferBytes?: number) =>
     let opens = 0;
     let closes = 0;
     let starts = 0;
-    const runtimes: Array<typeof Protocol.EffectiveRuntime.Type | undefined> = [];
+    const launches: Array<{
+      readonly configuration: typeof Protocol.Configuration.Type;
+      readonly runtime: typeof Protocol.EffectiveRuntime.Type | undefined;
+    }> = [];
     const unsupported = Effect.fail(
       new Adapter.ProviderAdapterProtocolError({ driver, detail: "Unused fake operation." }),
     );
@@ -209,11 +273,11 @@ const makeFixture = (maxBufferBytes?: number) =>
           ...(maxBufferBytes === undefined ? {} : { maxBufferBytes }),
           checkRuntime: async ({ instanceId, runtime }) =>
             managedCodexRuntimeProblem({ instanceId, homePath: managedHome }, runtime),
-          createAdapter: async () => ({
+          createAdapter: async (configuration) => ({
             adapter,
             setMcpSessions: async () => {},
             openSession: (input, runtime, scope) =>
-              Effect.sync(() => runtimes.push(runtime)).pipe(
+              Effect.sync(() => launches.push({ configuration, runtime })).pipe(
                 Effect.andThen(adapter.openSession(input)),
                 Effect.provideService(Scope.Scope, scope),
               ),
@@ -237,8 +301,9 @@ const makeFixture = (maxBufferBytes?: number) =>
       events,
       closed,
       counts: () => ({ opens, closes, starts }),
-      homes: () => runtimes.map((runtime) => runtime?.config.homePath),
-      launchArgs: () => runtimes.map((runtime) => runtime?.config.launchArgs),
+      homes: () =>
+        launches.map(({ configuration, runtime }) => (runtime ?? configuration).config.homePath),
+      launchArgs: () => launches.map(({ runtime }) => runtime?.config.launchArgs),
     };
   });
 
@@ -357,7 +422,81 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, McpProviderSession
         const client = yield* fixture.connect(scope, managed);
         expect(yield* client.hostedSessions!).toEqual([]);
         yield* client.openSession(openInput).pipe(Effect.provideService(Scope.Scope, scope));
-        expect(fixture.homes()).toEqual([undefined, managedHome]);
+        expect(fixture.homes()).toEqual(["", managedHome]);
+        expect(fixture.counts()).toMatchObject({ opens: 2, closes: 1 });
+      }),
+    );
+
+    it.effect("never reattaches a direct session to an instance that now names another home", () =>
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture();
+        const firstScope = yield* Scope.make();
+        const first = yield* fixture.connect(firstScope);
+        yield* first.openSession(openInput).pipe(Effect.provideService(Scope.Scope, firstScope));
+        yield* Scope.close(firstScope, Exit.void);
+        const scope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+        const otherHome = "/Users/someone/.codex-other";
+        const moved = yield* fixture.connect(scope, {
+          configuration: { config: decodeSettings({ homePath: otherHome }), environment: [] },
+        });
+        expect(yield* moved.hostedSessions!).toEqual([]);
+        yield* moved.openSession(openInput).pipe(Effect.provideService(Scope.Scope, scope));
+        expect(fixture.homes()).toEqual(["", otherHome]);
+        expect(fixture.counts()).toMatchObject({ opens: 2, closes: 1 });
+      }),
+    );
+
+    it.effect("refuses a runtime-less open while a managed configuration waits", () =>
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture();
+        const scope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+        const direct = yield* fixture.connect(scope);
+        yield* direct.openSession(openInput).pipe(Effect.provideService(Scope.Scope, scope));
+        const runtimeless = yield* fixture.connect(scope, {
+          configuration: managed.configuration,
+        });
+        const refusal = yield* runtimeless
+          .openSession({ ...openInput, providerSessionId: ProviderSessionId.make("next") })
+          .pipe(Effect.provideService(Scope.Scope, scope), Effect.exit);
+        expect(fixture.homes()).toEqual([""]);
+        expect(refusal).toMatchObject({
+          _tag: "Failure",
+          cause: { reasons: [{ error: { _tag: "ProviderAdapterProtocolError" } }] },
+        });
+      }),
+    );
+
+    it.effect("refuses to hand a session to a request with another login and stops it", () =>
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture();
+        const scope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+        const direct = yield* fixture.connect(scope);
+        yield* direct.openSession(openInput).pipe(Effect.provideService(Scope.Scope, scope));
+        const open = (effectiveRuntime?: CodexEffectiveRuntime): RawCommand => ({
+          operation: "openSession",
+          sessionId,
+          payload: Protocol.encode(Protocol.OpenSession, openInput),
+          ...(effectiveRuntime === undefined ? {} : { effectiveRuntime }),
+        });
+        const replies = yield* sendRaw(fixture.host.socketPath, [
+          {
+            operation: "configure",
+            payload: Protocol.encode(Protocol.Configuration, managed.configuration),
+          },
+          open(managedRuntime),
+          open(managedRuntime),
+          open(),
+        ]);
+        expect(replies.map((reply) => reply.type)).toEqual([
+          "response",
+          "error",
+          "response",
+          "response",
+        ]);
+        expect(fixture.homes()).toEqual(["", managedHome]);
         expect(fixture.counts()).toMatchObject({ opens: 2, closes: 1 });
       }),
     );
