@@ -1273,6 +1273,47 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, McpProviderSession
         expect(yield* Effect.promise(() => outcome.promise)).toBe("the new host received the open");
       }),
     );
+    it.effect("fails waiting commands while a host hangs up, until a host answers again", () =>
+      Effect.gen(function* () {
+        let epoch = 0;
+        let silent = true;
+        const first = Promise.withResolvers<NodeNet.Socket>();
+        const retried = Promise.withResolvers<void>();
+        const answered = Promise.withResolvers<void>();
+        const host = yield* fakeHost((socket) => {
+          const current = ++epoch;
+          if (current === 1) first.resolve(socket);
+          if (current === 3) retried.resolve();
+          if (current > 1 && silent) return socket.destroy();
+          acceptAs(socket, `host-${current === 1 ? 1 : 2}`, (message) => {
+            if (message.type === "ack") return answered.resolve();
+            answer(socket, message);
+            // The client acknowledges this frame only after it reads the answer before it.
+            if (current > 1) socket.write(continuation(1));
+          });
+        });
+        const client = yield* remote(host.socketPath);
+        (yield* Effect.promise(() => first.promise)).destroy();
+        yield* Effect.promise(() => retried.promise);
+        const waiting = yield* client
+          .getCapabilities()
+          .pipe(Effect.flip, Effect.timeoutOption("20 seconds"), Effect.forkScoped);
+        yield* TestClock.adjust("30 seconds");
+        expect(yield* Fiber.join(waiting)).toMatchObject({
+          _tag: "Some",
+          value: {
+            _tag: "ProviderAdapterProtocolError",
+            detail: expect.stringContaining("without an answer"),
+          },
+        });
+        expect(yield* client.getCapabilities().pipe(Effect.flip)).toMatchObject({
+          detail: expect.stringContaining("without an answer"),
+        });
+        silent = false;
+        yield* Effect.promise(() => answered.promise);
+        expect(yield* client.getCapabilities()).toEqual(CodexProviderCapabilitiesV2);
+      }),
+    );
     it.effect("fails visibly and stops the native runtime when the replay buffer is full", () =>
       Effect.gen(function* () {
         const fixture = yield* makeFixture({ maxBufferBytes: 100 });
