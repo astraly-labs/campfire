@@ -117,6 +117,39 @@ it.live.each(
           assert.isUndefined(
             managedCodexRuntimeProblem({ instanceId, homePath: runtime.homePath }, effective),
           );
+          const owned = {
+            instanceId,
+            homePath: runtime.homePath,
+            route: { launchArgs: effective.config.launchArgs, profileKey: effective.revision },
+          };
+          assert.isUndefined(managedCodexRuntimeProblem(owned, effective));
+          const otherProfile = "b".repeat(64);
+          for (const routed of [
+            effective.config.launchArgs.replace("t3-token-", "t3-token-other-"),
+            effective.config.launchArgs.replace(
+              "00000000-0000-4000-8000-000000000001",
+              "00000000-0000-4000-8000-000000000002",
+            ),
+          ])
+            assert.isDefined(
+              managedCodexRuntimeProblem(owned, {
+                ...effective,
+                config: { ...effective.config, launchArgs: routed },
+              }),
+            );
+          assert.isDefined(
+            managedCodexRuntimeProblem(owned, {
+              ...effective,
+              revision: otherProfile,
+              config: {
+                ...effective.config,
+                launchArgs: effective.config.launchArgs.replaceAll(
+                  effective.revision,
+                  otherProfile,
+                ),
+              },
+            }),
+          );
           assert.strictEqual(leases, 1);
           assert.strictEqual(effective.config.binaryPath, executable.executablePath);
           assert.notStrictEqual(effective.config.homePath, ambient.CODEX_HOME);

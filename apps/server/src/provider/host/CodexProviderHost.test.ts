@@ -271,10 +271,15 @@ const sendPipelined = (
   );
 
 const makeFixture = (
-  options: { readonly maxBufferBytes?: number; readonly beforeClose?: Effect.Effect<void> } = {},
+  options: {
+    readonly maxBufferBytes?: number;
+    readonly beforeClose?: Effect.Effect<void>;
+    /** False stands for a host that accepts any runtime, such as a release before the check. */
+    readonly checksRuntime?: boolean;
+  } = {},
 ) =>
   Effect.gen(function* () {
-    const { maxBufferBytes, beforeClose = Effect.void } = options;
+    const { maxBufferBytes, beforeClose = Effect.void, checksRuntime = true } = options;
     const fs = yield* FileSystem.FileSystem;
     const temp = yield* fs.makeTempDirectoryScoped({ prefix: "campfire-host-" });
     const socketPath = `${temp}/host.sock`;
@@ -337,10 +342,12 @@ const makeFixture = (
           socketPath,
           ...(maxBufferBytes === undefined ? {} : { maxBufferBytes }),
           checkRuntime: async ({ instanceId, configuration, runtime }) =>
-            managedCodexRuntimeProblem(
-              { instanceId, homePath: configuration.config.homePath || managedHome },
-              runtime,
-            ),
+            checksRuntime
+              ? managedCodexRuntimeProblem(
+                  { instanceId, homePath: configuration.config.homePath || managedHome },
+                  runtime,
+                )
+              : undefined,
           createAdapter: async (configuration) => ({
             adapter,
             setMcpSessions: async () => {},
@@ -775,6 +782,30 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, McpProviderSession
           });
           expect(fixture.closesAtOpens()).toEqual([0, 1]);
         }),
+    );
+
+    it.effect("never sends a managed runtime that its server's own token route refuses", () =>
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture({ checksRuntime: false });
+        const scope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+        const otherBroker = {
+          ...managed,
+          resolveRuntime: Effect.succeed(brokeredRuntime("/tmp/t3-token-other/s")),
+          managedIdentity: Effect.succeed({
+            instanceId,
+            homePath: managedHome,
+            route: { launchArgs: managedRuntime.config.launchArgs, profileKey },
+          }),
+        };
+        const client = yield* fixture.connect(scope, otherBroker);
+        expect(
+          yield* client
+            .openSession(openInput)
+            .pipe(Effect.provideService(Scope.Scope, scope), Effect.flip),
+        ).toMatchObject({ _tag: "ProviderAdapterProtocolError" });
+        expect(fixture.homes()).toEqual([]);
+      }),
     );
 
     it.effect("refuses a managed runtime with another home or without its token broker", () =>
