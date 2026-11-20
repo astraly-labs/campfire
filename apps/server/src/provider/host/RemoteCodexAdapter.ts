@@ -35,6 +35,7 @@ const error = (detail: string, payload?: unknown) =>
   });
 type Command = Extract<Protocol.ClientMessage, { readonly type: "command" }>;
 type SessionDescription = typeof Protocol.SessionDescription.Type;
+type McpSessions = ReadonlyArray<typeof Protocol.McpSession.Type>;
 interface PendingCommand {
   readonly command: Omit<Command, "lease">;
   readonly resolve: (value: unknown) => void;
@@ -74,6 +75,7 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
   const reattachable = new Map<ProviderSessionId, SessionDescription>();
   // The last host frame before each fresh session: earlier frames belong to a session it replaced.
   const freshAfter = new Map<ProviderSessionId, number>();
+  const handles = new Map<ProviderSessionId, object>();
   // The launch of each hosted session that this adapter started or verified.
   const launches = new Map<ProviderSessionId, string>();
   const managed = options.configuration.config.setupMode === "managed";
@@ -555,31 +557,42 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
       launches.set(input.providerSessionId, launch);
       if (!existing) yield* enableReplay;
       const sessionId = input.providerSessionId;
+      // Only the newest open of an id on the current host may act on that session.
+      const handle = {};
+      const openedOn = hostId;
+      handles.set(sessionId, handle);
+      const live = () => handles.get(sessionId) === handle && hostId === openedOn;
+      const sessionCall = <A, I, B, J>(
+        operation: Protocol.Operation,
+        inputSchema: Schema.Codec<A, I>,
+        outputSchema: Schema.Codec<B, J>,
+        payload: A,
+        extras?: { readonly commandId?: string; readonly mcpSessions?: McpSessions },
+      ) =>
+        Effect.suspend(() =>
+          live()
+            ? call(operation, inputSchema, outputSchema, payload, sessionId, extras)
+            : Effect.fail(
+                error(
+                  `Hosted Codex session ${sessionId} has a newer open or a restarted host, so this handle ended.`,
+                ),
+              ),
+        );
       const supports = (method: string) => description.methods.includes(method);
       const ensureThread: Adapter.ProviderAdapterV2SessionRuntime["ensureThread"] = (payload) =>
         mcpForThread(payload.threadId).pipe(
           Effect.flatMap((mcpSessions) =>
-            call(
-              "ensureThread",
-              Protocol.EnsureThread,
-              Protocol.ProviderThread,
-              payload,
-              sessionId,
-              { mcpSessions },
-            ),
+            sessionCall("ensureThread", Protocol.EnsureThread, Protocol.ProviderThread, payload, {
+              mcpSessions,
+            }),
           ),
         );
       const resumeThread: Adapter.ProviderAdapterV2SessionRuntime["resumeThread"] = (payload) =>
         mcpForThread(payload.threadId ?? payload.providerThread.appThreadId).pipe(
           Effect.flatMap((mcpSessions) =>
-            call(
-              "resumeThread",
-              Protocol.ResumeThread,
-              Protocol.ProviderThread,
-              payload,
-              sessionId,
-              { mcpSessions },
-            ),
+            sessionCall("resumeThread", Protocol.ResumeThread, Protocol.ProviderThread, payload, {
+              mcpSessions,
+            }),
           ),
         );
       const start = (
@@ -588,7 +601,7 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
       ) =>
         enableReplay.pipe(
           Effect.andThen(
-            call(operation, Protocol.Turn, Schema.Void, payload, sessionId, {
+            sessionCall(operation, Protocol.Turn, Schema.Void, payload, {
               commandId: `${operation}:${sessionId}:${payload.attemptId}`,
             }),
           ),
@@ -600,25 +613,20 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
         providerSession: description.session,
         events: Stream.fromQueue(queue),
         externalLifetime: {
-          stop: stopSession(sessionId),
+          stop: Effect.suspend(() => (live() ? stopSession(sessionId) : Effect.void)),
           replay: enableReplay,
         },
         canReuseContextUsage: options.canReuseContextUsage,
-        hasPendingBackgroundWork: call(
+        hasPendingBackgroundWork: sessionCall(
           "hasPendingBackgroundWork",
           Schema.Void,
           Schema.Boolean,
           undefined,
-          sessionId,
         ).pipe(Effect.orElseSucceed(() => true)),
         hasPendingBackgroundWorkForThread: (providerThread) =>
-          call(
-            "hasPendingBackgroundWorkForThread",
-            Protocol.Thread,
-            Schema.Boolean,
-            { providerThread },
-            sessionId,
-          ).pipe(Effect.orElseSucceed(() => true)),
+          sessionCall("hasPendingBackgroundWorkForThread", Protocol.Thread, Schema.Boolean, {
+            providerThread,
+          }).pipe(Effect.orElseSucceed(() => true)),
         ensureThread,
         resumeThread,
         startTurn: (payload) => start("startTurn", payload),
@@ -628,60 +636,57 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
                 start("compactThread", payload),
             }
           : {}),
-        steerTurn: (payload) => call("steerTurn", Protocol.Steer, Schema.Void, payload, sessionId),
+        steerTurn: (payload) => sessionCall("steerTurn", Protocol.Steer, Schema.Void, payload),
         interruptTurn: (payload) =>
-          call("interruptTurn", Protocol.Interrupt, Schema.Void, payload, sessionId),
+          sessionCall("interruptTurn", Protocol.Interrupt, Schema.Void, payload),
         respondToRuntimeRequest: (payload) =>
-          call("respondToRuntimeRequest", Protocol.Respond, Schema.Void, payload, sessionId),
+          sessionCall("respondToRuntimeRequest", Protocol.Respond, Schema.Void, payload),
         readThreadSnapshot: (payload) =>
-          call("readThreadSnapshot", Protocol.Thread, Protocol.ThreadSnapshot, payload, sessionId),
+          sessionCall("readThreadSnapshot", Protocol.Thread, Protocol.ThreadSnapshot, payload),
         rollbackThread: (payload) =>
-          call("rollbackThread", Protocol.Rollback, Protocol.ThreadSnapshot, payload, sessionId),
+          sessionCall("rollbackThread", Protocol.Rollback, Protocol.ThreadSnapshot, payload),
         forkThread: (payload) =>
-          call("forkThread", Protocol.Fork, Protocol.ProviderThread, payload, sessionId),
+          sessionCall("forkThread", Protocol.Fork, Protocol.ProviderThread, payload),
         ...(supports("injectHistory")
           ? {
               injectHistory: (
                 payload: Adapter.ProviderAdapterV2HistoricalContext & {
                   readonly providerThread: typeof Protocol.ProviderThread.Type;
                 },
-              ) =>
-                call("injectHistory", Protocol.InjectHistory, Schema.Boolean, payload, sessionId),
+              ) => sessionCall("injectHistory", Protocol.InjectHistory, Schema.Boolean, payload),
             }
           : {}),
         ...(supports("unloadThread")
           ? {
               unloadThread: (payload: typeof Protocol.Thread.Type) =>
-                call("unloadThread", Protocol.Thread, Schema.Void, payload, sessionId),
+                sessionCall("unloadThread", Protocol.Thread, Schema.Void, payload),
             }
           : {}),
         ...(supports("stopTask")
           ? {
               stopTask: (payload: typeof Protocol.StopTask.Type) =>
-                call("stopTask", Protocol.StopTask, Schema.Void, payload, sessionId),
+                sessionCall("stopTask", Protocol.StopTask, Schema.Void, payload),
             }
           : {}),
         ...(supports("stopSubagent")
           ? {
               stopSubagent: (payload: typeof Protocol.StopSubagent.Type) =>
-                call(
+                sessionCall(
                   "stopSubagent",
                   Protocol.StopSubagent,
                   Protocol.SubagentOutcome,
                   payload,
-                  sessionId,
                 ),
             }
           : {}),
         ...(supports("uploadFeedback")
           ? {
               uploadFeedback: (payload: typeof Protocol.Feedback.Type) =>
-                call(
+                sessionCall(
                   "uploadFeedback",
                   Protocol.Feedback,
                   Schema.Struct({ feedbackId: Schema.String }),
                   payload,
-                  sessionId,
                 ),
             }
           : {}),
@@ -689,28 +694,15 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
           ? {
               mcpApps: {
                 listTools: (payload: typeof Protocol.McpToolsInput.Type) =>
-                  call(
-                    "mcp.listTools",
-                    Protocol.McpToolsInput,
-                    Protocol.McpTools,
-                    payload,
-                    sessionId,
-                  ),
+                  sessionCall("mcp.listTools", Protocol.McpToolsInput, Protocol.McpTools, payload),
                 callTool: (payload: typeof Protocol.McpCallInput.Type) =>
-                  call(
-                    "mcp.callTool",
-                    Protocol.McpCallInput,
-                    Protocol.McpResult,
-                    payload,
-                    sessionId,
-                  ),
+                  sessionCall("mcp.callTool", Protocol.McpCallInput, Protocol.McpResult, payload),
                 readResource: (payload: typeof Protocol.McpResourceInput.Type) =>
-                  call(
+                  sessionCall(
                     "mcp.readResource",
                     Protocol.McpResourceInput,
                     Protocol.McpResource,
                     payload,
-                    sessionId,
                   ),
               },
             }
