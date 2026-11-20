@@ -322,11 +322,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, McpProviderSession
           const runtimeless = yield* fixture.connect(scope, {
             configuration: managed.configuration,
           });
-          yield* runtimeless.hostedSessions!;
-          const reattached = yield* runtimeless
-            .openSession(openInput)
-            .pipe(Effect.provideService(Scope.Scope, scope));
-          yield* reattached.externalLifetime!.stop;
+          expect(yield* runtimeless.hostedSessions!).toEqual([]);
           expect(
             yield* runtimeless
               .openSession(openInput)

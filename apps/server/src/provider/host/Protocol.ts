@@ -1,3 +1,5 @@
+// @effect-diagnostics nodeBuiltinImport:off - launch identities hash runtime secrets with node:crypto.
+import * as NodeCrypto from "node:crypto";
 import {
   CheckpointId,
   CodexSettings,
@@ -332,6 +334,26 @@ export function decode<A, I>(schema: Schema.Codec<A, I>, value: unknown): A {
   const json = Schema.toCodecJson(schema);
   return Schema.decodeUnknownSync(json)(value);
 }
+const sortKeys = (_key: string, value: unknown) =>
+  value === null || typeof value !== "object" || Array.isArray(value)
+    ? value
+    : Object.fromEntries(Object.entries(value).toSorted(([a], [b]) => (a < b ? -1 : 1)));
+/** What a hosted session runs with: its managed runtime, or else its instance configuration. */
+export const launchKey = (
+  launch:
+    | { readonly runtime: typeof EffectiveRuntime.Type }
+    | { readonly configuration: typeof Configuration.Type },
+) =>
+  NodeCrypto.createHash("sha256")
+    .update(
+      JSON.stringify(
+        "runtime" in launch
+          ? { runtime: encode(EffectiveRuntime, launch.runtime) }
+          : { configuration: encode(Configuration, launch.configuration) },
+        sortKeys,
+      ),
+    )
+    .digest("hex");
 export const encodeClient = (value: ClientMessage) =>
   JSON.stringify(encode(ClientMessage, value)) + "\n";
 export const encodeServer = (value: ServerMessage) =>
