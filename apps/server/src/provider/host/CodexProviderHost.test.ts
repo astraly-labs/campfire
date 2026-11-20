@@ -20,6 +20,7 @@ import {
 import * as Adapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -1213,6 +1214,39 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, McpProviderSession
         restart.next.write(continuation(2));
         expect(yield* restart.acked).toBe("acked");
         expect(restart.acks).toEqual([2]);
+      }),
+    );
+    it.effect("sends an open that never reached the lost host to its replacement", () =>
+      Effect.gen(function* () {
+        let epoch = 0;
+        const first = Promise.withResolvers<NodeNet.Socket>();
+        const waiting = Promise.withResolvers<NodeNet.Socket>();
+        const outcome = Promise.withResolvers<string>();
+        const host = yield* fakeHost((socket) => {
+          const current = ++epoch;
+          if (current === 1) {
+            first.resolve(socket);
+            acceptAs(socket, "host-1", (message) => answer(socket, message));
+          } else waiting.resolve(socket);
+        });
+        const scope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+        const client = yield* remote(host.socketPath).pipe(
+          Effect.provideService(Scope.Scope, scope),
+        );
+        (yield* Effect.promise(() => first.promise)).destroy();
+        const replacement = yield* Effect.promise(() => waiting.promise);
+        yield* client.openSession(openInput).pipe(
+          Effect.provideService(Scope.Scope, scope),
+          Effect.tapCause((cause) => Effect.sync(() => outcome.resolve(Cause.pretty(cause)))),
+          Effect.forkScoped,
+        );
+        acceptAs(replacement, "host-2", (message) => {
+          if (message.type === "command" && message.operation === "openSession")
+            outcome.resolve("the new host received the open");
+          else answer(replacement, message);
+        });
+        expect(yield* Effect.promise(() => outcome.promise)).toBe("the new host received the open");
       }),
     );
     it.effect("fails visibly and stops the native runtime when the replay buffer is full", () =>
