@@ -21,6 +21,7 @@ import * as Adapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -216,8 +217,64 @@ const sendRaw = (socketPath: string, commands: ReadonlyArray<RawCommand>, client
       }),
   );
 
-const makeFixture = (maxBufferBytes?: number) =>
+// Sends every command at once and reports each reply as it arrives.
+const sendPipelined = (
+  socketPath: string,
+  commands: ReadonlyArray<RawCommand>,
+  onReply: (reply: Protocol.ServerMessage) => void,
+) =>
+  Effect.promise(
+    () =>
+      new Promise<void>((resolve) => {
+        const socket = NodeNet.createConnection(socketPath);
+        socket.setEncoding("utf8");
+        let buffer = "";
+        let replies = 0;
+        socket.on("data", (chunk: string) => {
+          buffer += chunk;
+          for (let end = buffer.indexOf("\n"); end >= 0; end = buffer.indexOf("\n")) {
+            const message = Protocol.decode(
+              Protocol.ServerMessage,
+              JSON.parse(buffer.slice(0, end)),
+            );
+            buffer = buffer.slice(end + 1);
+            if (message.type === "subscribed")
+              for (const [index, command] of commands.entries())
+                socket.write(
+                  Protocol.encodeClient({
+                    type: "command",
+                    lease: message.lease,
+                    commandId: `pipelined:${index}`,
+                    requestId: `pipelined:${index}`,
+                    ...command,
+                  }),
+                );
+            if (message.type !== "response" && message.type !== "error") continue;
+            onReply(message);
+            if (++replies === commands.length) {
+              socket.destroy();
+              resolve();
+            }
+          }
+        });
+        socket.once("connect", () =>
+          socket.write(
+            Protocol.encodeClient({
+              type: "subscribe",
+              protocolVersion: Protocol.PROTOCOL_VERSION,
+              instanceId,
+              after: 0,
+            }),
+          ),
+        );
+      }),
+  );
+
+const makeFixture = (
+  options: { readonly maxBufferBytes?: number; readonly beforeClose?: Effect.Effect<void> } = {},
+) =>
   Effect.gen(function* () {
+    const { maxBufferBytes, beforeClose = Effect.void } = options;
     const fs = yield* FileSystem.FileSystem;
     const temp = yield* fs.makeTempDirectoryScoped({ prefix: "campfire-host-" });
     const socketPath = `${temp}/host.sock`;
@@ -226,6 +283,7 @@ const makeFixture = (maxBufferBytes?: number) =>
     let opens = 0;
     let closes = 0;
     let starts = 0;
+    const closesAtOpens: Array<number> = [];
     const launches: Array<{
       readonly configuration: typeof Protocol.Configuration.Type;
       readonly runtime: typeof Protocol.EffectiveRuntime.Type | undefined;
@@ -241,10 +299,16 @@ const makeFixture = (maxBufferBytes?: number) =>
       openSession: () =>
         Effect.gen(function* () {
           opens++;
+          closesAtOpens.push(closes);
           yield* Effect.addFinalizer(() =>
-            Effect.sync(() => {
-              closes++;
-            }).pipe(Effect.andThen(Queue.offer(closed, undefined))),
+            beforeClose.pipe(
+              Effect.andThen(
+                Effect.sync(() => {
+                  closes++;
+                }),
+              ),
+              Effect.andThen(Queue.offer(closed, undefined)),
+            ),
           );
           return {
             instanceId,
@@ -305,6 +369,7 @@ const makeFixture = (maxBufferBytes?: number) =>
       events,
       closed,
       counts: () => ({ opens, closes, starts }),
+      closesAtOpens: () => closesAtOpens,
       homes: () =>
         launches.map(({ configuration, runtime }) => (runtime ?? configuration).config.homePath),
       launchArgs: () => launches.map(({ runtime }) => runtime?.config.launchArgs),
@@ -589,6 +654,81 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, McpProviderSession
       }),
     );
 
+    it.effect("never reopens a hosted session before its unconfirmed close completes", () =>
+      Effect.gen(function* () {
+        const entered = yield* Deferred.make<void>();
+        const finish = yield* Deferred.make<void>();
+        const fixture = yield* makeFixture({
+          beforeClose: Deferred.succeed(entered, undefined).pipe(
+            Effect.andThen(Deferred.await(finish)),
+          ),
+        });
+        const firstScope = yield* Scope.make();
+        const first = yield* fixture.connect(firstScope, managed);
+        yield* first.openSession(openInput).pipe(Effect.provideService(Scope.Scope, firstScope));
+        yield* Scope.close(firstScope, Exit.void);
+        const scope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+        yield* Effect.addFinalizer(() => Deferred.succeed(finish, undefined));
+        const next = yield* fixture.connect(scope, managed);
+        const listing = yield* next.hostedSessions!.pipe(Effect.forkScoped);
+        yield* Deferred.await(entered);
+        yield* TestClock.adjust("3 seconds");
+        expect(yield* Fiber.join(listing)).toEqual([]);
+        const early = yield* next
+          .openSession(openInput)
+          .pipe(Effect.provideService(Scope.Scope, scope), Effect.exit);
+        expect(Exit.isFailure(early)).toBe(true);
+        expect(fixture.counts()).toMatchObject({ opens: 1, closes: 0 });
+        yield* Deferred.succeed(finish, undefined);
+        yield* Queue.take(fixture.closed);
+        expect(yield* next.hostedSessions!).toEqual([]);
+        yield* next.openSession(openInput).pipe(Effect.provideService(Scope.Scope, scope));
+        expect(fixture.counts()).toMatchObject({ opens: 2, closes: 1 });
+      }),
+    );
+
+    it.effect(
+      "answers a close or an open of a session only after its earlier close completes",
+      () =>
+        Effect.gen(function* () {
+          const finish = yield* Deferred.make<void>();
+          const fixture = yield* makeFixture({ beforeClose: Deferred.await(finish) });
+          const scope = yield* Scope.make();
+          yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+          yield* Effect.addFinalizer(() => Deferred.succeed(finish, undefined));
+          const direct = yield* fixture.connect(scope);
+          yield* direct.openSession(openInput).pipe(Effect.provideService(Scope.Scope, scope));
+          const close: RawCommand = { operation: "closeSession", sessionId, payload: null };
+          const closesAtReply = new Map<string, number>();
+          yield* sendPipelined(
+            fixture.host.socketPath,
+            [
+              close,
+              close,
+              {
+                operation: "openSession",
+                sessionId,
+                payload: Protocol.encode(Protocol.OpenSession, openInput),
+              },
+              { operation: "capabilities", payload: null },
+            ],
+            (reply) => {
+              if (reply.type !== "response" && reply.type !== "error") return;
+              closesAtReply.set(reply.requestId, fixture.counts().closes);
+              if (reply.requestId === "pipelined:3") Deferred.doneUnsafe(finish, Effect.void);
+            },
+          );
+          expect(Object.fromEntries(closesAtReply)).toEqual({
+            "pipelined:0": 1,
+            "pipelined:1": 1,
+            "pipelined:2": 1,
+            "pipelined:3": 0,
+          });
+          expect(fixture.closesAtOpens()).toEqual([0, 1]);
+        }),
+    );
+
     it.effect("refuses a managed runtime with another home or without its token broker", () =>
       Effect.gen(function* () {
         const fixture = yield* makeFixture();
@@ -650,7 +790,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, McpProviderSession
     );
     it.effect("fails visibly and stops the native runtime when the replay buffer is full", () =>
       Effect.gen(function* () {
-        const fixture = yield* makeFixture(100);
+        const fixture = yield* makeFixture({ maxBufferBytes: 100 });
         const scope = yield* Scope.make();
         yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
         const client = yield* fixture.connect(scope);
