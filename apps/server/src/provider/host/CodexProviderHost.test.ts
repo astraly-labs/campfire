@@ -33,8 +33,9 @@ import {
   CodexProviderCapabilitiesV2,
   canReuseCodexContextUsage,
 } from "../../orchestration-v2/Adapters/CodexAdapterV2.ts";
+import type { CodexEffectiveRuntime } from "../CodexManagedRuntime.ts";
 import { startCodexProviderHostServer } from "./CodexProviderHost.ts";
-import { makeRemoteCodexAdapter } from "./RemoteCodexAdapter.ts";
+import { makeRemoteCodexAdapter, type RemoteCodexAdapterOptions } from "./RemoteCodexAdapter.ts";
 
 const instanceId = ProviderInstanceId.make("codex");
 const sessionId = ProviderSessionId.make("hosted-session");
@@ -119,6 +120,21 @@ const turn: Adapter.ProviderAdapterV2TurnInput = {
   runtimePolicy,
 };
 const openInput = { threadId, providerSessionId: sessionId, modelSelection, runtimePolicy };
+const managedHome = "/state/codex-homes/codex-2";
+const managedRuntime: CodexEffectiveRuntime = {
+  revision: "profile",
+  config: Schema.decodeSync(CodexSettings)({ setupMode: "managed", homePath: managedHome }),
+  environment: { CODEX_HOME: managedHome },
+};
+type ServerSide = Pick<RemoteCodexAdapterOptions, "configuration" | "resolveRuntime">;
+const unmanaged: ServerSide = { configuration: { config, environment: [] } };
+const managed: ServerSide = {
+  configuration: {
+    config: Schema.decodeSync(CodexSettings)({ setupMode: "managed" }),
+    environment: [],
+  },
+  resolveRuntime: Effect.succeed(managedRuntime),
+};
 
 const makeFixture = (maxBufferBytes?: number) =>
   Effect.gen(function* () {
@@ -130,6 +146,7 @@ const makeFixture = (maxBufferBytes?: number) =>
     let opens = 0;
     let closes = 0;
     let starts = 0;
+    const homes: Array<string | undefined> = [];
     const unsupported = Effect.fail(
       new Adapter.ProviderAdapterProtocolError({ driver, detail: "Unused fake operation." }),
     );
@@ -175,23 +192,33 @@ const makeFixture = (maxBufferBytes?: number) =>
           createAdapter: async () => ({
             adapter,
             setMcpSessions: async () => {},
-            openSession: (input, _runtime, scope) =>
-              adapter.openSession(input).pipe(Effect.provideService(Scope.Scope, scope)),
+            openSession: (input, runtime, scope) =>
+              Effect.sync(() => homes.push(runtime?.config.homePath)).pipe(
+                Effect.andThen(adapter.openSession(input)),
+                Effect.provideService(Scope.Scope, scope),
+              ),
             close: async () => {},
           }),
         }),
       ),
       (host) => Effect.promise(() => host.close()),
     );
-    const connect = (scope: Scope.Closeable) =>
+    const connect = (scope: Scope.Closeable, server: ServerSide = unmanaged) =>
       makeRemoteCodexAdapter({
         socketPath,
         instanceId,
-        configuration: { config, environment: [] },
+        ...server,
         onContinuation: () => Effect.void,
         canReuseContextUsage: canReuseCodexContextUsage,
       }).pipe(Effect.provideService(Scope.Scope, scope));
-    return { host, connect, events, closed, counts: () => ({ opens, closes, starts }) };
+    return {
+      host,
+      connect,
+      events,
+      closed,
+      counts: () => ({ opens, closes, starts }),
+      homes: () => [...homes],
+    };
   });
 
 it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, McpProviderSessions.layer))(
@@ -239,6 +266,23 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, McpProviderSession
           yield* resumed.externalLifetime!.stop;
           expect(fixture.counts().closes).toBe(1);
         }),
+    );
+
+    it.effect("sends a managed instance's own runtime again when its closed session reopens", () =>
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture();
+        const ownerScope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(ownerScope, Exit.void));
+        const client = yield* fixture.connect(ownerScope, managed);
+        const idleScope = yield* Scope.make();
+        const idle = yield* client
+          .openSession(openInput)
+          .pipe(Effect.provideService(Scope.Scope, idleScope));
+        yield* idle.externalLifetime!.stop;
+        yield* Scope.close(idleScope, Exit.void);
+        yield* client.openSession(openInput).pipe(Effect.provideService(Scope.Scope, ownerScope));
+        expect(fixture.homes()).toEqual([managedHome, managedHome]);
+      }),
     );
 
     it.effect("fences the replaced owner instead of letting reconnect steal the new lease", () =>
