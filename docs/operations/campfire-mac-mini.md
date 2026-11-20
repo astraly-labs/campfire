@@ -213,38 +213,46 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.campfire.server.plis
 launchctl kickstart -k gui/$(id -u)/com.campfire.server
 ```
 
-After the real acceptance gate is recorded, promote with the guarded atomic switch, restart the
-provider host, then restart the service. The switch refuses an unbuilt release or a non-symlink
-`current`, canonicalizes the release path, and preserves the replaced target as `current.previous`:
+After the real acceptance gate is recorded, promote with the restart script. It stops the server,
+runs the guarded atomic switch while both jobs are down, then loads the provider host and the
+server again from their plists. The switch refuses an unbuilt release or a non-symlink `current`,
+canonicalizes the release path, and preserves the replaced target as `current.previous`:
 
 ```bash
-./ops/macos/campfire-release.sh promote \
-  '/Users/campfire/services/campfire/current' \
-  '/Users/campfire/services/campfire/releases/<git-commit>'
 ./ops/macos/campfire-restart-provider-host.sh \
   ~/Library/LaunchAgents/com.campfire.provider-host.plist \
-  '/Users/campfire/Library/Application Support/Campfire/userdata/statev2.sqlite'
-launchctl kickstart -k gui/$(id -u)/com.campfire.server
+  ~/Library/LaunchAgents/com.campfire.server.plist \
+  '/Users/campfire/Library/Application Support/Campfire/userdata/statev2.sqlite' \
+  -- ./ops/macos/campfire-release.sh promote \
+  '/Users/campfire/services/campfire/current' \
+  '/Users/campfire/services/campfire/releases/<git-commit>'
 ```
 
 The provider host keeps Codex sessions alive across server restarts, so it runs its old release
-until something restarts it. The server refuses a provider host that speaks another protocol, and
-Codex stays unavailable until the host restarts. The restart script waits until no Codex run is
-active, for at most four hours (`CAMPFIRE_HOST_IDLE_TIMEOUT_SECONDS`). Then it unloads the job and
-loads it again from its plist. Do not restart the provider host with `launchctl kickstart -k`: it
-keeps the job definition that launchd loaded, which can name an older release than the plist.
+until something restarts it. A server refuses a provider host that speaks another protocol, so
+the script never starts a server next to a host of another release. It waits until no Codex work
+is active, for at most four hours (`CAMPFIRE_HOST_IDLE_TIMEOUT_SECONDS`). Codex work is a run that
+has not ended, including a queued run, and a command or subagent that is still active. Then it
+stops the server and checks again, because the server can start a run until it stops. If Codex
+work started, the script starts the same server again and keeps waiting. If the server does not
+stop, the script fails and changes nothing else. `CAMPFIRE_HOST_RESTART_FORCE=1` skips the wait
+and ends the active Codex work. Do not restart the provider host with `launchctl kickstart -k`:
+it keeps the job definition that launchd loaded, which can name an older release than the plist.
 
 Keep the previous release and backup until the promoted release has completed its full soak. An
-application-only rollback swaps back to the recorded built release atomically. Restart both jobs
-the same way after it:
+application-only rollback swaps back to the recorded built release atomically, with the same
+script:
 
 ```bash
-./ops/macos/campfire-release.sh rollback '/Users/campfire/services/campfire/current'
 ./ops/macos/campfire-restart-provider-host.sh \
   ~/Library/LaunchAgents/com.campfire.provider-host.plist \
-  '/Users/campfire/Library/Application Support/Campfire/userdata/statev2.sqlite'
-launchctl kickstart -k gui/$(id -u)/com.campfire.server
+  ~/Library/LaunchAgents/com.campfire.server.plist \
+  '/Users/campfire/Library/Application Support/Campfire/userdata/statev2.sqlite' \
+  -- ./ops/macos/campfire-release.sh rollback '/Users/campfire/services/campfire/current'
 ```
+
+To restart only the provider host on the current release, run the script without a switch
+command.
 
 ## Health and diagnosis
 
