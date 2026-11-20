@@ -285,6 +285,49 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, McpProviderSession
       }),
     );
 
+    it.effect(
+      "never restarts a managed session on the default home once its app-server exits",
+      () =>
+        Effect.gen(function* () {
+          const fixture = yield* makeFixture();
+          const scope = yield* Scope.make();
+          yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+          const owner = yield* fixture.connect(scope, managed);
+          yield* owner.openSession(openInput).pipe(Effect.provideService(Scope.Scope, scope));
+          const refused = {
+            _tag: "ProviderAdapterProtocolError",
+            detail: expect.stringContaining("without its own Codex home"),
+          };
+          const runtimeless = yield* fixture.connect(scope, {
+            configuration: managed.configuration,
+          });
+          yield* runtimeless.hostedSessions!;
+          const reattached = yield* runtimeless
+            .openSession(openInput)
+            .pipe(Effect.provideService(Scope.Scope, scope));
+          yield* reattached.externalLifetime!.stop;
+          expect(
+            yield* runtimeless
+              .openSession(openInput)
+              .pipe(Effect.provideService(Scope.Scope, scope), Effect.flip),
+          ).toMatchObject(refused);
+          const homeless = yield* fixture.connect(scope, {
+            ...managed,
+            resolveRuntime: Effect.succeed({
+              ...managedRuntime,
+              config: { ...managedRuntime.config, homePath: "" },
+              environment: {},
+            }),
+          });
+          expect(
+            yield* homeless
+              .openSession(openInput)
+              .pipe(Effect.provideService(Scope.Scope, scope), Effect.flip),
+          ).toMatchObject(refused);
+          expect(fixture.homes()).toEqual([managedHome]);
+        }),
+    );
+
     it.effect("fences the replaced owner instead of letting reconnect steal the new lease", () =>
       Effect.gen(function* () {
         const fixture = yield* makeFixture();
