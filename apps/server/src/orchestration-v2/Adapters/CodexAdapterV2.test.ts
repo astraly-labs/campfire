@@ -44,6 +44,7 @@ import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
 import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import { MCP_APP_OUTPUT_KEY, readMcpAppReference } from "@t3tools/shared/mcpApp";
 import { toolOutputImages } from "@t3tools/shared/toolOutput";
 import { resolveAttachmentPathById } from "../../attachmentStore.ts";
@@ -76,6 +77,7 @@ import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter"
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as ModelManifest from "../../provider/ModelManifest.ts";
 import * as PortScanner from "../../preview/PortScanner.ts";
+import { managedCodexLaunchArgs } from "../../provider/CodexManagedRuntime.ts";
 import { resolveProviderCompatibility } from "../../provider/providerCompatibility.ts";
 import * as CodexAdapterV2 from "./CodexAdapterV2.ts";
 import { withCodexReplayChildMetadata } from "./CodexAdapterV2.testkit.ts";
@@ -1096,21 +1098,41 @@ describe("CodexAdapterV2 process exit", () => {
 });
 
 describe("CodexAdapterV2 managed runtime", () => {
-  it.effect("spawns a managed app-server only with a runtime that names its own Codex home", () =>
+  it.effect("spawns a managed app-server only with its own home and token routing", () =>
     Effect.gen(function* () {
       const scenario = "managed-runtime";
-      const home = "/state/codex-homes/codex-2";
+      const instanceId = ProviderInstanceId.make("codex-2");
       const settings = { ...DEFAULT_CODEX_SETTINGS, setupMode: "managed" as const };
-      const runtime = (homePath: string) =>
-        Effect.succeed({ revision: "profile", config: { ...settings, homePath }, environment: {} });
-      const spawnedHomes: Array<string> = [];
       const serverConfig = yield* ProviderReplayHarness.makeReplayServerConfig(scenario).pipe(
         Effect.orDie,
       );
+      const home = (yield* Path.Path).join(
+        serverConfig.stateDir,
+        "providers",
+        "codex",
+        instanceId,
+        "shadow",
+      );
+      const profileKey = "a".repeat(64);
+      const routed = (routedInstanceId: string) =>
+        managedCodexLaunchArgs("/usr/bin/node", [
+          "__managed-chatgpt-token",
+          "/tmp/t3-token-test/s",
+          routedInstanceId,
+          "environment",
+          profileKey,
+        ]);
+      const runtime = (homePath: string, launchArgs: string) =>
+        Effect.succeed({
+          revision: profileKey,
+          config: { ...settings, homePath, launchArgs },
+          environment: { CODEX_HOME: homePath },
+        });
+      const spawnedHomes: Array<string> = [];
       const open = (resolveRuntime?: CodexAdapterV2.CodexAdapterV2Options["resolveRuntime"]) =>
         Effect.gen(function* () {
           const adapter = yield* CodexAdapterV2.makeCodexAdapterV2({
-            instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
+            instanceId,
             settings,
             environment: {},
             ...(resolveRuntime === undefined ? {} : { resolveRuntime }),
@@ -1142,13 +1164,19 @@ describe("CodexAdapterV2 managed runtime", () => {
             .pipe(Effect.flip);
         });
 
-      for (const refused of [yield* open(), yield* open(runtime(""))]) {
+      const refusals = [
+        yield* open(),
+        yield* open(runtime("", routed(instanceId))),
+        yield* open(runtime("/Users/someone/.codex", routed(instanceId))),
+        yield* open(runtime(home, "")),
+        yield* open(runtime(home, routed("codex"))),
+      ];
+      yield* open(runtime(home, routed(instanceId)));
+      assert.deepStrictEqual(spawnedHomes, [home]);
+      for (const refused of refusals) {
         assert.instanceOf(refused, ProviderAdapter.ProviderAdapterOpenSessionError);
         assert.instanceOf(refused.cause, ProviderSetupError);
-        assert.include(refused.cause.message, "own Codex home");
       }
-      yield* open(runtime(home));
-      assert.deepStrictEqual(spawnedHomes, [home]);
     }).pipe(
       Effect.scoped,
       Effect.provide(

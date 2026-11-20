@@ -33,7 +33,7 @@ import {
   CodexProviderCapabilitiesV2,
   canReuseCodexContextUsage,
 } from "../../orchestration-v2/Adapters/CodexAdapterV2.ts";
-import type { CodexEffectiveRuntime } from "../CodexManagedRuntime.ts";
+import { managedCodexLaunchArgs, type CodexEffectiveRuntime } from "../CodexManagedRuntime.ts";
 import { startCodexProviderHostServer } from "./CodexProviderHost.ts";
 import { makeRemoteCodexAdapter, type RemoteCodexAdapterOptions } from "./RemoteCodexAdapter.ts";
 
@@ -47,7 +47,8 @@ const runtimePolicy = {
   interactionMode: "default",
   cwd: "/workspace",
 } as const;
-const config = Schema.decodeSync(CodexSettings)({});
+const decodeSettings = Schema.decodeSync(CodexSettings);
+const config = decodeSettings({});
 const now = DateTime.makeUnsafe("2026-10-13T00:00:00.000Z");
 const session = {
   id: sessionId,
@@ -121,16 +122,28 @@ const turn: Adapter.ProviderAdapterV2TurnInput = {
 };
 const openInput = { threadId, providerSessionId: sessionId, modelSelection, runtimePolicy };
 const managedHome = "/state/codex-homes/codex-2";
-const managedRuntime: CodexEffectiveRuntime = {
-  revision: "profile",
-  config: Schema.decodeSync(CodexSettings)({ setupMode: "managed", homePath: managedHome }),
+const profileKey = "a".repeat(64);
+const brokeredRuntime = (endpoint: string): CodexEffectiveRuntime => ({
+  revision: profileKey,
+  config: decodeSettings({
+    setupMode: "managed",
+    homePath: managedHome,
+    launchArgs: managedCodexLaunchArgs("/usr/bin/node", [
+      "__managed-chatgpt-token",
+      endpoint,
+      instanceId,
+      "environment",
+      profileKey,
+    ]),
+  }),
   environment: { CODEX_HOME: managedHome },
-};
+});
+const managedRuntime = brokeredRuntime("/tmp/t3-token-first/s");
 type ServerSide = Pick<RemoteCodexAdapterOptions, "configuration" | "resolveRuntime">;
 const unmanaged: ServerSide = { configuration: { config, environment: [] } };
 const managed: ServerSide = {
   configuration: {
-    config: Schema.decodeSync(CodexSettings)({ setupMode: "managed" }),
+    config: decodeSettings({ setupMode: "managed" }),
     environment: [],
   },
   resolveRuntime: Effect.succeed(managedRuntime),
@@ -326,6 +339,43 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, McpProviderSession
           ).toMatchObject(refused);
           expect(fixture.homes()).toEqual([managedHome]);
         }),
+    );
+
+    it.effect("refuses a managed runtime with another home or without its token broker", () =>
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture();
+        const scope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+        const foreignHome = "/Users/someone/.codex";
+        const refusals = [];
+        for (const [index, runtime] of [
+          {
+            ...managedRuntime,
+            config: { ...managedRuntime.config, homePath: foreignHome },
+            environment: { CODEX_HOME: foreignHome },
+          },
+          { ...managedRuntime, config: { ...managedRuntime.config, launchArgs: "" } },
+        ].entries()) {
+          const client = yield* fixture.connect(scope, {
+            ...managed,
+            resolveRuntime: Effect.succeed(runtime),
+          });
+          refusals.push(
+            yield* client
+              .openSession({
+                ...openInput,
+                providerSessionId: ProviderSessionId.make(`refused-${index}`),
+              })
+              .pipe(Effect.provideService(Scope.Scope, scope), Effect.exit),
+          );
+        }
+        expect(fixture.homes()).toEqual([]);
+        for (const refusal of refusals)
+          expect(refusal).toMatchObject({
+            _tag: "Failure",
+            cause: { reasons: [{ error: { _tag: "ProviderAdapterProtocolError" } }] },
+          });
+      }),
     );
 
     it.effect("fences the replaced owner instead of letting reconnect steal the new lease", () =>
