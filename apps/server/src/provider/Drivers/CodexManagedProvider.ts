@@ -254,7 +254,7 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
         new ProviderDriverError({
           driver: DRIVER,
           instanceId,
-          detail: "Failed to build Codex orchestration adapter.",
+          detail: `Failed to build Codex orchestration adapter: ${cause.detail}`,
           cause,
         }),
     ),

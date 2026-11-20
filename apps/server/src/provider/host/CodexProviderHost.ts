@@ -608,11 +608,21 @@ export async function startCodexProviderHostServer(options: CodexProviderHostSer
         if (newline < 0) break;
         const line = buffer.slice(0, newline);
         buffer = buffer.slice(newline + 1);
+        let raw: unknown;
         let message: Protocol.ClientMessage;
         try {
-          message = Protocol.decode(Protocol.ClientMessage, JSON.parse(line));
+          raw = JSON.parse(line);
+          message = Protocol.decode(Protocol.ClientMessage, raw);
         } catch {
-          socket.destroy();
+          const other = Protocol.otherProtocolVersion(raw);
+          if (other === undefined) socket.destroy();
+          else
+            socket.end(
+              Protocol.encodeServer({
+                type: "fatal",
+                detail: `The Codex provider host runs protocol ${Protocol.PROTOCOL_VERSION}, but this T3 server runs protocol ${other}. Run the provider host and the server from the same release.`,
+              }),
+            );
           return;
         }
         if (message.type === "subscribe") {

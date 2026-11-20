@@ -270,7 +270,7 @@ export const CodexDriver: ProviderDriver<
           new ProviderDriverError({
             driver: DRIVER_KIND,
             instanceId,
-            detail: "Failed to build Codex orchestration adapter.",
+            detail: `Failed to build Codex orchestration adapter: ${cause.detail}`,
             cause,
           }),
       ),

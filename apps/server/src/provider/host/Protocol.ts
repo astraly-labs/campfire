@@ -31,7 +31,7 @@ import {
 import * as Adapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as Schema from "effect/Schema";
 
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 export const MAX_FRAME_BYTES = 16 * 1024 * 1024;
 export const MAX_BUFFER_BYTES = 64 * 1024 * 1024;
 export const MAX_COMMAND_RECEIPTS = 10_000;
@@ -328,6 +328,17 @@ export const ServerMessage = Schema.Union([
   }),
 ]);
 export type ServerMessage = typeof ServerMessage.Type;
+const isHandshake = Schema.is(
+  Schema.Struct({
+    type: Schema.Literals(["subscribe", "subscribed"]),
+    protocolVersion: Schema.Number,
+  }),
+);
+/** The version that a peer's handshake names when it is not this release's protocol. */
+export const otherProtocolVersion = (message: unknown): number | undefined =>
+  isHandshake(message) && message.protocolVersion !== PROTOCOL_VERSION
+    ? message.protocolVersion
+    : undefined;
 
 export function encode<A, I>(schema: Schema.Codec<A, I>, value: A): unknown {
   const json = Schema.toCodecJson(schema);

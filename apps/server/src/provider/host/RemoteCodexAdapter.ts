@@ -87,6 +87,7 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
   let pendingDeliveryBytes = 0;
   let delivery = Promise.resolve();
   let reconnect: NodeJS.Timeout | undefined;
+  let hungUp = false;
   let firstConnectionResolve: (() => void) | undefined;
   let firstConnectionReject: ((cause: Adapter.ProviderAdapterV2Error) => void) | undefined;
   const firstConnection = new Promise<void>((resolve, reject) => {
@@ -105,6 +106,13 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
     if (ready && lease !== undefined) send({ ...queued, lease });
   };
   const fail = (cause: Adapter.ProviderAdapterV2Error) => {
+    if (terminalError === undefined)
+      runFork(
+        Effect.logError("[🔌 Provider host] Codex stopped using the provider host.", {
+          instanceId: options.instanceId,
+          reason: cause.message,
+        }),
+      );
     terminalError = cause;
     firstConnectionReject?.(cause);
     for (const command of pending.values()) command.reject(cause);
@@ -119,7 +127,10 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
     next.setNoDelay(true);
     next.setEncoding("utf8");
     let buffer = "";
-    next.once("connect", () =>
+    let connected = false;
+    let answered = false;
+    next.once("connect", () => {
+      connected = true;
       send({
         type: "subscribe",
         protocolVersion: Protocol.PROTOCOL_VERSION,
@@ -128,10 +139,11 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
         ...(lease === undefined || hostId === undefined
           ? {}
           : { previousLease: { hostId, lease } }),
-      }),
-    );
+      });
+    });
     next.on("error", () => {});
     next.on("data", (chunk: string) => {
+      answered = true;
       buffer += chunk;
       if (Buffer.byteLength(buffer) > Protocol.MAX_FRAME_BYTES) {
         fail(error("Provider-host frame exceeded its size limit."));
@@ -142,11 +154,20 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
         if (newline < 0) break;
         const line = buffer.slice(0, newline);
         buffer = buffer.slice(newline + 1);
+        let raw: unknown;
         let message: Protocol.ServerMessage;
         try {
-          message = Protocol.decode(Protocol.ServerMessage, JSON.parse(line));
+          raw = JSON.parse(line);
+          message = Protocol.decode(Protocol.ServerMessage, raw);
         } catch (cause) {
-          fail(error("Invalid provider-host message.", cause));
+          const other = Protocol.otherProtocolVersion(raw);
+          fail(
+            other === undefined
+              ? error("Invalid provider-host message.", cause)
+              : error(
+                  `The Codex provider host runs protocol ${other}, but this T3 server runs protocol ${Protocol.PROTOCOL_VERSION}. Restart the provider host so it runs the same release as this server.`,
+                ),
+          );
           return;
         }
         if (message.type === "fatal") {
@@ -234,6 +255,8 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
     next.on("close", () => {
       if (socket !== next) return;
       ready = false;
+      // A host from before the version check closes a subscription it cannot read.
+      if (connected && !answered) hungUp = true;
       if (closed || terminalError) return;
       reconnect = NodeTimers.setTimeout(connect, 250);
     });
@@ -256,7 +279,14 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
   }).pipe(
     Effect.timeout("10 seconds"),
     Effect.mapError((cause) =>
-      error("Cannot connect to the configured Codex provider host.", cause),
+      isAdapterError(cause)
+        ? cause
+        : error(
+            hungUp
+              ? "The Codex provider host closed the connection without an answer. It probably runs an older release. Restart the provider host so it runs the same release as this server."
+              : "Cannot connect to the configured Codex provider host.",
+            cause,
+          ),
     ),
   );
 
