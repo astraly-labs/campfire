@@ -19,7 +19,7 @@ export interface CodexEffectiveRuntime {
   readonly revision: string;
 }
 const decodeSettings = Schema.decodeSync(CodexSettings);
-const managedCodexLaunchArgs = (command: string, args: ReadonlyArray<string>) =>
+export const managedCodexLaunchArgs = (command: string, args: ReadonlyArray<string>) =>
   [
     'model_provider="openai_token_sharing"',
     // Codex persists this provider ID in rollouts and needs it unchanged to resume.
