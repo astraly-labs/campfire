@@ -17,7 +17,11 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import type * as Scope from "effect/Scope";
-import type { CodexEffectiveRuntime } from "../CodexManagedRuntime.ts";
+import {
+  managedCodexRuntimeProblem,
+  type CodexEffectiveRuntime,
+  type ManagedCodexIdentity,
+} from "../CodexManagedRuntime.ts";
 import type { ProviderSetupError } from "@t3tools/contracts";
 import * as Protocol from "./Protocol.ts";
 
@@ -43,6 +47,8 @@ export interface RemoteCodexAdapterOptions {
   readonly onUsageLimits?: (update: typeof Protocol.UsageLimits.Type) => Effect.Effect<void>;
   readonly onContinuation: (request: typeof Protocol.Continuation.Type) => Effect.Effect<void>;
   readonly resolveRuntime?: Effect.Effect<CodexEffectiveRuntime, ProviderSetupError, Scope.Scope>;
+  /** A managed instance sends only a runtime that matches its owning server's identity. */
+  readonly managedIdentity?: Effect.Effect<ManagedCodexIdentity, ProviderSetupError>;
   readonly canReuseContextUsage: NonNullable<
     Adapter.ProviderAdapterV2SessionRuntime["canReuseContextUsage"]
   >;
@@ -376,11 +382,25 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
         );
       const existing = reattachable.get(input.providerSessionId);
       reattachable.delete(input.providerSessionId);
+      if (managed && (!options.resolveRuntime || !options.managedIdentity))
+        return yield* error(
+          `Managed Codex instance ${options.instanceId} has no runtime with its own Codex home, so it does not start on the default Codex login.`,
+        );
       const effectiveRuntime = options.resolveRuntime
         ? yield* options.resolveRuntime.pipe(
             Effect.mapError((cause) => error("Could not resolve managed Codex runtime.", cause)),
           )
         : undefined;
+      // An older provider host spawns what it receives, so the check runs before sending.
+      if (effectiveRuntime !== undefined && options.managedIdentity) {
+        const problem = managedCodexRuntimeProblem(
+          yield* options.managedIdentity.pipe(
+            Effect.mapError((cause) => error("Could not resolve managed Codex runtime.", cause)),
+          ),
+          effectiveRuntime,
+        );
+        if (problem !== undefined) return yield* error(problem);
+      }
       const launch =
         effectiveRuntime === undefined
           ? configurationLaunch

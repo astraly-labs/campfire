@@ -61,9 +61,17 @@ const LOGIN_OVERRIDES = [
   "T3CODE_CODEX_LAUNCH_ARGS",
 ];
 
+/** The login that a managed instance may run with. */
+export interface ManagedCodexIdentity {
+  readonly instanceId: ProviderInstanceId;
+  readonly homePath: string;
+  /** The exact token route of the server that owns the instance. A provider host has none. */
+  readonly route?: { readonly launchArgs: string; readonly profileKey: string };
+}
+
 /** Why a runtime cannot run a managed instance, or undefined when it only uses that instance's own login. */
 export const managedCodexRuntimeProblem = (
-  expected: { readonly instanceId: ProviderInstanceId; readonly homePath: string },
+  expected: ManagedCodexIdentity,
   runtime: CodexEffectiveRuntime,
 ): string | undefined => {
   if (runtime.config.setupMode !== "managed")
@@ -76,6 +84,11 @@ export const managedCodexRuntimeProblem = (
   const override = LOGIN_OVERRIDES.find((name) => runtime.environment[name] !== undefined);
   if (override !== undefined)
     return `The managed Codex runtime sets ${override}, which can move Codex to another login.`;
+  if (expected.route !== undefined)
+    return runtime.config.launchArgs === expected.route.launchArgs &&
+      runtime.revision === expected.route.profileKey
+      ? undefined
+      : `Managed Codex instance ${expected.instanceId} must get its login from this server's T3 token broker for its signed-in profile.`;
   // The self-invocation entrypoint, if any, precedes the token command and its four arguments.
   const args = managedTokenArgs(runtime.config.launchArgs) ?? [];
   const [command, , instanceId, , profileKey] = args.slice(-5);
@@ -116,20 +129,32 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
     options.config,
   );
   const homePath = managedCodexHomePath(homeLayout);
+  const brokerEndpoint = broker.endpoint.pipe(
+    Effect.mapError(
+      (cause) =>
+        new ProviderSetupError({
+          instanceId: options.instanceId,
+          operation: "runtime",
+          detail:
+            "Could not prepare the private managed Codex token listener. Restart T3 and retry.",
+          cause,
+        }),
+    ),
+  );
+  const tokenRoute = (endpoint: string, profileKey: string) =>
+    managedCodexLaunchArgs(
+      invocation.command,
+      selfInvocationArgs(invocation, [
+        MANAGED_TOKEN_COMMAND,
+        endpoint,
+        options.instanceId,
+        environmentId,
+        profileKey,
+      ]),
+    );
   const resolve = Effect.gen(function* () {
     // Establish renewal availability before auth.access can consume a refresh token.
-    const endpoint = yield* broker.endpoint.pipe(
-      Effect.mapError(
-        (cause) =>
-          new ProviderSetupError({
-            instanceId: options.instanceId,
-            operation: "runtime",
-            detail:
-              "Could not prepare the private managed Codex token listener. Restart T3 and retry.",
-            cause,
-          }),
-      ),
-    );
+    const endpoint = yield* brokerEndpoint;
     const executable = yield* installation.acquire().pipe(
       Effect.mapError(
         () =>
@@ -142,13 +167,6 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
     );
     const credentials = yield* auth.access;
     const profileKey = yield* auth.profileKey(credentials);
-    const authArgs = selfInvocationArgs(invocation, [
-      MANAGED_TOKEN_COMMAND,
-      endpoint,
-      options.instanceId,
-      environmentId,
-      profileKey,
-    ]);
     yield* materializeCodexShadowHome(homeLayout).pipe(
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
@@ -186,11 +204,28 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
         setupMode: "managed",
         binaryPath: executable.executablePath,
         homePath,
-        launchArgs: managedCodexLaunchArgs(invocation.command, authArgs),
+        launchArgs: tokenRoute(endpoint, profileKey),
       }),
       environment,
       revision: profileKey,
     } satisfies CodexEffectiveRuntime;
   });
-  return { auth, resolve, installation, homePath, homeLayout };
+  // Built again from the broker and the saved profile, so a runtime from elsewhere fails the check.
+  const identity = Effect.gen(function* () {
+    const endpoint = yield* brokerEndpoint;
+    const saved = yield* auth.read;
+    if (Option.isNone(saved))
+      return yield* new ProviderSetupError({
+        instanceId: options.instanceId,
+        operation: "runtime",
+        detail: "Sign in with ChatGPT to use managed Codex.",
+      });
+    const profileKey = yield* auth.profileKey(saved.value);
+    return {
+      instanceId: options.instanceId,
+      homePath,
+      route: { launchArgs: tokenRoute(endpoint, profileKey), profileKey },
+    } satisfies ManagedCodexIdentity;
+  });
+  return { auth, resolve, identity, installation, homePath, homeLayout };
 });

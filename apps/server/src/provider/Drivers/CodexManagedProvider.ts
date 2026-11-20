@@ -247,6 +247,7 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
     onUsageLimits: (update) => snapshot.applyUsageLimits(update),
     models,
     resolveRuntime: runtime.resolve,
+    managedIdentity: runtime.identity,
   }).pipe(
     Effect.mapError(
       (cause) =>

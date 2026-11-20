@@ -1129,13 +1129,17 @@ describe("CodexAdapterV2 managed runtime", () => {
           environment: { CODEX_HOME: homePath },
         });
       const spawnedHomes: Array<string> = [];
-      const open = (resolveRuntime?: CodexAdapterV2.CodexAdapterV2Options["resolveRuntime"]) =>
+      const open = (
+        resolveRuntime?: CodexAdapterV2.CodexAdapterV2Options["resolveRuntime"],
+        managedIdentity?: CodexAdapterV2.CodexAdapterV2Options["managedIdentity"],
+      ) =>
         Effect.gen(function* () {
           const adapter = yield* CodexAdapterV2.makeCodexAdapterV2({
             instanceId,
             settings,
             environment: {},
             ...(resolveRuntime === undefined ? {} : { resolveRuntime }),
+            ...(managedIdentity === undefined ? {} : { managedIdentity }),
             clientFactory: {
               open: (openInput) =>
                 Effect.sync(() => spawnedHomes.push(openInput.settings.homePath)).pipe(
@@ -1164,15 +1168,25 @@ describe("CodexAdapterV2 managed runtime", () => {
             .pipe(Effect.flip);
         });
 
+      const ownRoute = Effect.succeed({
+        instanceId,
+        homePath: home,
+        route: { launchArgs: routed(instanceId), profileKey },
+      });
       const refusals = [
         yield* open(),
         yield* open(runtime("", routed(instanceId))),
         yield* open(runtime("/Users/someone/.codex", routed(instanceId))),
         yield* open(runtime(home, "")),
         yield* open(runtime(home, routed("codex"))),
+        yield* open(
+          runtime(home, routed(instanceId).replace("t3-token-test", "t3-token-other")),
+          ownRoute,
+        ),
       ];
       yield* open(runtime(home, routed(instanceId)));
-      assert.deepStrictEqual(spawnedHomes, [home]);
+      yield* open(runtime(home, routed(instanceId)), ownRoute);
+      assert.deepStrictEqual(spawnedHomes, [home, home]);
       for (const refused of refusals) {
         assert.instanceOf(refused, ProviderAdapter.ProviderAdapterOpenSessionError);
         assert.instanceOf(refused.cause, ProviderSetupError);

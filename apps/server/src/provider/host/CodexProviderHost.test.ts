@@ -147,15 +147,25 @@ const brokeredRuntime = (endpoint: string): CodexEffectiveRuntime => ({
   environment: { CODEX_HOME: managedHome },
 });
 const managedRuntime = brokeredRuntime("/tmp/t3-token-first/s");
-type ServerSide = Pick<RemoteCodexAdapterOptions, "configuration" | "resolveRuntime">;
+type ServerSide = Pick<
+  RemoteCodexAdapterOptions,
+  "configuration" | "resolveRuntime" | "managedIdentity"
+>;
 const unmanaged: ServerSide = { configuration: { config, environment: [] } };
-const managed: ServerSide = {
+// The server's identity matches the runtime its resolver builds.
+const managedSide = (runtime: CodexEffectiveRuntime): ServerSide => ({
   configuration: {
     config: decodeSettings({ setupMode: "managed" }),
     environment: [],
   },
-  resolveRuntime: Effect.succeed(managedRuntime),
-};
+  resolveRuntime: Effect.succeed(runtime),
+  managedIdentity: Effect.succeed({
+    instanceId,
+    homePath: managedHome,
+    route: { launchArgs: runtime.config.launchArgs, profileKey: runtime.revision },
+  }),
+});
+const managed = managedSide(managedRuntime);
 
 type RawCommand = Pick<
   Extract<Protocol.ClientMessage, { readonly type: "command" }>,
@@ -545,17 +555,23 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, McpProviderSession
         yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
         const direct = yield* fixture.connect(scope);
         yield* direct.openSession(openInput).pipe(Effect.provideService(Scope.Scope, scope));
-        const runtimeless = yield* fixture.connect(scope, {
-          configuration: managed.configuration,
-        });
-        const refusal = yield* runtimeless
-          .openSession({ ...openInput, providerSessionId: ProviderSessionId.make("next") })
-          .pipe(Effect.provideService(Scope.Scope, scope), Effect.exit);
+        const next = ProviderSessionId.make("next");
+        const replies = yield* sendRaw(fixture.host.socketPath, [
+          {
+            operation: "configure",
+            payload: Protocol.encode(Protocol.Configuration, managed.configuration),
+          },
+          {
+            operation: "openSession",
+            sessionId: next,
+            payload: Protocol.encode(Protocol.OpenSession, {
+              ...openInput,
+              providerSessionId: next,
+            }),
+          },
+        ]);
+        expect(replies.map((reply) => reply.type)).toEqual(["response", "error"]);
         expect(fixture.homes()).toEqual([""]);
-        expect(refusal).toMatchObject({
-          _tag: "Failure",
-          cause: { reasons: [{ error: { _tag: "ProviderAdapterProtocolError" } }] },
-        });
       }),
     );
 
@@ -662,10 +678,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, McpProviderSession
         const nextScope = yield* Scope.make();
         yield* Effect.addFinalizer(() => Scope.close(nextScope, Exit.void));
         const nextRuntime = brokeredRuntime("/tmp/t3-token-next/s");
-        const next = yield* fixture.connect(nextScope, {
-          ...managed,
-          resolveRuntime: Effect.succeed(nextRuntime),
-        });
+        const next = yield* fixture.connect(nextScope, managedSide(nextRuntime));
         expect(yield* next.hostedSessions!).toEqual([]);
         yield* next.openSession(openInput).pipe(Effect.provideService(Scope.Scope, nextScope));
         expect(fixture.launchArgs()).toEqual([
@@ -789,16 +802,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, McpProviderSession
         const fixture = yield* makeFixture({ checksRuntime: false });
         const scope = yield* Scope.make();
         yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
-        const otherBroker = {
+        const client = yield* fixture.connect(scope, {
           ...managed,
           resolveRuntime: Effect.succeed(brokeredRuntime("/tmp/t3-token-other/s")),
-          managedIdentity: Effect.succeed({
-            instanceId,
-            homePath: managedHome,
-            route: { launchArgs: managedRuntime.config.launchArgs, profileKey },
-          }),
-        };
-        const client = yield* fixture.connect(scope, otherBroker);
+        });
         expect(
           yield* client
             .openSession(openInput)
@@ -811,37 +818,33 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, McpProviderSession
     it.effect("refuses a managed runtime with another home or without its token broker", () =>
       Effect.gen(function* () {
         const fixture = yield* makeFixture();
-        const scope = yield* Scope.make();
-        yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
         const foreignHome = "/Users/someone/.codex";
-        const refusals = [];
-        for (const [index, runtime] of [
+        const open = (name: string, effectiveRuntime: CodexEffectiveRuntime): RawCommand => {
+          const providerSessionId = ProviderSessionId.make(name);
+          return {
+            operation: "openSession",
+            sessionId: providerSessionId,
+            payload: Protocol.encode(Protocol.OpenSession, { ...openInput, providerSessionId }),
+            effectiveRuntime,
+          };
+        };
+        const replies = yield* sendRaw(fixture.host.socketPath, [
           {
+            operation: "configure",
+            payload: Protocol.encode(Protocol.Configuration, managed.configuration),
+          },
+          open("foreign-home", {
             ...managedRuntime,
             config: { ...managedRuntime.config, homePath: foreignHome },
             environment: { CODEX_HOME: foreignHome },
-          },
-          { ...managedRuntime, config: { ...managedRuntime.config, launchArgs: "" } },
-        ].entries()) {
-          const client = yield* fixture.connect(scope, {
-            ...managed,
-            resolveRuntime: Effect.succeed(runtime),
-          });
-          refusals.push(
-            yield* client
-              .openSession({
-                ...openInput,
-                providerSessionId: ProviderSessionId.make(`refused-${index}`),
-              })
-              .pipe(Effect.provideService(Scope.Scope, scope), Effect.exit),
-          );
-        }
+          }),
+          open("no-broker", {
+            ...managedRuntime,
+            config: { ...managedRuntime.config, launchArgs: "" },
+          }),
+        ]);
+        expect(replies.map((reply) => reply.type)).toEqual(["response", "error", "error"]);
         expect(fixture.homes()).toEqual([]);
-        for (const refusal of refusals)
-          expect(refusal).toMatchObject({
-            _tag: "Failure",
-            cause: { reasons: [{ error: { _tag: "ProviderAdapterProtocolError" } }] },
-          });
       }),
     );
 

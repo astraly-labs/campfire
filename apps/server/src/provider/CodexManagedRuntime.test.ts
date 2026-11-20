@@ -122,6 +122,7 @@ it.live.each(
             homePath: runtime.homePath,
             route: { launchArgs: effective.config.launchArgs, profileKey: effective.revision },
           };
+          assert.deepStrictEqual(yield* runtime.identity, owned);
           assert.isUndefined(managedCodexRuntimeProblem(owned, effective));
           const otherProfile = "b".repeat(64);
           for (const routed of [
