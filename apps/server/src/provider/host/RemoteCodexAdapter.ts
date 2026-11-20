@@ -347,6 +347,8 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
       }),
     ),
   );
+  // An earlier hosted session of a managed instance can still run on another login.
+  if (managed) yield* hostedSessions;
   return Adapter.ProviderAdapterV2.of({
     instanceId: options.instanceId,
     driver: CODEX,

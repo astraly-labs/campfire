@@ -718,11 +718,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, McpProviderSession
         const scope = yield* Scope.make();
         yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
         yield* Effect.addFinalizer(() => Deferred.succeed(finish, undefined));
-        const next = yield* fixture.connect(scope, managed);
-        const listing = yield* next.hostedSessions!.pipe(Effect.forkScoped);
+        const connecting = yield* fixture.connect(scope, managed).pipe(Effect.forkScoped);
         yield* Deferred.await(entered);
         yield* TestClock.adjust("3 seconds");
-        expect(yield* Fiber.join(listing)).toEqual([]);
+        const next = yield* Fiber.join(connecting);
+        expect(yield* next.hostedSessions!).toEqual([]);
         const early = yield* next
           .openSession(openInput)
           .pipe(Effect.provideService(Scope.Scope, scope), Effect.exit);
