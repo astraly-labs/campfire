@@ -20,7 +20,7 @@ import * as ServerConfig from "../config.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as CodexInstallation from "./CodexInstallation.ts";
-import { makeCodexManagedRuntime } from "./CodexManagedRuntime.ts";
+import { makeCodexManagedRuntime, managedCodexRuntimeProblem } from "./CodexManagedRuntime.ts";
 import * as ProviderCredentialStore from "./ProviderCredentialStore.ts";
 import { codexAppServerArgs } from "./codexLaunchArgs.ts";
 
@@ -114,6 +114,9 @@ it.live.each(
         });
         yield* Effect.gen(function* () {
           const effective = yield* runtime.resolve;
+          assert.isUndefined(
+            managedCodexRuntimeProblem({ instanceId, homePath: runtime.homePath }, effective),
+          );
           assert.strictEqual(leases, 1);
           assert.strictEqual(effective.config.binaryPath, executable.executablePath);
           assert.notStrictEqual(effective.config.homePath, ambient.CODEX_HOME);

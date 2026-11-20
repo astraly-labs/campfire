@@ -16,7 +16,14 @@ import {
   type CodexTurnTokenUsageState,
 } from "../../provider/CodexTurnTokenUsage.ts";
 import type { ManagedServerProvider } from "@t3tools/provider-core/server/snapshot";
-import type { CodexEffectiveRuntime } from "../../provider/CodexManagedRuntime.ts";
+import {
+  managedCodexRuntimeProblem,
+  type CodexEffectiveRuntime,
+} from "../../provider/CodexManagedRuntime.ts";
+import {
+  managedCodexHomePath,
+  resolveManagedCodexHomeLayout,
+} from "../../provider/CodexManagedHome.ts";
 import { classifyCodexManagedError } from "../../provider/CodexManagedErrors.ts";
 import {
   buildCodexInitializeParams,
@@ -1952,6 +1959,22 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
     threadId === null ? Effect.undefined : mcpSessions.read(threadId);
   const { clientFactory, digest, fileSystem, idAllocator, serverConfig } = adapterOptions;
   const continuationRequests = adapterOptions.continuationRequests;
+  const managedHomePath = managedCodexHomePath(
+    yield* resolveManagedCodexHomeLayout(
+      serverConfig.stateDir,
+      adapterOptions.instanceId,
+      adapterOptions.settings,
+    ),
+  );
+  const managedRuntimeProblem = (runtime: CodexEffectiveRuntime | undefined) =>
+    runtime !== undefined
+      ? managedCodexRuntimeProblem(
+          { instanceId: adapterOptions.instanceId, homePath: managedHomePath },
+          runtime,
+        )
+      : adapterOptions.settings.setupMode === "managed"
+        ? "Managed Codex has no runtime with its own Codex home, so it does not start on the default Codex login."
+        : undefined;
 
   return ProviderAdapter.ProviderAdapterV2.of({
     instanceId: adapterOptions.instanceId,
@@ -1978,13 +2001,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     }),
                 ),
               );
-        // Without CODEX_HOME, Codex runs on ~/.codex and its default login.
-        if (adapterOptions.settings.setupMode === "managed" && !resolvedRuntime?.config.homePath)
+        const managedProblem = managedRuntimeProblem(resolvedRuntime);
+        if (managedProblem !== undefined)
           return yield* new ProviderSetupError({
             instanceId: adapterOptions.instanceId,
             operation: "runtime",
-            detail:
-              "Managed Codex has no runtime with its own Codex home, so it does not start on the default Codex login.",
+            detail: managedProblem,
           });
         const client = yield* clientFactory.open({
           instanceId: adapterOptions.instanceId,

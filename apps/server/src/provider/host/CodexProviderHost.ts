@@ -53,6 +53,12 @@ export interface CodexProviderHostServerOptions {
       readonly continuation: (request: typeof Protocol.Continuation.Type) => Effect.Effect<void>;
     },
   ) => Promise<HostedCodexAdapter>;
+  /** Why a runtime cannot run a managed instance, or undefined when it may. */
+  readonly checkRuntime: (input: {
+    readonly instanceId: ProviderInstanceId;
+    readonly configuration: typeof Protocol.Configuration.Type;
+    readonly runtime: typeof Protocol.EffectiveRuntime.Type;
+  }) => Promise<string | undefined>;
   readonly ackCommitGraceMs?: number;
   readonly maxBufferBytes?: number;
   readonly prepareSocket?: () => Promise<void>;
@@ -292,20 +298,26 @@ export async function startCodexProviderHostServer(options: CodexProviderHostSer
           return response(Protocol.SessionDescription, sessionDescription(state, existing));
         let opening = state.openingSessions.get(input.providerSessionId);
         if (!opening) {
-          if (
-            state.configuration?.config.setupMode === "managed" &&
-            !command.effectiveRuntime?.config.homePath
-          )
-            throw protocolError(
-              `Managed Codex instance ${instanceId} reached the provider host without its own Codex home. The host refuses to run it on the default Codex login.`,
-            );
+          const configuration = state.configuration;
+          const effectiveRuntime = command.effectiveRuntime;
           opening = (async () => {
+            if (configuration?.config.setupMode === "managed" && !effectiveRuntime)
+              throw protocolError(
+                `Managed Codex instance ${instanceId} reached the provider host without its own Codex home. The host refuses to run it on the default Codex login.`,
+              );
+            const problem =
+              configuration && effectiveRuntime
+                ? await options.checkRuntime({
+                    instanceId,
+                    configuration,
+                    runtime: effectiveRuntime,
+                  })
+                : undefined;
+            if (problem !== undefined) throw protocolError(problem);
             const scope = await Effect.runPromise(Scope.make());
             let runtime: Adapter.ProviderAdapterV2SessionRuntime;
             try {
-              runtime = await Effect.runPromise(
-                hosted.openSession(input, command.effectiveRuntime, scope),
-              );
+              runtime = await Effect.runPromise(hosted.openSession(input, effectiveRuntime, scope));
               if (state.failed) throw protocolError(state.failed);
               if (input.lifetime === "ephemeral" && command.lease !== state.lease)
                 throw protocolError("The private Codex session owner detached during startup.");

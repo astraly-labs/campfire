@@ -1,7 +1,7 @@
 import type { CodexSettings, ProviderInstanceId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
-import { resolveCodexHomeLayout } from "./Drivers/CodexHomeLayout.ts";
+import { resolveCodexHomeLayout, type CodexHomeLayout } from "./Drivers/CodexHomeLayout.ts";
 
 export const resolveManagedCodexHomeLayout = Effect.fn("resolveManagedCodexHomeLayout")(function* (
   stateDir: string,
@@ -18,3 +18,6 @@ export const resolveManagedCodexHomeLayout = Effect.fn("resolveManagedCodexHomeL
         : path.join(stateDir, "providers", "codex", instanceId, "shadow")),
   });
 });
+
+export const managedCodexHomePath = (layout: CodexHomeLayout) =>
+  layout.effectiveHomePath ?? layout.sharedHomePath;

@@ -1,6 +1,7 @@
-import { resolveManagedCodexHomeLayout } from "./CodexManagedHome.ts";
+import { managedCodexHomePath, resolveManagedCodexHomeLayout } from "./CodexManagedHome.ts";
 import { CodexSettings, ProviderSetupError, type ProviderInstanceId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
@@ -19,6 +20,7 @@ export interface CodexEffectiveRuntime {
   readonly revision: string;
 }
 const decodeSettings = Schema.decodeSync(CodexSettings);
+const MANAGED_TOKEN_COMMAND = "__managed-chatgpt-token";
 export const managedCodexLaunchArgs = (command: string, args: ReadonlyArray<string>) =>
   [
     'model_provider="openai_token_sharing"',
@@ -30,6 +32,62 @@ export const managedCodexLaunchArgs = (command: string, args: ReadonlyArray<stri
   ]
     .map((value) => `-c ${JSON.stringify(value)}`)
     .join(" ");
+
+const decodeConfigValue = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.String));
+const decodeTokenCommand = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Tuple([Schema.String, Schema.Array(Schema.String)])),
+);
+const JSON_STRING = String.raw`"(?:[^"\\]|\\.)*"`;
+const CONFIG_VALUE = new RegExp(String.raw`-c (${JSON_STRING})`, "gu");
+const TOKEN_COMMAND = new RegExp(
+  String.raw`auth=\{command=(${JSON_STRING}),args=(\[(?:${JSON_STRING},?)*\]),`,
+  "u",
+);
+// Only the exact arguments that managedCodexLaunchArgs builds route a login through the broker.
+const managedTokenArgs = (launchArgs: string) => {
+  const provider = Array.from(launchArgs.matchAll(CONFIG_VALUE), ([, value]) =>
+    Option.getOrUndefined(decodeConfigValue(value)),
+  )[1];
+  const match = provider === undefined ? null : TOKEN_COMMAND.exec(provider);
+  const command = match ? decodeTokenCommand(`[${match[1]},${match[2]}]`) : Option.none();
+  return Option.isSome(command) && managedCodexLaunchArgs(...command.value) === launchArgs
+    ? command.value[1]
+    : undefined;
+};
+const LOGIN_OVERRIDES = [
+  "ACCESS_TOKEN",
+  "OPENAI_API_KEY",
+  "OPENAI_BASE_URL",
+  "T3CODE_CODEX_LAUNCH_ARGS",
+];
+
+/** Why a runtime cannot run a managed instance, or undefined when it only uses that instance's own login. */
+export const managedCodexRuntimeProblem = (
+  expected: { readonly instanceId: ProviderInstanceId; readonly homePath: string },
+  runtime: CodexEffectiveRuntime,
+): string | undefined => {
+  if (runtime.config.setupMode !== "managed")
+    return `Codex instance ${expected.instanceId} received a runtime that is not managed.`;
+  if (
+    runtime.config.homePath !== expected.homePath ||
+    runtime.environment.CODEX_HOME !== expected.homePath
+  )
+    return `Managed Codex instance ${expected.instanceId} runs only with its own Codex home ${expected.homePath}.`;
+  const override = LOGIN_OVERRIDES.find((name) => runtime.environment[name] !== undefined);
+  if (override !== undefined)
+    return `The managed Codex runtime sets ${override}, which can move Codex to another login.`;
+  // The self-invocation entrypoint, if any, precedes the token command and its four arguments.
+  const args = managedTokenArgs(runtime.config.launchArgs) ?? [];
+  const [command, , instanceId, , profileKey] = args.slice(-5);
+  if (
+    args.length > 6 ||
+    command !== MANAGED_TOKEN_COMMAND ||
+    instanceId !== expected.instanceId ||
+    profileKey !== runtime.revision
+  )
+    return `Managed Codex instance ${expected.instanceId} must get its login from the T3 token broker for this instance and its signed-in profile.`;
+  return undefined;
+};
 
 export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(function* (options: {
   readonly instanceId: ProviderInstanceId;
@@ -57,7 +115,7 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
     options.instanceId,
     options.config,
   );
-  const homePath = homeLayout.effectiveHomePath ?? homeLayout.sharedHomePath;
+  const homePath = managedCodexHomePath(homeLayout);
   const resolve = Effect.gen(function* () {
     // Establish renewal availability before auth.access can consume a refresh token.
     const endpoint = yield* broker.endpoint.pipe(
@@ -85,7 +143,7 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
     const credentials = yield* auth.access;
     const profileKey = yield* auth.profileKey(credentials);
     const authArgs = selfInvocationArgs(invocation, [
-      "__managed-chatgpt-token",
+      MANAGED_TOKEN_COMMAND,
       endpoint,
       options.instanceId,
       environmentId,

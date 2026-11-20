@@ -20,6 +20,11 @@ import {
   startCodexProviderHostServer,
   type HostedCodexAdapter,
 } from "../provider/host/CodexProviderHost.ts";
+import {
+  managedCodexHomePath,
+  resolveManagedCodexHomeLayout,
+} from "../provider/CodexManagedHome.ts";
+import { managedCodexRuntimeProblem } from "../provider/CodexManagedRuntime.ts";
 import { resolveServerConfig, sharedServerCommandFlags } from "./config.ts";
 
 export class CodexProviderHostStartupError extends Schema.TaggedError<CodexProviderHostStartupError>()(
@@ -101,6 +106,17 @@ const runCodexProviderHost = Effect.fn("runCodexProviderHost")(function* (
               close: () => runPromise(Scope.close(scope, Exit.void)),
             };
           },
+          checkRuntime: ({ instanceId, configuration, runtime }) =>
+            runPromise(
+              resolveManagedCodexHomeLayout(config.stateDir, instanceId, configuration.config).pipe(
+                Effect.map((layout) =>
+                  managedCodexRuntimeProblem(
+                    { instanceId, homePath: managedCodexHomePath(layout) },
+                    runtime,
+                  ),
+                ),
+              ),
+            ),
           prepareSocket: () =>
             runPromise(
               fs

@@ -33,7 +33,11 @@ import {
   CodexProviderCapabilitiesV2,
   canReuseCodexContextUsage,
 } from "../../orchestration-v2/Adapters/CodexAdapterV2.ts";
-import { managedCodexLaunchArgs, type CodexEffectiveRuntime } from "../CodexManagedRuntime.ts";
+import {
+  managedCodexLaunchArgs,
+  managedCodexRuntimeProblem,
+  type CodexEffectiveRuntime,
+} from "../CodexManagedRuntime.ts";
 import { startCodexProviderHostServer } from "./CodexProviderHost.ts";
 import { makeRemoteCodexAdapter, type RemoteCodexAdapterOptions } from "./RemoteCodexAdapter.ts";
 
@@ -202,6 +206,8 @@ const makeFixture = (maxBufferBytes?: number) =>
         startCodexProviderHostServer({
           socketPath,
           ...(maxBufferBytes === undefined ? {} : { maxBufferBytes }),
+          checkRuntime: async ({ instanceId, runtime }) =>
+            managedCodexRuntimeProblem({ instanceId, homePath: managedHome }, runtime),
           createAdapter: async () => ({
             adapter,
             setMcpSessions: async () => {},
@@ -309,7 +315,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, McpProviderSession
           yield* owner.openSession(openInput).pipe(Effect.provideService(Scope.Scope, scope));
           const refused = {
             _tag: "ProviderAdapterProtocolError",
-            detail: expect.stringContaining("without its own Codex home"),
+            detail: expect.stringContaining("own Codex home"),
           };
           const runtimeless = yield* fixture.connect(scope, {
             configuration: managed.configuration,
