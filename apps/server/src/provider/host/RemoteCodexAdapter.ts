@@ -88,11 +88,11 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
   let delivery = Promise.resolve();
   let reconnect: NodeJS.Timeout | undefined;
   let hungUp = false;
-  let firstConnectionResolve: (() => void) | undefined;
-  let firstConnectionReject: ((cause: Adapter.ProviderAdapterV2Error) => void) | undefined;
-  const firstConnection = new Promise<void>((resolve, reject) => {
-    firstConnectionResolve = resolve;
-    firstConnectionReject = reject;
+  let markConfigured: (() => void) | undefined;
+  let failStartup: ((cause: Adapter.ProviderAdapterV2Error) => void) | undefined;
+  const configured = new Promise<void>((resolve, reject) => {
+    markConfigured = resolve;
+    failStartup = reject;
   });
   const send = (message: Protocol.ClientMessage) => socket?.write(Protocol.encodeClient(message));
   const request = (
@@ -105,21 +105,41 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
     pending.set(requestId, { command: queued, resolve, reject });
     if (ready && lease !== undefined) send({ ...queued, lease });
   };
-  const fail = (cause: Adapter.ProviderAdapterV2Error) => {
-    if (terminalError === undefined)
-      runFork(
-        Effect.logError("[🔌 Provider host] Codex stopped using the provider host.", {
-          instanceId: options.instanceId,
-          reason: cause.message,
-        }),
-      );
-    terminalError = cause;
-    firstConnectionReject?.(cause);
-    for (const command of pending.values()) command.reject(cause);
+  // A rejection handler can queue or reject commands itself, so empty the map first.
+  const rejectAll = (cause: Adapter.ProviderAdapterV2Error) => {
+    const commands = [...pending.values()];
     pending.clear();
+    for (const command of commands) command.reject(cause);
+  };
+  const fail = (cause: Adapter.ProviderAdapterV2Error) => {
+    if (terminalError !== undefined) return;
+    terminalError = cause;
+    runFork(
+      Effect.logError("[🔌 Provider host] Codex stopped using the provider host.", {
+        instanceId: options.instanceId,
+        reason: cause.message,
+      }),
+    );
+    failStartup?.(cause);
+    rejectAll(cause);
     for (const queue of queues.values()) runFork(Queue.fail(queue, cause));
     socket?.destroy();
   };
+  // Only the answer of the host process that this client still talks to counts.
+  const configure = (target: string) =>
+    request(
+      {
+        type: "command",
+        operation: "configure",
+        payload: Protocol.encode(Protocol.Configuration, options.configuration),
+      },
+      () => {
+        if (hostId === target) markConfigured?.();
+      },
+      (cause) => {
+        if (hostId === target && !closed) fail(cause);
+      },
+    );
   const connect = () => {
     if (closed || terminalError) return;
     const next = NodeNet.createConnection(options.socketPath);
@@ -175,7 +195,8 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
           return;
         }
         if (message.type === "subscribed") {
-          const restarted = hostId !== undefined && message.hostId !== hostId;
+          const firstHost = hostId === undefined;
+          const restarted = !firstHost && message.hostId !== hostId;
           hostId = message.hostId;
           lease = message.lease;
           ready = true;
@@ -187,15 +208,7 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
             cursor = message.committed;
             receivedCursor = cursor;
             // Configure first: ending a lost session can start its replacement synchronously.
-            request(
-              {
-                type: "command",
-                operation: "configure",
-                payload: Protocol.encode(Protocol.Configuration, options.configuration),
-              },
-              () => {},
-              fail,
-            );
+            configure(message.hostId);
             const lost = error("The Codex provider host restarted, so its sessions ended.");
             for (const command of lostCommands) command.reject(lost);
             for (const queue of lostQueues) runFork(Queue.fail(queue, lost));
@@ -203,8 +216,8 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
             cursor = Math.max(cursor, message.committed);
             receivedCursor = Math.max(receivedCursor, cursor);
             for (const command of pending.values()) send({ ...command.command, lease });
+            if (firstHost) configure(message.hostId);
           }
-          firstConnectionResolve?.();
           if (replay) send({ type: "replay", lease });
           continue;
         }
@@ -265,15 +278,13 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
     closed = true;
     if (reconnect) NodeTimers.clearTimeout(reconnect);
     socket?.destroy();
-    const cause = error("Provider-host client detached.");
-    for (const command of pending.values()) command.reject(cause);
-    pending.clear();
+    rejectAll(error("Provider-host client detached."));
     for (const queue of queues.values()) Queue.shutdownUnsafe(queue);
   });
   yield* Effect.addFinalizer(() => close);
   connect();
   yield* Effect.tryPromise({
-    try: () => firstConnection,
+    try: () => configured,
     catch: (cause) =>
       isAdapterError(cause) ? cause : error("Cannot connect to Codex provider host.", cause),
   }).pipe(
@@ -339,7 +350,6 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
         }),
       ),
     );
-  yield* call("configure", Protocol.Configuration, Schema.Void, options.configuration);
   // The host answers a close once the session has stopped, which can be after its caller gave up.
   const stopping = new Map<
     ProviderSessionId,
