@@ -207,6 +207,8 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
             reattachable.clear();
             cursor = message.committed;
             receivedCursor = cursor;
+            // A callback of the lost host must not hold up the frames of this one.
+            delivery = Promise.resolve();
             // Configure first: ending a lost session can start its replacement synchronously.
             configure(message.hostId);
             const lost = error("The Codex provider host restarted, so its sessions ended.");
@@ -252,14 +254,18 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
               : options.onContinuation(message.request);
         // Serialize delivery so a later frame cannot acknowledge an earlier blocked
         // callback. The host retains acknowledged frames for its restart grace window.
+        const current = () => !closed && !terminalError && from === hostId;
         delivery = delivery
           .then(async () => {
-            if (closed || terminalError || from !== hostId) return;
+            if (!current()) return;
             await runPromise(deliver);
+            if (!current()) return;
             cursor = message.sequence;
             if (lease !== undefined && ready) send({ type: "ack", lease, sequence: cursor });
           })
-          .catch((cause: unknown) => fail(error("Provider-host event delivery failed.", cause)))
+          .catch((cause: unknown) => {
+            if (current()) fail(error("Provider-host event delivery failed.", cause));
+          })
           .finally(() => {
             pendingDeliveryBytes -= bytes;
           });
