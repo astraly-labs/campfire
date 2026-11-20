@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off - a raw socket client speaks the host protocol like an older server.
+// @effect-diagnostics nodeBuiltinImport:off - raw sockets stand in for other servers on the host protocol.
 import * as NodeNet from "node:net";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -226,6 +226,47 @@ const sendRaw = (socketPath: string, commands: ReadonlyArray<RawCommand>, client
         );
       }),
   );
+type HostLease = { readonly hostId: string; readonly lease: number };
+const subscribeRaw = (socketPath: string, previousLease?: HostLease) =>
+  Effect.acquireRelease(
+    Effect.promise(
+      () =>
+        new Promise<{ readonly socket: NodeNet.Socket; readonly reply: Protocol.ServerMessage }>(
+          (resolve, reject) => {
+            const socket = NodeNet.createConnection(socketPath);
+            let buffer = "";
+            socket.setEncoding("utf8");
+            socket.once("error", reject);
+            socket.on("data", (chunk: string) => {
+              buffer += chunk;
+              const newline = buffer.indexOf("\n");
+              if (newline < 0) return;
+              const reply = Protocol.decode(
+                Protocol.ServerMessage,
+                JSON.parse(buffer.slice(0, newline)),
+              );
+              resolve({ socket, reply });
+            });
+            socket.once("connect", () =>
+              socket.write(
+                Protocol.encodeClient({
+                  type: "subscribe",
+                  protocolVersion: Protocol.PROTOCOL_VERSION,
+                  instanceId,
+                  after: 0,
+                  ...(previousLease === undefined ? {} : { previousLease }),
+                }),
+              ),
+            );
+          },
+        ),
+    ),
+    ({ socket }) => Effect.sync(() => socket.destroy()),
+  ).pipe(Effect.map(({ reply }) => reply));
+const leaseOf = (reply: Protocol.ServerMessage): HostLease => {
+  if (reply.type !== "subscribed") throw new Error(`Expected a subscription, got ${reply.type}.`);
+  return { hostId: reply.hostId, lease: reply.lease };
+};
 
 // Sends every command at once and reports each reply as it arrives.
 const sendPipelined = (
@@ -895,6 +936,20 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, McpProviderSession
         });
         yield* client.openSession(openInput).pipe(Effect.provideService(Scope.Scope, scope));
         expect(fixture.counts().opens).toBe(2);
+      }),
+    );
+    it.effect("gives a restarted host to its first owner and fences every stale lease", () =>
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture();
+        const superseded = { type: "fatal", detail: "Provider-host owner has been superseded." };
+        const earlier = leaseOf(yield* subscribeRaw(fixture.socketPath));
+        yield* fixture.restartHost;
+        const owner = leaseOf(yield* subscribeRaw(fixture.socketPath, earlier));
+        expect(owner.hostId).not.toBe(earlier.hostId);
+        expect(owner.lease).toBe(1);
+        expect(yield* subscribeRaw(fixture.socketPath, earlier)).toEqual(superseded);
+        leaseOf(yield* subscribeRaw(fixture.socketPath));
+        expect(yield* subscribeRaw(fixture.socketPath, owner)).toEqual(superseded);
       }),
     );
     it.effect("fails visibly and stops the native runtime when the replay buffer is full", () =>

@@ -265,13 +265,14 @@ export const Operation = Schema.Literals([
   "mcp.readResource",
 ]);
 export type Operation = typeof Operation.Type;
+const HostLease = Schema.Struct({ hostId: Schema.String, lease: Schema.Number });
 export const ClientMessage = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("subscribe"),
     protocolVersion: Schema.Literal(PROTOCOL_VERSION),
     instanceId: ProviderInstanceId,
     after: Schema.Number,
-    previousLease: Schema.optionalKey(Schema.Number),
+    previousLease: Schema.optionalKey(HostLease),
   }),
   Schema.Struct({ type: Schema.Literal("replay"), lease: Schema.Number }),
   Schema.Struct({ type: Schema.Literal("ack"), lease: Schema.Number, sequence: Schema.Number }),
@@ -292,7 +293,7 @@ export const ServerMessage = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("subscribed"),
     protocolVersion: Schema.Literal(PROTOCOL_VERSION),
-    lease: Schema.Number,
+    ...HostLease.fields,
     committed: Schema.Number,
   }),
   Schema.Struct({

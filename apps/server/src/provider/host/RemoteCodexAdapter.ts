@@ -77,6 +77,7 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
   let counter = 0;
   let socket: NodeNet.Socket | undefined;
   let lease: number | undefined;
+  let hostId: string | undefined;
   let ready = false;
   let replay = false;
   let closed = false;
@@ -93,6 +94,16 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
     firstConnectionReject = reject;
   });
   const send = (message: Protocol.ClientMessage) => socket?.write(Protocol.encodeClient(message));
+  const request = (
+    command: Omit<Command, "lease" | "requestId" | "commandId"> & { readonly commandId?: string },
+    resolve: PendingCommand["resolve"],
+    reject: PendingCommand["reject"],
+  ) => {
+    const requestId = `${prefix}:${++counter}`;
+    const queued = { ...command, commandId: command.commandId ?? requestId, requestId };
+    pending.set(requestId, { command: queued, resolve, reject });
+    if (ready && lease !== undefined) send({ ...queued, lease });
+  };
   const fail = (cause: Adapter.ProviderAdapterV2Error) => {
     terminalError = cause;
     firstConnectionReject?.(cause);
@@ -114,7 +125,9 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
         protocolVersion: Protocol.PROTOCOL_VERSION,
         instanceId: options.instanceId,
         after: cursor,
-        ...(lease === undefined ? {} : { previousLease: lease }),
+        ...(lease === undefined || hostId === undefined
+          ? {}
+          : { previousLease: { hostId, lease } }),
       }),
     );
     next.on("error", () => {});
@@ -141,12 +154,36 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
           return;
         }
         if (message.type === "subscribed") {
+          const restarted = hostId !== undefined && message.hostId !== hostId;
+          hostId = message.hostId;
           lease = message.lease;
           ready = true;
-          cursor = Math.max(cursor, message.committed);
-          receivedCursor = Math.max(receivedCursor, cursor);
+          if (restarted) {
+            const lostCommands = [...pending.values()];
+            const lostQueues = [...queues.values()];
+            pending.clear();
+            reattachable.clear();
+            cursor = message.committed;
+            receivedCursor = cursor;
+            // Configure first: ending a lost session can start its replacement synchronously.
+            request(
+              {
+                type: "command",
+                operation: "configure",
+                payload: Protocol.encode(Protocol.Configuration, options.configuration),
+              },
+              () => {},
+              fail,
+            );
+            const lost = error("The Codex provider host restarted, so its sessions ended.");
+            for (const command of lostCommands) command.reject(lost);
+            for (const queue of lostQueues) runFork(Queue.fail(queue, lost));
+          } else {
+            cursor = Math.max(cursor, message.committed);
+            receivedCursor = Math.max(receivedCursor, cursor);
+            for (const command of pending.values()) send({ ...command.command, lease });
+          }
           firstConnectionResolve?.();
-          for (const command of pending.values()) send({ ...command.command, lease });
           if (replay) send({ type: "replay", lease });
           continue;
         }
@@ -167,6 +204,7 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
           return;
         }
         receivedCursor = message.sequence;
+        const from = hostId;
         const deliver =
           message.type === "event"
             ? Effect.gen(function* () {
@@ -182,7 +220,7 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
         // callback. The host retains acknowledged frames for its restart grace window.
         delivery = delivery
           .then(async () => {
-            if (closed || terminalError) return;
+            if (closed || terminalError || from !== hostId) return;
             await runPromise(deliver);
             cursor = message.sequence;
             if (lease !== undefined && ready) send({ type: "ack", lease, sequence: cursor });
@@ -245,21 +283,21 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
             reject(error("Provider-host client detached."));
             return;
           }
-          const requestId = `${prefix}:${++counter}`;
-          const command: Omit<Command, "lease"> = {
-            type: "command",
-            commandId: extras?.commandId ?? requestId,
-            requestId,
-            operation,
-            payload: Protocol.encode(inputSchema, input),
-            ...(sessionId === undefined ? {} : { sessionId }),
-            ...(extras?.mcpSessions === undefined ? {} : { mcpSessions: extras.mcpSessions }),
-            ...(extras?.effectiveRuntime === undefined
-              ? {}
-              : { effectiveRuntime: extras.effectiveRuntime }),
-          };
-          pending.set(requestId, { command, resolve, reject });
-          if (ready && lease !== undefined) send({ ...command, lease });
+          request(
+            {
+              type: "command",
+              operation,
+              payload: Protocol.encode(inputSchema, input),
+              ...(extras?.commandId === undefined ? {} : { commandId: extras.commandId }),
+              ...(sessionId === undefined ? {} : { sessionId }),
+              ...(extras?.mcpSessions === undefined ? {} : { mcpSessions: extras.mcpSessions }),
+              ...(extras?.effectiveRuntime === undefined
+                ? {}
+                : { effectiveRuntime: extras.effectiveRuntime }),
+            },
+            resolve,
+            reject,
+          );
         }),
       catch: (cause) =>
         isAdapterError(cause) ? cause : error("Provider-host command failed.", cause),

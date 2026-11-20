@@ -1,5 +1,6 @@
 // The Unix socket is the process boundary; native I/O stays in this module.
 // @effect-diagnostics nodeBuiltinImport:off globalTimers:off
+import * as NodeCrypto from "node:crypto";
 import * as NodeNet from "node:net";
 import * as NodeTimers from "node:timers";
 import {
@@ -150,6 +151,7 @@ export async function startCodexProviderHostServer(options: CodexProviderHostSer
   });
   if (reachable) throw new Error(`A provider host already listens at ${options.socketPath}.`);
   await options.prepareSocket?.();
+  const hostId = NodeCrypto.randomUUID();
   const states = new Map<ProviderInstanceId, InstanceState>();
   const sockets = new Set<NodeNet.Socket>();
   const maxBufferBytes = options.maxBufferBytes ?? Protocol.MAX_BUFFER_BYTES;
@@ -619,7 +621,12 @@ export async function startCodexProviderHostServer(options: CodexProviderHostSer
             return;
           }
           const state = getState(message.instanceId);
-          if (message.previousLease !== undefined && message.previousLease !== state.lease) {
+          const previous = message.previousLease;
+          const claimed = state.lease > 0;
+          const stale =
+            previous !== undefined &&
+            (previous.hostId === hostId ? previous.lease !== state.lease : claimed);
+          if (stale) {
             socket.end(
               Protocol.encodeServer({
                 type: "fatal",
@@ -647,6 +654,7 @@ export async function startCodexProviderHostServer(options: CodexProviderHostSer
           write(socket, {
             type: "subscribed",
             protocolVersion: Protocol.PROTOCOL_VERSION,
+            hostId,
             lease: state.lease,
             committed: state.committedAck,
           });
