@@ -265,6 +265,44 @@ export const Operation = Schema.Literals([
   "mcp.readResource",
 ]);
 export type Operation = typeof Operation.Type;
+export const FeedbackResult = Schema.Struct({ feedbackId: Schema.String });
+const operation = <const Name extends Operation, A, I, B, J>(
+  name: Name,
+  input: Schema.Codec<A, I>,
+  output: Schema.Codec<B, J>,
+) => ({ name, input, output });
+/** The request and response codecs of each operation, for the host, the client, and the wire pin. */
+export const Operations = {
+  configure: operation("configure", Configuration, Schema.Void),
+  capabilities: operation("capabilities", Schema.Void, Capabilities),
+  listSessions: operation("listSessions", Schema.Void, Sessions),
+  openSession: operation("openSession", OpenSession, SessionDescription),
+  closeSession: operation("closeSession", Schema.Void, Schema.Void),
+  ensureThread: operation("ensureThread", EnsureThread, ProviderThread),
+  resumeThread: operation("resumeThread", ResumeThread, ProviderThread),
+  startTurn: operation("startTurn", Turn, Schema.Void),
+  compactThread: operation("compactThread", Turn, Schema.Void),
+  steerTurn: operation("steerTurn", Steer, Schema.Void),
+  interruptTurn: operation("interruptTurn", Interrupt, Schema.Void),
+  respondToRuntimeRequest: operation("respondToRuntimeRequest", Respond, Schema.Void),
+  readThreadSnapshot: operation("readThreadSnapshot", Thread, ThreadSnapshot),
+  rollbackThread: operation("rollbackThread", Rollback, ThreadSnapshot),
+  forkThread: operation("forkThread", Fork, ProviderThread),
+  injectHistory: operation("injectHistory", InjectHistory, Schema.Boolean),
+  unloadThread: operation("unloadThread", Thread, Schema.Void),
+  stopTask: operation("stopTask", StopTask, Schema.Void),
+  stopSubagent: operation("stopSubagent", StopSubagent, SubagentOutcome),
+  uploadFeedback: operation("uploadFeedback", Feedback, FeedbackResult),
+  hasPendingBackgroundWork: operation("hasPendingBackgroundWork", Schema.Void, Schema.Boolean),
+  hasPendingBackgroundWorkForThread: operation(
+    "hasPendingBackgroundWorkForThread",
+    Thread,
+    Schema.Boolean,
+  ),
+  "mcp.listTools": operation("mcp.listTools", McpToolsInput, McpTools),
+  "mcp.callTool": operation("mcp.callTool", McpCallInput, McpResult),
+  "mcp.readResource": operation("mcp.readResource", McpResourceInput, McpResource),
+} satisfies { readonly [Name in Operation]: { readonly name: Name } };
 const HostLease = Schema.Struct({ hostId: Schema.String, lease: Schema.Number });
 export const ClientMessage = Schema.Union([
   Schema.Struct({

@@ -38,6 +38,11 @@ const error = (detail: string, payload?: unknown) =>
 type Command = Extract<Protocol.ClientMessage, { readonly type: "command" }>;
 type SessionDescription = typeof Protocol.SessionDescription.Type;
 type McpSessions = ReadonlyArray<typeof Protocol.McpSession.Type>;
+interface OperationCodecs<A, I, B, J> {
+  readonly name: Protocol.Operation;
+  readonly input: Schema.Codec<A, I>;
+  readonly output: Schema.Codec<B, J>;
+}
 interface PendingCommand {
   readonly command: Omit<Command, "lease">;
   readonly resolve: (value: unknown) => void;
@@ -186,7 +191,7 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
       {
         type: "command",
         operation: "configure",
-        payload: Protocol.encode(Protocol.Configuration, options.configuration),
+        payload: Protocol.encode(Protocol.Operations.configure.input, options.configuration),
       },
       () => {
         if (hostId !== target) return;
@@ -273,7 +278,7 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
               const { operation, sessionId } = entry.command;
               // The restart already ended every session of the old host.
               if (operation === "closeSession")
-                entry.resolve(Protocol.encode(Schema.Void, undefined));
+                entry.resolve(Protocol.encode(Protocol.Operations.closeSession.output, undefined));
               else if (
                 entry.sentTo !== undefined ||
                 entry.reattach ||
@@ -380,9 +385,7 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
   );
 
   const call = <A, I, B, J>(
-    operation: Protocol.Operation,
-    inputSchema: Schema.Codec<A, I>,
-    outputSchema: Schema.Codec<B, J>,
+    operation: OperationCodecs<A, I, B, J>,
     input: A,
     sessionId?: ProviderSessionId,
     extras?: {
@@ -406,8 +409,8 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
           request(
             {
               type: "command",
-              operation,
-              payload: Protocol.encode(inputSchema, input),
+              operation: operation.name,
+              payload: Protocol.encode(operation.input, input),
               ...(extras?.commandId === undefined ? {} : { commandId: extras.commandId }),
               ...(sessionId === undefined ? {} : { sessionId }),
               ...(extras?.mcpSessions === undefined ? {} : { mcpSessions: extras.mcpSessions }),
@@ -425,7 +428,7 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
     }).pipe(
       Effect.flatMap((value) =>
         Effect.try({
-          try: () => Protocol.decode(outputSchema, value),
+          try: () => Protocol.decode(operation.output, value),
           catch: (cause) => error("Invalid provider-host command response.", cause),
         }),
       ),
@@ -443,7 +446,7 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
         const close = yield* Deferred.make<void, Adapter.ProviderAdapterV2Error>();
         stopping.set(sessionId, close);
         runFork(
-          call("closeSession", Schema.Void, Schema.Void, undefined, sessionId).pipe(
+          call(Protocol.Operations.closeSession, undefined, sessionId).pipe(
             Effect.onExit((exit) =>
               Effect.sync(() => {
                 if (stopping.get(sessionId) === close) stopping.delete(sessionId);
@@ -489,11 +492,11 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
     do {
       connection = lease;
       yield* enableReplay;
-      yield* call("capabilities", Schema.Void, Protocol.Capabilities, undefined);
+      yield* call(Protocol.Operations.capabilities, undefined);
     } while (lease !== connection);
   });
   const configurationLaunch = Protocol.launchKey({ configuration: options.configuration });
-  const hostedSessions = call("listSessions", Schema.Void, Protocol.Sessions, undefined).pipe(
+  const hostedSessions = call(Protocol.Operations.listSessions, undefined).pipe(
     Effect.flatMap((sessions) =>
       Effect.filter(sessions, (session) => {
         const id = session.input.providerSessionId;
@@ -517,7 +520,7 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
     instanceId: options.instanceId,
     driver: CODEX,
     getCapabilities: Effect.fn("RemoteCodexAdapter.getCapabilities")(function () {
-      return call("capabilities", Schema.Void, Protocol.Capabilities, undefined);
+      return call(Protocol.Operations.capabilities, undefined);
     }),
     planSelectionTransition: Effect.fn("RemoteCodexAdapter.planSelectionTransition")(function () {
       return Effect.succeed(turnScopedSelectionTransition());
@@ -587,9 +590,7 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
           stopSession(input.providerSessionId).pipe(Effect.ignoreCause()),
         );
       const description = yield* call(
-        "openSession",
-        Protocol.OpenSession,
-        Protocol.SessionDescription,
+        Protocol.Operations.openSession,
         input,
         input.providerSessionId,
         {
@@ -607,15 +608,13 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
       handles.set(sessionId, handle);
       const live = () => handles.get(sessionId) === handle && hostId === openedOn;
       const sessionCall = <A, I, B, J>(
-        operation: Protocol.Operation,
-        inputSchema: Schema.Codec<A, I>,
-        outputSchema: Schema.Codec<B, J>,
+        operation: OperationCodecs<A, I, B, J>,
         payload: A,
         extras?: { readonly commandId?: string; readonly mcpSessions?: McpSessions },
       ) =>
         Effect.suspend(() =>
           live()
-            ? call(operation, inputSchema, outputSchema, payload, sessionId, extras)
+            ? call(operation, payload, sessionId, extras)
             : Effect.fail(
                 error(
                   `Hosted Codex session ${sessionId} has a newer open or a restarted host, so this handle ended.`,
@@ -626,7 +625,7 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
       const ensureThread: Adapter.ProviderAdapterV2SessionRuntime["ensureThread"] = (payload) =>
         mcpForThread(payload.threadId).pipe(
           Effect.flatMap((mcpSessions) =>
-            sessionCall("ensureThread", Protocol.EnsureThread, Protocol.ProviderThread, payload, {
+            sessionCall(Protocol.Operations.ensureThread, payload, {
               mcpSessions,
             }),
           ),
@@ -634,7 +633,7 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
       const resumeThread: Adapter.ProviderAdapterV2SessionRuntime["resumeThread"] = (payload) =>
         mcpForThread(payload.threadId ?? payload.providerThread.appThreadId).pipe(
           Effect.flatMap((mcpSessions) =>
-            sessionCall("resumeThread", Protocol.ResumeThread, Protocol.ProviderThread, payload, {
+            sessionCall(Protocol.Operations.resumeThread, payload, {
               mcpSessions,
             }),
           ),
@@ -645,7 +644,7 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
       ) =>
         enableReplay.pipe(
           Effect.andThen(
-            sessionCall(operation, Protocol.Turn, Schema.Void, payload, {
+            sessionCall(Protocol.Operations[operation], payload, {
               commandId: `${operation}:${sessionId}:${payload.attemptId}`,
             }),
           ),
@@ -662,13 +661,11 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
         },
         canReuseContextUsage: options.canReuseContextUsage,
         hasPendingBackgroundWork: sessionCall(
-          "hasPendingBackgroundWork",
-          Schema.Void,
-          Schema.Boolean,
+          Protocol.Operations.hasPendingBackgroundWork,
           undefined,
         ).pipe(Effect.orElseSucceed(() => true)),
         hasPendingBackgroundWorkForThread: (providerThread) =>
-          sessionCall("hasPendingBackgroundWorkForThread", Protocol.Thread, Schema.Boolean, {
+          sessionCall(Protocol.Operations.hasPendingBackgroundWorkForThread, {
             providerThread,
           }).pipe(Effect.orElseSucceed(() => true)),
         ensureThread,
@@ -680,74 +677,56 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
                 start("compactThread", payload),
             }
           : {}),
-        steerTurn: (payload) => sessionCall("steerTurn", Protocol.Steer, Schema.Void, payload),
-        interruptTurn: (payload) =>
-          sessionCall("interruptTurn", Protocol.Interrupt, Schema.Void, payload),
+        steerTurn: (payload) => sessionCall(Protocol.Operations.steerTurn, payload),
+        interruptTurn: (payload) => sessionCall(Protocol.Operations.interruptTurn, payload),
         respondToRuntimeRequest: (payload) =>
-          sessionCall("respondToRuntimeRequest", Protocol.Respond, Schema.Void, payload),
+          sessionCall(Protocol.Operations.respondToRuntimeRequest, payload),
         readThreadSnapshot: (payload) =>
-          sessionCall("readThreadSnapshot", Protocol.Thread, Protocol.ThreadSnapshot, payload),
-        rollbackThread: (payload) =>
-          sessionCall("rollbackThread", Protocol.Rollback, Protocol.ThreadSnapshot, payload),
-        forkThread: (payload) =>
-          sessionCall("forkThread", Protocol.Fork, Protocol.ProviderThread, payload),
+          sessionCall(Protocol.Operations.readThreadSnapshot, payload),
+        rollbackThread: (payload) => sessionCall(Protocol.Operations.rollbackThread, payload),
+        forkThread: (payload) => sessionCall(Protocol.Operations.forkThread, payload),
         ...(supports("injectHistory")
           ? {
               injectHistory: (
                 payload: Adapter.ProviderAdapterV2HistoricalContext & {
                   readonly providerThread: typeof Protocol.ProviderThread.Type;
                 },
-              ) => sessionCall("injectHistory", Protocol.InjectHistory, Schema.Boolean, payload),
+              ) => sessionCall(Protocol.Operations.injectHistory, payload),
             }
           : {}),
         ...(supports("unloadThread")
           ? {
               unloadThread: (payload: typeof Protocol.Thread.Type) =>
-                sessionCall("unloadThread", Protocol.Thread, Schema.Void, payload),
+                sessionCall(Protocol.Operations.unloadThread, payload),
             }
           : {}),
         ...(supports("stopTask")
           ? {
               stopTask: (payload: typeof Protocol.StopTask.Type) =>
-                sessionCall("stopTask", Protocol.StopTask, Schema.Void, payload),
+                sessionCall(Protocol.Operations.stopTask, payload),
             }
           : {}),
         ...(supports("stopSubagent")
           ? {
               stopSubagent: (payload: typeof Protocol.StopSubagent.Type) =>
-                sessionCall(
-                  "stopSubagent",
-                  Protocol.StopSubagent,
-                  Protocol.SubagentOutcome,
-                  payload,
-                ),
+                sessionCall(Protocol.Operations.stopSubagent, payload),
             }
           : {}),
         ...(supports("uploadFeedback")
           ? {
               uploadFeedback: (payload: typeof Protocol.Feedback.Type) =>
-                sessionCall(
-                  "uploadFeedback",
-                  Protocol.Feedback,
-                  Schema.Struct({ feedbackId: Schema.String }),
-                  payload,
-                ),
+                sessionCall(Protocol.Operations.uploadFeedback, payload),
             }
           : {}),
         ...(supports("mcpApps")
           ? {
               mcpApps: {
                 listTools: (payload: typeof Protocol.McpToolsInput.Type) =>
-                  sessionCall("mcp.listTools", Protocol.McpToolsInput, Protocol.McpTools, payload),
+                  sessionCall(Protocol.Operations["mcp.listTools"], payload),
                 callTool: (payload: typeof Protocol.McpCallInput.Type) =>
-                  sessionCall("mcp.callTool", Protocol.McpCallInput, Protocol.McpResult, payload),
+                  sessionCall(Protocol.Operations["mcp.callTool"], payload),
                 readResource: (payload: typeof Protocol.McpResourceInput.Type) =>
-                  sessionCall(
-                    "mcp.readResource",
-                    Protocol.McpResourceInput,
-                    Protocol.McpResource,
-                    payload,
-                  ),
+                  sessionCall(Protocol.Operations["mcp.readResource"], payload),
               },
             }
           : {}),
