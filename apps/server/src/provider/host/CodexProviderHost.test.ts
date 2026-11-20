@@ -227,16 +227,21 @@ const sendRaw = (socketPath: string, commands: ReadonlyArray<RawCommand>, client
       }),
   );
 type HostLease = { readonly hostId: string; readonly lease: number };
-const subscribeRaw = (socketPath: string, previousLease?: HostLease) =>
+type Reply = Protocol.ServerMessage | undefined;
+const subscribeRaw = (
+  socketPath: string,
+  fields: { readonly previousLease?: HostLease; readonly protocolVersion?: number } = {},
+) =>
   Effect.acquireRelease(
     Effect.promise(
       () =>
-        new Promise<{ readonly socket: NodeNet.Socket; readonly reply: Protocol.ServerMessage }>(
+        new Promise<{ readonly socket: NodeNet.Socket; readonly reply: Reply }>(
           (resolve, reject) => {
             const socket = NodeNet.createConnection(socketPath);
             let buffer = "";
             socket.setEncoding("utf8");
             socket.once("error", reject);
+            socket.once("close", () => resolve({ socket, reply: undefined }));
             socket.on("data", (chunk: string) => {
               buffer += chunk;
               const newline = buffer.indexOf("\n");
@@ -249,13 +254,13 @@ const subscribeRaw = (socketPath: string, previousLease?: HostLease) =>
             });
             socket.once("connect", () =>
               socket.write(
-                Protocol.encodeClient({
+                JSON.stringify({
                   type: "subscribe",
                   protocolVersion: Protocol.PROTOCOL_VERSION,
                   instanceId,
                   after: 0,
-                  ...(previousLease === undefined ? {} : { previousLease }),
-                }),
+                  ...fields,
+                }) + "\n",
               ),
             );
           },
@@ -263,10 +268,43 @@ const subscribeRaw = (socketPath: string, previousLease?: HostLease) =>
     ),
     ({ socket }) => Effect.sync(() => socket.destroy()),
   ).pipe(Effect.map(({ reply }) => reply));
-const leaseOf = (reply: Protocol.ServerMessage): HostLease => {
-  if (reply.type !== "subscribed") throw new Error(`Expected a subscription, got ${reply.type}.`);
+const leaseOf = (reply: Reply): HostLease => {
+  if (reply?.type !== "subscribed") throw new Error(`Expected a subscription, got ${reply?.type}.`);
   return { hostId: reply.hostId, lease: reply.lease };
 };
+const remote = (socketPath: string, server: ServerSide = unmanaged) =>
+  makeRemoteCodexAdapter({
+    socketPath,
+    instanceId,
+    ...server,
+    onContinuation: () => Effect.void,
+    canReuseContextUsage: canReuseCodexContextUsage,
+  });
+const fakeHost = (answer: (socket: NodeNet.Socket) => void) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const temp = yield* fs.makeTempDirectoryScoped({ prefix: "campfire-fake-host-" });
+    const socketPath = `${temp}/host.sock`;
+    let markReconnected = () => {};
+    const reconnected = new Promise<void>((resolve) => {
+      markReconnected = resolve;
+    });
+    const sockets = new Set<NodeNet.Socket>();
+    const server = NodeNet.createServer((socket) => {
+      sockets.add(socket);
+      if (sockets.size === 2) markReconnected();
+      socket.once("data", () => answer(socket));
+    });
+    yield* Effect.acquireRelease(
+      Effect.promise(() => new Promise<void>((resolve) => server.listen(socketPath, resolve))),
+      () =>
+        Effect.promise(() => {
+          for (const socket of sockets) socket.destroy();
+          return new Promise<void>((resolve) => server.close(() => resolve()));
+        }),
+    );
+    return { socketPath, reconnected: Effect.promise(() => reconnected) };
+  });
 
 // Sends every command at once and reports each reply as it arrives.
 const sendPipelined = (
@@ -420,13 +458,7 @@ const makeFixture = (
       ),
     );
     const connect = (scope: Scope.Closeable, server: ServerSide = unmanaged) =>
-      makeRemoteCodexAdapter({
-        socketPath,
-        instanceId,
-        ...server,
-        onContinuation: () => Effect.void,
-        canReuseContextUsage: canReuseCodexContextUsage,
-      }).pipe(Effect.provideService(Scope.Scope, scope));
+      remote(socketPath, server).pipe(Effect.provideService(Scope.Scope, scope));
     return {
       socketPath,
       closeHost,
@@ -944,12 +976,71 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, McpProviderSession
         const superseded = { type: "fatal", detail: "Provider-host owner has been superseded." };
         const earlier = leaseOf(yield* subscribeRaw(fixture.socketPath));
         yield* fixture.restartHost;
-        const owner = leaseOf(yield* subscribeRaw(fixture.socketPath, earlier));
+        const owner = leaseOf(yield* subscribeRaw(fixture.socketPath, { previousLease: earlier }));
         expect(owner.hostId).not.toBe(earlier.hostId);
         expect(owner.lease).toBe(1);
-        expect(yield* subscribeRaw(fixture.socketPath, earlier)).toEqual(superseded);
+        expect(yield* subscribeRaw(fixture.socketPath, { previousLease: earlier })).toEqual(
+          superseded,
+        );
         leaseOf(yield* subscribeRaw(fixture.socketPath));
-        expect(yield* subscribeRaw(fixture.socketPath, owner)).toEqual(superseded);
+        expect(yield* subscribeRaw(fixture.socketPath, { previousLease: owner })).toEqual(
+          superseded,
+        );
+      }),
+    );
+    it.effect("tells a server that speaks another protocol why the host refuses it", () =>
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture();
+        const other = Protocol.PROTOCOL_VERSION + 1;
+        expect(yield* subscribeRaw(fixture.socketPath, { protocolVersion: other })).toMatchObject({
+          type: "fatal",
+          detail: expect.stringContaining(`protocol ${other}`),
+        });
+      }),
+    );
+    it.effect("refuses a provider host that speaks another protocol", () =>
+      Effect.gen(function* () {
+        const other = Protocol.PROTOCOL_VERSION + 1;
+        const host = yield* fakeHost((socket) =>
+          socket.write(
+            JSON.stringify({
+              type: "subscribed",
+              protocolVersion: other,
+              hostId: "other-release",
+              lease: 1,
+              committed: 0,
+            }) + "\n",
+          ),
+        );
+        const scope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+        expect(
+          yield* remote(host.socketPath).pipe(
+            Effect.provideService(Scope.Scope, scope),
+            Effect.flip,
+          ),
+        ).toMatchObject({
+          _tag: "ProviderAdapterProtocolError",
+          detail: expect.stringContaining(`protocol ${other}`),
+        });
+      }),
+    );
+    it.effect("names a provider host that hangs up on the subscription", () =>
+      Effect.gen(function* () {
+        const host = yield* fakeHost((socket) => socket.destroy());
+        const scope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+        const connecting = yield* remote(host.socketPath).pipe(
+          Effect.provideService(Scope.Scope, scope),
+          Effect.flip,
+          Effect.forkScoped,
+        );
+        yield* host.reconnected;
+        yield* TestClock.adjust("10 seconds");
+        expect(yield* Fiber.join(connecting)).toMatchObject({
+          _tag: "ProviderAdapterProtocolError",
+          detail: expect.stringContaining("without an answer"),
+        });
       }),
     );
     it.effect("fails visibly and stops the native runtime when the replay buffer is full", () =>
