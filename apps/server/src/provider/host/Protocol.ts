@@ -325,10 +325,12 @@ export const ServerMessage = Schema.Union([
 export type ServerMessage = typeof ServerMessage.Type;
 
 export function encode<A, I>(schema: Schema.Codec<A, I>, value: A): unknown {
-  return Schema.encodeSync(Schema.toCodecJson(schema))(value);
+  const json = Schema.toCodecJson(schema);
+  return Schema.encodeSync(json)(value);
 }
 export function decode<A, I>(schema: Schema.Codec<A, I>, value: unknown): A {
-  return Schema.decodeUnknownSync(Schema.toCodecJson(schema))(value);
+  const json = Schema.toCodecJson(schema);
+  return Schema.decodeUnknownSync(json)(value);
 }
 export const encodeClient = (value: ClientMessage) =>
   JSON.stringify(encode(ClientMessage, value)) + "\n";
