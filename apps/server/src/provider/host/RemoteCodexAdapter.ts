@@ -39,6 +39,10 @@ interface PendingCommand {
   readonly command: Omit<Command, "lease">;
   readonly resolve: (value: unknown) => void;
   readonly reject: (cause: Adapter.ProviderAdapterV2Error) => void;
+  // A reattach asks for a session of the host that sent the session list.
+  readonly reattach: boolean;
+  // The host process that received the command, if any did.
+  sentTo?: string;
 }
 export interface RemoteCodexAdapterOptions {
   readonly socketPath: string;
@@ -95,15 +99,22 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
     failStartup = reject;
   });
   const send = (message: Protocol.ClientMessage) => socket?.write(Protocol.encodeClient(message));
+  const dispatch = (entry: PendingCommand) => {
+    if (!ready || lease === undefined || hostId === undefined) return;
+    entry.sentTo = hostId;
+    send({ ...entry.command, lease });
+  };
   const request = (
     command: Omit<Command, "lease" | "requestId" | "commandId"> & { readonly commandId?: string },
     resolve: PendingCommand["resolve"],
     reject: PendingCommand["reject"],
+    reattach = false,
   ) => {
     const requestId = `${prefix}:${++counter}`;
     const queued = { ...command, commandId: command.commandId ?? requestId, requestId };
-    pending.set(requestId, { command: queued, resolve, reject });
-    if (ready && lease !== undefined) send({ ...queued, lease });
+    const entry: PendingCommand = { command: queued, resolve, reject, reattach };
+    pending.set(requestId, entry);
+    dispatch(entry);
   };
   // A rejection handler can queue or reject commands itself, so empty the map first.
   const rejectAll = (cause: Adapter.ProviderAdapterV2Error) => {
@@ -201,7 +212,7 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
           lease = message.lease;
           ready = true;
           if (restarted) {
-            const lostCommands = [...pending.values()];
+            const commands = [...pending.entries()];
             const lostQueues = [...queues.values()];
             pending.clear();
             reattachable.clear();
@@ -212,12 +223,27 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
             // Configure first: ending a lost session can start its replacement synchronously.
             configure(message.hostId);
             const lost = error("The Codex provider host restarted, so its sessions ended.");
-            for (const command of lostCommands) command.reject(lost);
+            for (const [requestId, entry] of commands) {
+              const { operation, sessionId } = entry.command;
+              // The restart already ended every session of the old host.
+              if (operation === "closeSession")
+                entry.resolve(Protocol.encode(Schema.Void, undefined));
+              else if (
+                entry.sentTo !== undefined ||
+                entry.reattach ||
+                (sessionId !== undefined && operation !== "openSession")
+              )
+                entry.reject(lost);
+              else {
+                pending.set(requestId, entry);
+                dispatch(entry);
+              }
+            }
             for (const queue of lostQueues) runFork(Queue.fail(queue, lost));
           } else {
             cursor = Math.max(cursor, message.committed);
             receivedCursor = Math.max(receivedCursor, cursor);
-            for (const command of pending.values()) send({ ...command.command, lease });
+            for (const entry of pending.values()) dispatch(entry);
             if (firstHost) configure(message.hostId);
           }
           if (replay) send({ type: "replay", lease });
@@ -317,6 +343,7 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
       readonly commandId?: string;
       readonly mcpSessions?: ReadonlyArray<typeof Protocol.McpSession.Type>;
       readonly effectiveRuntime?: typeof Protocol.EffectiveRuntime.Type;
+      readonly reattach?: boolean;
     },
   ) =>
     Effect.tryPromise({
@@ -344,6 +371,7 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
             },
             resolve,
             reject,
+            extras?.reattach,
           );
         }),
       catch: (cause) =>
@@ -520,6 +548,7 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
         input.providerSessionId,
         {
           mcpSessions: yield* mcpForThread(input.threadId),
+          reattach: existing !== undefined,
           ...(effectiveRuntime === undefined ? {} : { effectiveRuntime }),
         },
       );
