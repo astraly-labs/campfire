@@ -654,6 +654,39 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, McpProviderSession
       }),
     );
 
+    it.effect("never hands a retired session's buffered output to its replacement", () =>
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture();
+        const firstScope = yield* Scope.make();
+        const first = yield* fixture.connect(firstScope, managed);
+        const retired = yield* first
+          .openSession(openInput)
+          .pipe(Effect.provideService(Scope.Scope, firstScope));
+        const status = (lastError: string): Adapter.ProviderAdapterV2Event => ({
+          type: "provider_session.updated",
+          driver,
+          providerSession: { ...session, lastError },
+        });
+        yield* Queue.offer(fixture.events, status("retired session"));
+        expect(yield* retired.events.pipe(Stream.take(1), Stream.runCollect)).toMatchObject([
+          status("retired session"),
+        ]);
+        yield* Scope.close(firstScope, Exit.void);
+        const scope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+        const next = yield* fixture.connect(scope, managed);
+        expect(yield* next.hostedSessions!).toEqual([]);
+        const replacement = yield* next
+          .openSession(openInput)
+          .pipe(Effect.provideService(Scope.Scope, scope));
+        expect(fixture.counts()).toMatchObject({ opens: 2, closes: 1 });
+        yield* Queue.offer(fixture.events, status("replacement session"));
+        expect(yield* replacement.events.pipe(Stream.take(1), Stream.runCollect)).toMatchObject([
+          status("replacement session"),
+        ]);
+      }),
+    );
+
     it.effect("never reopens a hosted session before its unconfirmed close completes", () =>
       Effect.gen(function* () {
         const entered = yield* Deferred.make<void>();
