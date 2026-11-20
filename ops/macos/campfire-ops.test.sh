@@ -397,16 +397,26 @@ grep -Fq "$campfire_cache_root" "$campfire_fixture/maintenance-denied.stderr" ||
   fail "unreadable cache folder is not named"
 [ ! -e "$campfire_readable_cache_root/old" ] || fail "an unreadable folder stopped the rest of the pass"
 
-# launchd reports a job as loaded until the restart has unloaded it.
+# launchd reports a job as loaded until the restart has unloaded it. A job named in
+# CAMPFIRE_TEST_STUCK_JOB never unloads. Stopping the server can start a Codex run in
+# the fixture database, like a turn that the server dispatched just before it stopped.
 campfire_host_bin="$campfire_fixture/host-bin"
 campfire_host_calls="$campfire_fixture/launchctl.calls"
 mkdir -p "$campfire_host_bin"
 cat >"$campfire_host_bin/launchctl" <<'EOF'
 #!/bin/sh
 echo "$*" >>"$CAMPFIRE_TEST_LAUNCHCTL_CALLS"
-if [ "$1" = print ] && grep -q '^bootout ' "$CAMPFIRE_TEST_LAUNCHCTL_CALLS"; then
-  exit 113
-fi
+case "$1" in
+  print)
+    [ "$2" = "${CAMPFIRE_TEST_STUCK_JOB:-}" ] && exit 0
+    grep -qx "bootout $2" "$CAMPFIRE_TEST_LAUNCHCTL_CALLS" && exit 113
+    ;;
+  bootout)
+    if [ "$2" = gui/501/com.campfire.server ] && [ -n "${CAMPFIRE_TEST_LATE_RUN:-}" ]; then
+      sqlite3 "$CAMPFIRE_TEST_DATABASE" "$CAMPFIRE_TEST_LATE_RUN"
+    fi
+    ;;
+esac
 exit 0
 EOF
 chmod 700 "$campfire_host_bin/launchctl"
@@ -421,38 +431,106 @@ CREATE TABLE orchestration_v2_projection_provider_threads (
   provider_thread_id TEXT PRIMARY KEY,
   driver TEXT
 );
+CREATE TABLE orchestration_v2_projection_turn_items (
+  turn_item_id TEXT PRIMARY KEY,
+  provider_thread_id TEXT,
+  type TEXT NOT NULL,
+  status TEXT NOT NULL
+);
+CREATE TABLE orchestration_v2_projection_subagents (
+  subagent_id TEXT PRIMARY KEY,
+  driver TEXT,
+  status TEXT NOT NULL
+);
 INSERT INTO orchestration_v2_projection_provider_threads VALUES
   ('codex-thread', 'codex'),
+  ('personal-thread', 'codex'),
   ('claude-thread', 'claudeAgent');
 INSERT INTO orchestration_v2_projection_runs VALUES
-  ('codex-run', 'codex-thread', 'running'),
   ('claude-run', 'claude-thread', 'running');
+INSERT INTO orchestration_v2_projection_turn_items VALUES
+  ('claude-command', 'claude-thread', 'command_execution', 'running');
 EOF
 campfire_host_plist="$campfire_repo_root/ops/macos/com.campfire.provider-host.plist.example"
+campfire_server_plist="$campfire_repo_root/ops/macos/com.campfire.server.plist.example"
 restart_provider_host() {
   : >"$campfire_host_calls"
   PATH="$campfire_host_bin:$PATH" CAMPFIRE_TEST_LAUNCHCTL_CALLS="$campfire_host_calls" \
-    CAMPFIRE_LAUNCHD_DOMAIN=gui/501 CAMPFIRE_HOST_IDLE_TIMEOUT_SECONDS=0 \
+    CAMPFIRE_TEST_DATABASE="$campfire_host_db" \
+    CAMPFIRE_LAUNCHD_DOMAIN=gui/501 CAMPFIRE_HOST_IDLE_TIMEOUT_SECONDS=0 CAMPFIRE_JOB_STOP_TIMEOUT_SECONDS=0 \
     "$campfire_repo_root/ops/macos/campfire-restart-provider-host.sh" \
-    "$campfire_host_plist" "$campfire_host_db"
+    "$campfire_host_plist" "$campfire_server_plist" "$campfire_host_db" "$@"
 }
+expect_busy_host() {
+  campfire_host_status=0
+  restart_provider_host >"$campfire_fixture/host-busy.stdout" \
+    2>"$campfire_fixture/host-busy.stderr" || campfire_host_status=$?
+  [ "$campfire_host_status" -eq 75 ] ||
+    fail "provider host restart did not wait for $1 ($campfire_host_status)"
+  [ ! -s "$campfire_host_calls" ] || fail "provider host restart reached launchd during $1"
+}
+sqlite3 "$campfire_host_db" "INSERT INTO orchestration_v2_projection_runs VALUES ('queued-run', NULL, 'queued');"
+expect_busy_host "a queued run that may start on the host"
+sqlite3 "$campfire_host_db" "UPDATE orchestration_v2_projection_runs SET status = 'running', provider_thread_id = 'personal-thread' WHERE run_id = 'queued-run';"
+expect_busy_host "a run of a Codex instance with a custom id"
+sqlite3 "$campfire_host_db" "UPDATE orchestration_v2_projection_runs SET status = 'completed' WHERE run_id = 'queued-run';"
+sqlite3 "$campfire_host_db" "INSERT INTO orchestration_v2_projection_turn_items VALUES ('background-command', 'codex-thread', 'command_execution', 'running');"
+expect_busy_host "a command that a completed Codex run still runs"
+sqlite3 "$campfire_host_db" "UPDATE orchestration_v2_projection_turn_items SET status = 'completed' WHERE turn_item_id = 'background-command';"
+sqlite3 "$campfire_host_db" "INSERT INTO orchestration_v2_projection_subagents VALUES ('helper', 'codex', 'waiting');"
+expect_busy_host "a Codex subagent that still works"
+sqlite3 "$campfire_host_db" "UPDATE orchestration_v2_projection_subagents SET status = 'completed';"
+
 campfire_host_status=0
-restart_provider_host >"$campfire_fixture/host-busy.stdout" \
-  2>"$campfire_fixture/host-busy.stderr" || campfire_host_status=$?
+# A function call keeps an assignment in front of it, so these tests export and unset it.
+export CAMPFIRE_TEST_LATE_RUN="INSERT INTO orchestration_v2_projection_runs VALUES ('late-run', 'codex-thread', 'running');"
+restart_provider_host >"$campfire_fixture/host-late.stdout" \
+  2>"$campfire_fixture/host-late.stderr" || campfire_host_status=$?
+unset CAMPFIRE_TEST_LATE_RUN
 [ "$campfire_host_status" -eq 75 ] ||
-  fail "provider host restart did not wait for an active Codex run ($campfire_host_status)"
-[ ! -s "$campfire_host_calls" ] || fail "provider host restart reached launchd during a Codex run"
-sqlite3 "$campfire_host_db" "UPDATE orchestration_v2_projection_runs SET status = 'completed' WHERE run_id = 'codex-run';"
-restart_provider_host >"$campfire_fixture/host-idle.stdout" ||
-  fail "a Claude run blocked the provider host restart"
+  fail "provider host restart did not wait for a run that started before the server stopped ($campfire_host_status)"
 campfire_host_expected=$(printf '%s\n' \
+  "bootout gui/501/com.campfire.server" \
+  "print gui/501/com.campfire.server" \
+  "bootstrap gui/501 $campfire_server_plist")
+[ "$(cat "$campfire_host_calls")" = "$campfire_host_expected" ] ||
+  fail "a late Codex run did not keep the host and restart the server: $(cat "$campfire_host_calls")"
+sqlite3 "$campfire_host_db" "UPDATE orchestration_v2_projection_runs SET status = 'completed' WHERE run_id = 'late-run';"
+
+campfire_host_status=0
+export CAMPFIRE_TEST_STUCK_JOB=gui/501/com.campfire.server
+restart_provider_host -- sh -c 'echo switch >>"$CAMPFIRE_TEST_LAUNCHCTL_CALLS"' \
+  >"$campfire_fixture/host-stuck.stdout" 2>"$campfire_fixture/host-stuck.stderr" ||
+  campfire_host_status=$?
+unset CAMPFIRE_TEST_STUCK_JOB
+[ "$campfire_host_status" -eq 78 ] ||
+  fail "provider host restart did not stop when the server kept running ($campfire_host_status)"
+if grep -q -e '^switch$' -e 'com.campfire.provider-host' "$campfire_host_calls"; then
+  fail "provider host restart switched the release or the host while the server ran"
+fi
+
+restart_provider_host -- sh -c 'echo switch >>"$CAMPFIRE_TEST_LAUNCHCTL_CALLS"' \
+  >"$campfire_fixture/host-idle.stdout" || fail "an idle provider host did not restart"
+campfire_host_expected=$(printf '%s\n' \
+  "bootout gui/501/com.campfire.server" \
+  "print gui/501/com.campfire.server" \
+  "switch" \
   "bootout gui/501/com.campfire.provider-host" \
   "print gui/501/com.campfire.provider-host" \
-  "bootstrap gui/501 $campfire_host_plist")
+  "bootstrap gui/501 $campfire_host_plist" \
+  "bootstrap gui/501 $campfire_server_plist")
 [ "$(cat "$campfire_host_calls")" = "$campfire_host_expected" ] ||
-  fail "provider host restart did not reload the job from its plist: $(cat "$campfire_host_calls")"
+  fail "provider host restart did not stop the server, switch, and reload both jobs: $(cat "$campfire_host_calls")"
 grep -q '"status":"restarted"' "$campfire_fixture/host-idle.stdout" ||
   fail "provider host restart did not report the restart"
+
+sqlite3 "$campfire_host_db" "UPDATE orchestration_v2_projection_runs SET status = 'running' WHERE run_id = 'late-run';"
+export CAMPFIRE_HOST_RESTART_FORCE=1
+restart_provider_host >"$campfire_fixture/host-force.stdout" ||
+  fail "a forced provider host restart did not reload both jobs"
+unset CAMPFIRE_HOST_RESTART_FORCE
+grep -qx "bootstrap gui/501 $campfire_host_plist" "$campfire_host_calls" ||
+  fail "a forced promotion left the old provider host in place: $(cat "$campfire_host_calls")"
 
 expect_failure sh "$campfire_repo_root/scripts/campfire-soak.sh" 0
 plutil -lint "$campfire_repo_root/ops/macos/com.campfire.server.plist.example" >/dev/null
