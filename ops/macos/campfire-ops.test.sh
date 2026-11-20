@@ -397,6 +397,63 @@ grep -Fq "$campfire_cache_root" "$campfire_fixture/maintenance-denied.stderr" ||
   fail "unreadable cache folder is not named"
 [ ! -e "$campfire_readable_cache_root/old" ] || fail "an unreadable folder stopped the rest of the pass"
 
+# launchd reports a job as loaded until the restart has unloaded it.
+campfire_host_bin="$campfire_fixture/host-bin"
+campfire_host_calls="$campfire_fixture/launchctl.calls"
+mkdir -p "$campfire_host_bin"
+cat >"$campfire_host_bin/launchctl" <<'EOF'
+#!/bin/sh
+echo "$*" >>"$CAMPFIRE_TEST_LAUNCHCTL_CALLS"
+if [ "$1" = print ] && grep -q '^bootout ' "$CAMPFIRE_TEST_LAUNCHCTL_CALLS"; then
+  exit 113
+fi
+exit 0
+EOF
+chmod 700 "$campfire_host_bin/launchctl"
+campfire_host_db="$campfire_fixture/host-statev2.sqlite"
+sqlite3 "$campfire_host_db" <<'EOF'
+CREATE TABLE orchestration_v2_projection_runs (
+  run_id TEXT PRIMARY KEY,
+  provider_thread_id TEXT,
+  status TEXT NOT NULL
+);
+CREATE TABLE orchestration_v2_projection_provider_threads (
+  provider_thread_id TEXT PRIMARY KEY,
+  driver TEXT
+);
+INSERT INTO orchestration_v2_projection_provider_threads VALUES
+  ('codex-thread', 'codex'),
+  ('claude-thread', 'claudeAgent');
+INSERT INTO orchestration_v2_projection_runs VALUES
+  ('codex-run', 'codex-thread', 'running'),
+  ('claude-run', 'claude-thread', 'running');
+EOF
+campfire_host_plist="$campfire_repo_root/ops/macos/com.campfire.provider-host.plist.example"
+restart_provider_host() {
+  : >"$campfire_host_calls"
+  PATH="$campfire_host_bin:$PATH" CAMPFIRE_TEST_LAUNCHCTL_CALLS="$campfire_host_calls" \
+    CAMPFIRE_LAUNCHD_DOMAIN=gui/501 CAMPFIRE_HOST_IDLE_TIMEOUT_SECONDS=0 \
+    "$campfire_repo_root/ops/macos/campfire-restart-provider-host.sh" \
+    "$campfire_host_plist" "$campfire_host_db"
+}
+campfire_host_status=0
+restart_provider_host >"$campfire_fixture/host-busy.stdout" \
+  2>"$campfire_fixture/host-busy.stderr" || campfire_host_status=$?
+[ "$campfire_host_status" -eq 75 ] ||
+  fail "provider host restart did not wait for an active Codex run ($campfire_host_status)"
+[ ! -s "$campfire_host_calls" ] || fail "provider host restart reached launchd during a Codex run"
+sqlite3 "$campfire_host_db" "UPDATE orchestration_v2_projection_runs SET status = 'completed' WHERE run_id = 'codex-run';"
+restart_provider_host >"$campfire_fixture/host-idle.stdout" ||
+  fail "a Claude run blocked the provider host restart"
+campfire_host_expected=$(printf '%s\n' \
+  "bootout gui/501/com.campfire.provider-host" \
+  "print gui/501/com.campfire.provider-host" \
+  "bootstrap gui/501 $campfire_host_plist")
+[ "$(cat "$campfire_host_calls")" = "$campfire_host_expected" ] ||
+  fail "provider host restart did not reload the job from its plist: $(cat "$campfire_host_calls")"
+grep -q '"status":"restarted"' "$campfire_fixture/host-idle.stdout" ||
+  fail "provider host restart did not report the restart"
+
 expect_failure sh "$campfire_repo_root/scripts/campfire-soak.sh" 0
 plutil -lint "$campfire_repo_root/ops/macos/com.campfire.server.plist.example" >/dev/null
 plutil -lint "$campfire_repo_root/ops/macos/com.campfire.provider-host.plist.example" >/dev/null
@@ -406,6 +463,7 @@ sh -n "$campfire_repo_root/ops/macos/campfire-package-release.sh"
 sh -n "$campfire_repo_root/ops/macos/campfire-release.sh"
 sh -n "$campfire_repo_root/ops/macos/run-campfire.sh"
 sh -n "$campfire_repo_root/ops/macos/run-campfire-provider-host.sh"
+sh -n "$campfire_repo_root/ops/macos/campfire-restart-provider-host.sh"
 sh -n "$campfire_repo_root/ops/macos/campfire-backup.sh"
 sh -n "$campfire_repo_root/ops/macos/campfire-restore.sh"
 sh -n "$campfire_repo_root/ops/macos/campfire-worktree-maintenance.sh"
