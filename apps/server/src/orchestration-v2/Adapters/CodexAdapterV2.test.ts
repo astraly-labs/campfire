@@ -1095,6 +1095,74 @@ describe("CodexAdapterV2 process exit", () => {
   });
 });
 
+describe("CodexAdapterV2 managed runtime", () => {
+  it.effect("spawns a managed app-server only with a runtime that names its own Codex home", () =>
+    Effect.gen(function* () {
+      const scenario = "managed-runtime";
+      const home = "/state/codex-homes/codex-2";
+      const settings = { ...DEFAULT_CODEX_SETTINGS, setupMode: "managed" as const };
+      const runtime = (homePath: string) =>
+        Effect.succeed({ revision: "profile", config: { ...settings, homePath }, environment: {} });
+      const spawnedHomes: Array<string> = [];
+      const serverConfig = yield* ProviderReplayHarness.makeReplayServerConfig(scenario).pipe(
+        Effect.orDie,
+      );
+      const open = (resolveRuntime?: CodexAdapterV2.CodexAdapterV2Options["resolveRuntime"]) =>
+        Effect.gen(function* () {
+          const adapter = yield* CodexAdapterV2.makeCodexAdapterV2({
+            instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
+            settings,
+            environment: {},
+            ...(resolveRuntime === undefined ? {} : { resolveRuntime }),
+            clientFactory: {
+              open: (openInput) =>
+                Effect.sync(() => spawnedHomes.push(openInput.settings.homePath)).pipe(
+                  Effect.andThen(
+                    Effect.fail(
+                      new ProviderAdapter.ProviderAdapterOpenSessionError({
+                        driver: CodexAdapterV2.CODEX_DRIVER_KIND,
+                        providerSessionId: openInput.providerSessionId,
+                      }),
+                    ),
+                  ),
+                ),
+            },
+            digest: yield* Digest.Digest,
+            fileSystem: yield* FileSystem.FileSystem,
+            idAllocator: yield* IdAllocator.IdAllocatorV2,
+            serverConfig,
+          });
+          return yield* adapter
+            .openSession({
+              threadId: ThreadId.make(`thread-${scenario}`),
+              providerSessionId: ProviderSessionId.make(`provider-session-${scenario}`),
+              modelSelection: CODEX_TEST_MODEL_SELECTION,
+              runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+            })
+            .pipe(Effect.flip);
+        });
+
+      for (const refused of [yield* open(), yield* open(runtime(""))]) {
+        assert.instanceOf(refused, ProviderAdapter.ProviderAdapterOpenSessionError);
+        assert.instanceOf(refused.cause, ProviderSetupError);
+        assert.include(refused.cause.message, "own Codex home");
+      }
+      yield* open(runtime(home));
+      assert.deepStrictEqual(spawnedHomes, [home]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+});
+
 describe("CodexAdapterV2 session initialize", () => {
   const openReplaySession = (
     transcript: CodexReplay.CodexAppServerReplayTranscript,
