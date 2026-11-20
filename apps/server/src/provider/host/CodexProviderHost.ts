@@ -99,12 +99,11 @@ interface InstanceState {
   ackTimer?: NodeJS.Timeout;
   failed?: string;
 }
-// Older servers reattach without a runtime, so such a request must ask for the configuration
-// that started the session.
+// A request asks for the configuration that started the session, and a managed request for its
+// runtime too. Older servers reattach without a runtime.
 const sameLaunch = (session: HostedSession, request: Launch) =>
-  request.runtime === undefined
-    ? session.launch.configuration === request.configuration
-    : session.launch.runtime === request.runtime;
+  session.launch.configuration === request.configuration &&
+  (request.runtime === undefined || session.launch.runtime === request.runtime);
 function sessionDescription(state: InstanceState, session: HostedSession): SessionDescription {
   return {
     input: session.input,
@@ -328,6 +327,10 @@ export async function startCodexProviderHostServer(options: CodexProviderHostSer
             `Hosted Codex session ${input.providerSessionId} ran on another login, so the host stopped it. Open it again.`,
           );
         };
+        const problem = effectiveRuntime
+          ? await options.checkRuntime({ instanceId, configuration, runtime: effectiveRuntime })
+          : undefined;
+        if (problem !== undefined) throw protocolError(problem);
         const existing = state.sessions.get(input.providerSessionId);
         if (existing) return await reuse(existing);
         let opening = state.openingSessions.get(input.providerSessionId);
@@ -341,10 +344,6 @@ export async function startCodexProviderHostServer(options: CodexProviderHostSer
               throw protocolError(
                 `Codex instance ${instanceId} applies its new configuration once its open sessions end. Retry after that.`,
               );
-            const problem = effectiveRuntime
-              ? await options.checkRuntime({ instanceId, configuration, runtime: effectiveRuntime })
-              : undefined;
-            if (problem !== undefined) throw protocolError(problem);
             const scope = await Effect.runPromise(Scope.make());
             let runtime: Adapter.ProviderAdapterV2SessionRuntime;
             try {
