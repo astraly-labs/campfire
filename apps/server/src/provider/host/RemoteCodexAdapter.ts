@@ -290,17 +290,20 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
     replay = true;
     if (ready && lease !== undefined) send({ type: "replay", lease });
   });
+  const configurationLaunch = Protocol.launchKey({ configuration: options.configuration });
   const hostedSessions = call("listSessions", Schema.Void, Protocol.Sessions, undefined).pipe(
     Effect.flatMap((sessions) =>
       Effect.filter(sessions, (session) => {
         const id = session.input.providerSessionId;
         // A managed session renews its login through the token broker of the server that opened it.
-        if (managed && !launches.has(id))
+        const reusable = managed
+          ? launches.has(id)
+          : (session.launch ?? configurationLaunch) === configurationLaunch;
+        if (!reusable)
           return stopSession(id).pipe(Effect.ignoreCause({ log: true }), Effect.as(false));
         return Effect.sync(() => {
           reattachable.set(id, session);
-          if (!launches.has(id))
-            launches.set(id, Protocol.launchKey({ configuration: options.configuration }));
+          if (!launches.has(id)) launches.set(id, configurationLaunch);
           return true;
         });
       }),
@@ -345,11 +348,10 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
             Effect.mapError((cause) => error("Could not resolve managed Codex runtime.", cause)),
           )
         : undefined;
-      const launch = Protocol.launchKey(
+      const launch =
         effectiveRuntime === undefined
-          ? { configuration: options.configuration }
-          : { runtime: effectiveRuntime },
-      );
+          ? configurationLaunch
+          : Protocol.launchKey({ runtime: effectiveRuntime });
       // The host can still run this id with a login that this adapter did not start.
       if (launches.get(input.providerSessionId) !== launch)
         yield* stopSession(input.providerSessionId);

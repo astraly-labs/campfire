@@ -226,6 +226,8 @@ export const Continuation = Schema.Struct({
 });
 export const SessionDescription = Schema.Struct({
   input: OpenSession,
+  // The launchKey of what the session runs with. Older hosts omit it.
+  launch: Schema.optionalKey(Schema.String),
   session: OrchestrationV2ProviderSession,
   mcpSessions: Schema.Array(McpSession),
   turns: Schema.Array(Turn),
