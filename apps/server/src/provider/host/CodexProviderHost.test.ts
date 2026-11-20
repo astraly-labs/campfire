@@ -398,6 +398,57 @@ const answer = (socket: NodeNet.Socket, message: Protocol.ClientMessage) => {
   );
 };
 
+const continuation = (sequence: number) =>
+  Protocol.encodeServer({
+    type: "continuation",
+    lease: 1,
+    sequence,
+    request: { threadId, providerThreadId: providerThread.id, driver, detail: null },
+  });
+// Restarts a fake host while the client still runs the first frame of the old host.
+const restartDuringDelivery = (oldDelivery: Promise<void>) =>
+  Effect.gen(function* () {
+    let epoch = 0;
+    const first = Promise.withResolvers<NodeNet.Socket>();
+    const replacement = Promise.withResolvers<NodeNet.Socket>();
+    const delivering = Promise.withResolvers<void>();
+    const acks: Array<number> = [];
+    const acked = Promise.withResolvers<"acked" | "closed">();
+    const host = yield* fakeHost((socket) => {
+      const current = ++epoch;
+      if (current === 1) first.resolve(socket);
+      else socket.once("close", () => acked.resolve("closed"));
+      acceptAs(socket, `host-${current}`, (message) => {
+        if (message.type !== "ack") answer(socket, message);
+        if (current === 1) return;
+        if (message.type === "ack") {
+          acks.push(message.sequence);
+          acked.resolve("acked");
+        } else if (message.type === "command") replacement.resolve(socket);
+      });
+    });
+    let deliveries = 0;
+    yield* makeRemoteCodexAdapter({
+      socketPath: host.socketPath,
+      instanceId,
+      ...unmanaged,
+      onContinuation: () =>
+        ++deliveries === 1
+          ? Effect.promise(() => {
+              delivering.resolve();
+              return oldDelivery;
+            })
+          : Effect.void,
+      canReuseContextUsage: canReuseCodexContextUsage,
+    });
+    const old = yield* Effect.promise(() => first.promise);
+    old.write(continuation(9));
+    yield* Effect.promise(() => delivering.promise);
+    old.destroy();
+    const next = yield* Effect.promise(() => replacement.promise);
+    return { next, acks, acked: Effect.promise(() => acked.promise) };
+  });
+
 const makeFixture = (
   options: {
     readonly maxBufferBytes?: number;
@@ -1142,6 +1193,26 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, McpProviderSession
         expect(yield* Scope.close(scope, Exit.void).pipe(Effect.exit)).toMatchObject({
           _tag: "Success",
         });
+      }),
+    );
+    it.effect("never acknowledges a frame of a lost host on its replacement", () =>
+      Effect.gen(function* () {
+        const release = Promise.withResolvers<void>();
+        const restart = yield* restartDuringDelivery(release.promise);
+        release.resolve();
+        restart.next.write(continuation(2));
+        expect(yield* restart.acked).toBe("acked");
+        expect(restart.acks).toEqual([2]);
+      }),
+    );
+    it.effect("keeps serving the new host when a delivery of the lost host fails", () =>
+      Effect.gen(function* () {
+        const release = Promise.withResolvers<void>();
+        const restart = yield* restartDuringDelivery(release.promise);
+        release.reject(new Error("The callback of the lost host failed."));
+        restart.next.write(continuation(2));
+        expect(yield* restart.acked).toBe("acked");
+        expect(restart.acks).toEqual([2]);
       }),
     );
     it.effect("fails visibly and stops the native runtime when the replay buffer is full", () =>
