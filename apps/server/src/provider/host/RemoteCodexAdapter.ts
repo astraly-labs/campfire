@@ -13,6 +13,7 @@ import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/sel
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -26,6 +27,7 @@ import type { ProviderSetupError } from "@t3tools/contracts";
 import * as Protocol from "./Protocol.ts";
 
 const CODEX = ProviderDriverKind.make("codex");
+const HANDSHAKE_DEADLINE = "10 seconds";
 const isAdapterError = Schema.is(Adapter.ProviderAdapterV2Error);
 const error = (detail: string, payload?: unknown) =>
   new Adapter.ProviderAdapterProtocolError({
@@ -94,6 +96,9 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
   let delivery = Promise.resolve();
   let reconnect: NodeJS.Timeout | undefined;
   let hungUp = false;
+  // Set once a reconnect finds no compatible host before its deadline. Commands fail with it.
+  let outage: Adapter.ProviderAdapterV2Error | undefined;
+  let deadline: Fiber.Fiber<void> | undefined;
   let markConfigured: (() => void) | undefined;
   let failStartup: ((cause: Adapter.ProviderAdapterV2Error) => void) | undefined;
   const configured = new Promise<void>((resolve, reject) => {
@@ -138,6 +143,43 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
     for (const queue of queues.values()) runFork(Queue.fail(queue, cause));
     socket?.destroy();
   };
+  const unreachable = () =>
+    error(
+      hungUp
+        ? "The Codex provider host closed the connection without an answer. It probably runs an older release. Restart the provider host so it runs the same release as this server."
+        : "Cannot reach the Codex provider host. Codex commands fail until it answers again.",
+    );
+  const startDeadline = () => {
+    if (deadline !== undefined) return;
+    deadline = runFork(
+      Effect.sleep(HANDSHAKE_DEADLINE).pipe(
+        Effect.andThen(
+          Effect.sync(() => {
+            deadline = undefined;
+            const cause = unreachable();
+            outage = cause;
+            runFork(
+              Effect.logError("[🔌 Provider host] Codex commands fail until the host answers.", {
+                instanceId: options.instanceId,
+                reason: cause.message,
+              }),
+            );
+            // The configuration stays pending, so a host that answers it ends the outage.
+            for (const [requestId, entry] of pending)
+              if (entry.command.operation !== "configure") {
+                pending.delete(requestId);
+                entry.reject(cause);
+              }
+          }),
+        ),
+      ),
+    );
+  };
+  const reachable = () => {
+    if (deadline !== undefined) runFork(Fiber.interrupt(deadline));
+    deadline = undefined;
+    outage = undefined;
+  };
   // Only the answer of the host process that this client still talks to counts.
   const configure = (target: string) =>
     request(
@@ -147,7 +189,9 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
         payload: Protocol.encode(Protocol.Configuration, options.configuration),
       },
       () => {
-        if (hostId === target) markConfigured?.();
+        if (hostId !== target) return;
+        reachable();
+        markConfigured?.();
       },
       (cause) => {
         if (hostId === target && !closed) fail(cause);
@@ -247,6 +291,7 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
             receivedCursor = Math.max(receivedCursor, cursor);
             for (const entry of pending.values()) dispatch(entry);
             if (firstHost) configure(message.hostId);
+            else reachable();
           }
           if (replay) send({ type: "replay", lease });
           continue;
@@ -303,13 +348,15 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
       if (socket !== next) return;
       ready = false;
       // A host from before the version check closes a subscription it cannot read.
-      if (connected && !answered) hungUp = true;
+      hungUp = connected && !answered;
       if (closed || terminalError) return;
+      startDeadline();
       reconnect = NodeTimers.setTimeout(connect, 250);
     });
   };
   const close = Effect.sync(() => {
     closed = true;
+    if (deadline !== undefined) runFork(Fiber.interrupt(deadline));
     if (reconnect) NodeTimers.clearTimeout(reconnect);
     socket?.destroy();
     rejectAll(error("Provider-host client detached."));
@@ -322,16 +369,13 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
     catch: (cause) =>
       isAdapterError(cause) ? cause : error("Cannot connect to Codex provider host.", cause),
   }).pipe(
-    Effect.timeout("10 seconds"),
+    Effect.timeout(HANDSHAKE_DEADLINE),
     Effect.mapError((cause) =>
       isAdapterError(cause)
         ? cause
-        : error(
-            hungUp
-              ? "The Codex provider host closed the connection without an answer. It probably runs an older release. Restart the provider host so it runs the same release as this server."
-              : "Cannot connect to the configured Codex provider host.",
-            cause,
-          ),
+        : hungUp
+          ? unreachable()
+          : error("Cannot connect to the configured Codex provider host.", cause),
     ),
   );
 
@@ -351,8 +395,8 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
     Effect.tryPromise({
       try: () =>
         new Promise<unknown>((resolve, reject) => {
-          if (terminalError) {
-            reject(terminalError);
+          if (terminalError ?? outage) {
+            reject(terminalError ?? outage);
             return;
           }
           if (closed) {
