@@ -209,7 +209,11 @@ export async function startCodexProviderHostServer(options: CodexProviderHostSer
   ) => {
     const state = getState(instanceId);
     const key = JSON.stringify(configuration);
-    if (state.configKey === key) return;
+    if (state.configKey === key) {
+      // The newest request supersedes a change that still waits for open sessions to end.
+      delete state.pendingConfig;
+      return;
+    }
     if (state.sessions.size > 0 || state.openingSessions.size > 0) {
       state.pendingConfig = configuration;
       return;
