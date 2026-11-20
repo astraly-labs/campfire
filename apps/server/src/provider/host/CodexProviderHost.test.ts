@@ -161,7 +161,8 @@ type RawCommand = Pick<
   "operation" | "payload" | "sessionId" | "effectiveRuntime"
 >;
 // Sends each command after the previous reply, without the checks of the current adapter.
-const sendRaw = (socketPath: string, commands: ReadonlyArray<RawCommand>) =>
+// The host keeps command receipts per instance, so each client names its own commands.
+const sendRaw = (socketPath: string, commands: ReadonlyArray<RawCommand>, client = "raw") =>
   Effect.promise(
     () =>
       new Promise<ReadonlyArray<Protocol.ServerMessage>>((resolve) => {
@@ -177,7 +178,7 @@ const sendRaw = (socketPath: string, commands: ReadonlyArray<RawCommand>) =>
             resolve(replies);
             return;
           }
-          const id = `raw:${replies.length}`;
+          const id = `${client}:${replies.length}`;
           socket.write(
             Protocol.encodeClient({
               type: "command",
@@ -271,8 +272,11 @@ const makeFixture = (maxBufferBytes?: number) =>
         startCodexProviderHostServer({
           socketPath,
           ...(maxBufferBytes === undefined ? {} : { maxBufferBytes }),
-          checkRuntime: async ({ instanceId, runtime }) =>
-            managedCodexRuntimeProblem({ instanceId, homePath: managedHome }, runtime),
+          checkRuntime: async ({ instanceId, configuration, runtime }) =>
+            managedCodexRuntimeProblem(
+              { instanceId, homePath: configuration.config.homePath || managedHome },
+              runtime,
+            ),
           createAdapter: async (configuration) => ({
             adapter,
             setMcpSessions: async () => {},
@@ -519,6 +523,45 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, McpProviderSession
         ]);
         expect(fixture.homes()).toEqual(["", managedHome]);
         expect(fixture.counts()).toMatchObject({ opens: 2, closes: 1 });
+      }),
+    );
+
+    it.effect("checks a reused managed runtime against the configuration that waits", () =>
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture();
+        const scope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+        const owner = yield* fixture.connect(scope, managed);
+        yield* owner.openSession(openInput).pipe(Effect.provideService(Scope.Scope, scope));
+        const reuse = (config: CodexSettings, client: string) =>
+          sendRaw(
+            fixture.host.socketPath,
+            [
+              {
+                operation: "configure",
+                payload: Protocol.encode(Protocol.Configuration, { config, environment: [] }),
+              },
+              {
+                operation: "openSession",
+                sessionId,
+                payload: Protocol.encode(Protocol.OpenSession, openInput),
+                effectiveRuntime: managedRuntime,
+              },
+            ],
+            client,
+          );
+        const moved = yield* reuse(
+          decodeSettings({ setupMode: "managed", homePath: "/state/codex-homes/moved" }),
+          "moved",
+        );
+        expect(moved.map((reply) => reply.type)).toEqual(["response", "error"]);
+        expect(fixture.counts()).toMatchObject({ opens: 1, closes: 0 });
+        const changed = yield* reuse(
+          decodeSettings({ setupMode: "managed", binaryPath: "/opt/codex/bin/codex" }),
+          "changed",
+        );
+        expect(changed.map((reply) => reply.type)).toEqual(["response", "error"]);
+        expect(fixture.counts()).toMatchObject({ opens: 1, closes: 1 });
       }),
     );
 
