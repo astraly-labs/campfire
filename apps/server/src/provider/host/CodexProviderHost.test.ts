@@ -1216,6 +1216,30 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, McpProviderSession
         expect(restart.acks).toEqual([2]);
       }),
     );
+    it.effect("never lets a lost session's handle act on its replacement", () =>
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture();
+        const scope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+        const client = yield* fixture.connect(scope);
+        const lost = yield* client
+          .openSession(openInput)
+          .pipe(Effect.provideService(Scope.Scope, scope));
+        const ended = yield* lost.events.pipe(Stream.runDrain, Effect.flip, Effect.forkScoped);
+        yield* fixture.restartHost;
+        yield* Fiber.join(ended);
+        const replacement = yield* client
+          .openSession(openInput)
+          .pipe(Effect.provideService(Scope.Scope, scope));
+        yield* replacement.startTurn(turn);
+        yield* lost
+          .startTurn({ ...turn, attemptId: RunAttemptId.make("late-attempt") })
+          .pipe(Effect.ignore);
+        yield* lost.externalLifetime!.stop;
+        expect(yield* client.hostedSessions!).toHaveLength(1);
+        expect(fixture.counts()).toEqual({ opens: 2, starts: 1, closes: 1 });
+      }),
+    );
     it.effect("sends an open that never reached the lost host to its replacement", () =>
       Effect.gen(function* () {
         let epoch = 0;
