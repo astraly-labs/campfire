@@ -72,6 +72,7 @@ interface InstanceState {
   socket?: NodeNet.Socket;
   replay: boolean;
   adapter?: HostedCodexAdapter;
+  configuration?: typeof Protocol.Configuration.Type;
   configuring?: Promise<void>;
   configKey?: string;
   pendingConfig?: typeof Protocol.Configuration.Type;
@@ -214,6 +215,7 @@ export async function startCodexProviderHostServer(options: CodexProviderHostSer
           ),
       },
     );
+    state.configuration = configuration;
     state.configKey = key;
     delete state.pendingConfig;
   };
@@ -290,6 +292,13 @@ export async function startCodexProviderHostServer(options: CodexProviderHostSer
           return response(Protocol.SessionDescription, sessionDescription(state, existing));
         let opening = state.openingSessions.get(input.providerSessionId);
         if (!opening) {
+          if (
+            state.configuration?.config.setupMode === "managed" &&
+            !command.effectiveRuntime?.config.homePath
+          )
+            throw protocolError(
+              `Managed Codex instance ${instanceId} reached the provider host without its own Codex home. The host refuses to run it on the default Codex login.`,
+            );
           opening = (async () => {
             const scope = await Effect.runPromise(Scope.make());
             let runtime: Adapter.ProviderAdapterV2SessionRuntime;
