@@ -1978,6 +1978,14 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     }),
                 ),
               );
+        // Without CODEX_HOME, Codex runs on ~/.codex and its default login.
+        if (adapterOptions.settings.setupMode === "managed" && !resolvedRuntime?.config.homePath)
+          return yield* new ProviderSetupError({
+            instanceId: adapterOptions.instanceId,
+            operation: "runtime",
+            detail:
+              "Managed Codex has no runtime with its own Codex home, so it does not start on the default Codex login.",
+          });
         const client = yield* clientFactory.open({
           instanceId: adapterOptions.instanceId,
           threadId: input.threadId,
