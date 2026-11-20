@@ -468,6 +468,27 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, McpProviderSession
       }),
     );
 
+    it.effect("drops a waiting configuration once the active configuration is asked again", () =>
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture();
+        const scope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+        const original = yield* fixture.connect(scope);
+        yield* original.openSession(openInput).pipe(Effect.provideService(Scope.Scope, scope));
+        yield* fixture.connect(scope, {
+          configuration: {
+            config: decodeSettings({ homePath: "/scratch/direct" }),
+            environment: [],
+          },
+        });
+        const reverted = yield* fixture.connect(scope);
+        expect(yield* reverted.hostedSessions!).toHaveLength(1);
+        yield* reverted.openSession(openInput).pipe(Effect.provideService(Scope.Scope, scope));
+        expect(fixture.homes()).toEqual([""]);
+        expect(fixture.counts()).toMatchObject({ opens: 1, closes: 0 });
+      }),
+    );
+
     it.effect("refuses to hand a session to a request with another login and stops it", () =>
       Effect.gen(function* () {
         const fixture = yield* makeFixture();
