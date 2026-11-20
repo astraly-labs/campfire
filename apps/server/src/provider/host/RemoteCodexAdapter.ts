@@ -62,6 +62,8 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
     Queue.Queue<Adapter.ProviderAdapterV2Event, Adapter.ProviderAdapterV2Error>
   >();
   const reattachable = new Map<ProviderSessionId, SessionDescription>();
+  // The last host frame before each fresh session: earlier frames belong to a session it replaced.
+  const freshAfter = new Map<ProviderSessionId, number>();
   // The launch of each hosted session that this adapter started or verified.
   const launches = new Map<ProviderSessionId, string>();
   const managed = options.configuration.config.setupMode === "managed";
@@ -164,6 +166,7 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
             ? Effect.gen(function* () {
                 const queue = queues.get(message.sessionId);
                 if (queue === undefined) return;
+                if (message.sequence <= (freshAfter.get(message.sessionId) ?? 0)) return;
                 yield* Queue.offer(queue, message.event);
               })
             : message.type === "usage"
@@ -316,6 +319,15 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
     replay = true;
     if (ready && lease !== undefined) send({ type: "replay", lease });
   });
+  // The host writes its whole replay before it answers a later command on the same connection.
+  const receiveBufferedOutput = Effect.gen(function* () {
+    let connection: number | undefined;
+    do {
+      connection = lease;
+      yield* enableReplay;
+      yield* call("capabilities", Schema.Void, Protocol.Capabilities, undefined);
+    } while (lease !== connection);
+  });
   const configurationLaunch = Protocol.launchKey({ configuration: options.configuration });
   const hostedSessions = call("listSessions", Schema.Void, Protocol.Sessions, undefined).pipe(
     Effect.flatMap((sessions) =>
@@ -360,17 +372,6 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
         return yield* error(
           `Hosted Codex session ${input.providerSessionId} has not confirmed that it stopped. Retry once it stops.`,
         );
-      const queue = yield* Queue.bounded<
-        Adapter.ProviderAdapterV2Event,
-        Adapter.ProviderAdapterV2Error
-      >(512);
-      queues.set(input.providerSessionId, queue);
-      yield* Effect.addFinalizer(() =>
-        Effect.sync(() => {
-          if (queues.get(input.providerSessionId) === queue) queues.delete(input.providerSessionId);
-          Queue.shutdownUnsafe(queue);
-        }),
-      );
       const existing = reattachable.get(input.providerSessionId);
       reattachable.delete(input.providerSessionId);
       const effectiveRuntime = options.resolveRuntime
@@ -385,6 +386,22 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
       // The host can still run this id with a login that this adapter did not start.
       if (launches.get(input.providerSessionId) !== launch)
         yield* stopSession(input.providerSessionId);
+      if (existing) freshAfter.delete(input.providerSessionId);
+      else {
+        if (!replay) yield* receiveBufferedOutput;
+        freshAfter.set(input.providerSessionId, receivedCursor);
+      }
+      const queue = yield* Queue.bounded<
+        Adapter.ProviderAdapterV2Event,
+        Adapter.ProviderAdapterV2Error
+      >(512);
+      queues.set(input.providerSessionId, queue);
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          if (queues.get(input.providerSessionId) === queue) queues.delete(input.providerSessionId);
+          Queue.shutdownUnsafe(queue);
+        }),
+      );
       if (input.lifetime === "ephemeral")
         yield* Effect.addFinalizer(() =>
           stopSession(input.providerSessionId).pipe(Effect.ignoreCause()),
