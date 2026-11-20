@@ -346,31 +346,37 @@ const makeFixture = (
           } satisfies Adapter.ProviderAdapterV2SessionRuntime;
         }),
     });
-    const host = yield* Effect.acquireRelease(
-      Effect.promise(() =>
-        startCodexProviderHostServer({
-          socketPath,
-          ...(maxBufferBytes === undefined ? {} : { maxBufferBytes }),
-          checkRuntime: async ({ instanceId, configuration, runtime }) =>
-            checksRuntime
-              ? managedCodexRuntimeProblem(
-                  { instanceId, homePath: configuration.config.homePath || managedHome },
-                  runtime,
-                )
-              : undefined,
-          createAdapter: async (configuration) => ({
-            adapter,
-            setMcpSessions: async () => {},
-            openSession: (input, runtime, scope) =>
-              Effect.sync(() => launches.push({ configuration, runtime })).pipe(
-                Effect.andThen(adapter.openSession(input)),
-                Effect.provideService(Scope.Scope, scope),
-              ),
-            close: async () => {},
-          }),
+    const start = () =>
+      startCodexProviderHostServer({
+        socketPath,
+        ...(maxBufferBytes === undefined ? {} : { maxBufferBytes }),
+        checkRuntime: async ({ instanceId, configuration, runtime }) =>
+          checksRuntime
+            ? managedCodexRuntimeProblem(
+                { instanceId, homePath: configuration.config.homePath || managedHome },
+                runtime,
+              )
+            : undefined,
+        createAdapter: async (configuration) => ({
+          adapter,
+          setMcpSessions: async () => {},
+          openSession: (input, runtime, scope) =>
+            Effect.sync(() => launches.push({ configuration, runtime })).pipe(
+              Effect.andThen(adapter.openSession(input)),
+              Effect.provideService(Scope.Scope, scope),
+            ),
+          close: async () => {},
+        }),
+      });
+    let host = yield* Effect.promise(start);
+    yield* Effect.addFinalizer(() => Effect.promise(() => host.close()));
+    const closeHost = Effect.promise(() => host.close());
+    const restartHost = closeHost.pipe(
+      Effect.andThen(
+        Effect.promise(async () => {
+          host = await start();
         }),
       ),
-      (host) => Effect.promise(() => host.close()),
     );
     const connect = (scope: Scope.Closeable, server: ServerSide = unmanaged) =>
       makeRemoteCodexAdapter({
@@ -381,7 +387,9 @@ const makeFixture = (
         canReuseContextUsage: canReuseCodexContextUsage,
       }).pipe(Effect.provideService(Scope.Scope, scope));
     return {
-      host,
+      socketPath,
+      closeHost,
+      restartHost,
       connect,
       events,
       closed,
@@ -556,7 +564,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, McpProviderSession
         const direct = yield* fixture.connect(scope);
         yield* direct.openSession(openInput).pipe(Effect.provideService(Scope.Scope, scope));
         const next = ProviderSessionId.make("next");
-        const replies = yield* sendRaw(fixture.host.socketPath, [
+        const replies = yield* sendRaw(fixture.socketPath, [
           {
             operation: "configure",
             payload: Protocol.encode(Protocol.Configuration, managed.configuration),
@@ -609,7 +617,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, McpProviderSession
           payload: Protocol.encode(Protocol.OpenSession, openInput),
           ...(effectiveRuntime === undefined ? {} : { effectiveRuntime }),
         });
-        const replies = yield* sendRaw(fixture.host.socketPath, [
+        const replies = yield* sendRaw(fixture.socketPath, [
           {
             operation: "configure",
             payload: Protocol.encode(Protocol.Configuration, managed.configuration),
@@ -638,7 +646,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, McpProviderSession
         yield* owner.openSession(openInput).pipe(Effect.provideService(Scope.Scope, scope));
         const reuse = (config: CodexSettings, client: string) =>
           sendRaw(
-            fixture.host.socketPath,
+            fixture.socketPath,
             [
               {
                 operation: "configure",
@@ -770,7 +778,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, McpProviderSession
           const close: RawCommand = { operation: "closeSession", sessionId, payload: null };
           const closesAtReply = new Map<string, number>();
           yield* sendPipelined(
-            fixture.host.socketPath,
+            fixture.socketPath,
             [
               close,
               close,
@@ -828,7 +836,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, McpProviderSession
             effectiveRuntime,
           };
         };
-        const replies = yield* sendRaw(fixture.host.socketPath, [
+        const replies = yield* sendRaw(fixture.socketPath, [
           {
             operation: "configure",
             payload: Protocol.encode(Protocol.Configuration, managed.configuration),
@@ -868,6 +876,25 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, McpProviderSession
         expect(Exit.isFailure(yield* Fiber.join(failedStream))).toBe(true);
         expect(yield* replacement.getCapabilities()).toEqual(CodexProviderCapabilitiesV2);
         expect(fixture.counts().closes).toBe(0);
+      }),
+    );
+    it.effect("takes a fresh lease from a restarted provider host and keeps serving", () =>
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture();
+        const scope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+        const client = yield* fixture.connect(scope);
+        const lost = yield* client
+          .openSession(openInput)
+          .pipe(Effect.provideService(Scope.Scope, scope));
+        const ended = yield* lost.events.pipe(Stream.runDrain, Effect.flip, Effect.forkScoped);
+        yield* fixture.restartHost;
+        expect(yield* Fiber.join(ended)).toMatchObject({
+          _tag: "ProviderAdapterProtocolError",
+          detail: expect.stringContaining("restarted"),
+        });
+        yield* client.openSession(openInput).pipe(Effect.provideService(Scope.Scope, scope));
+        expect(fixture.counts().opens).toBe(2);
       }),
     );
     it.effect("fails visibly and stops the native runtime when the replay buffer is full", () =>
@@ -917,7 +944,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, McpProviderSession
         yield* client
           .openSession({ ...openInput, lifetime: "ephemeral" })
           .pipe(Effect.provideService(Scope.Scope, privateScope));
-        yield* Effect.promise(() => fixture.host.close());
+        yield* fixture.closeHost;
         const close = yield* Scope.close(privateScope, Exit.void).pipe(Effect.forkScoped);
         yield* TestClock.adjust("2 seconds");
         yield* Fiber.join(close);
