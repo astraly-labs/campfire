@@ -60,7 +60,7 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
     ProviderSessionId,
     Queue.Queue<Adapter.ProviderAdapterV2Event, Adapter.ProviderAdapterV2Error>
   >();
-  const descriptions = new Map<ProviderSessionId, SessionDescription>();
+  const reattachable = new Map<ProviderSessionId, SessionDescription>();
   const pending = new Map<string, PendingCommand>();
   let counter = 0;
   let socket: NodeNet.Socket | undefined;
@@ -289,7 +289,7 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
   const hostedSessions = call("listSessions", Schema.Void, Protocol.Sessions, undefined).pipe(
     Effect.tap((sessions) =>
       Effect.sync(() => {
-        for (const session of sessions) descriptions.set(session.input.providerSessionId, session);
+        for (const session of sessions) reattachable.set(session.input.providerSessionId, session);
       }),
     ),
   );
@@ -325,7 +325,8 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
           Queue.shutdownUnsafe(queue);
         }),
       );
-      const existing = descriptions.get(input.providerSessionId);
+      const existing = reattachable.get(input.providerSessionId);
+      reattachable.delete(input.providerSessionId);
       const effectiveRuntime =
         existing || !options.resolveRuntime
           ? undefined
@@ -347,7 +348,6 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
           ...(effectiveRuntime === undefined ? {} : { effectiveRuntime }),
         },
       );
-      descriptions.set(input.providerSessionId, description);
       if (!existing) yield* enableReplay;
       const sessionId = input.providerSessionId;
       const supports = (method: string) => description.methods.includes(method);
