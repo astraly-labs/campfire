@@ -349,6 +349,23 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, McpProviderSession
         }),
     );
 
+    it.effect("never reattaches a managed instance to a session on the default login", () =>
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture();
+        const directScope = yield* Scope.make();
+        const direct = yield* fixture.connect(directScope);
+        yield* direct.openSession(openInput).pipe(Effect.provideService(Scope.Scope, directScope));
+        yield* Scope.close(directScope, Exit.void);
+        const scope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+        const client = yield* fixture.connect(scope, managed);
+        expect(yield* client.hostedSessions!).toEqual([]);
+        yield* client.openSession(openInput).pipe(Effect.provideService(Scope.Scope, scope));
+        expect(fixture.homes()).toEqual([undefined, managedHome]);
+        expect(fixture.counts()).toMatchObject({ opens: 2, closes: 1 });
+      }),
+    );
+
     it.effect("reopens a managed session that still names a replaced server's token broker", () =>
       Effect.gen(function* () {
         const fixture = yield* makeFixture();
