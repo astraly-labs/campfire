@@ -1,5 +1,6 @@
 // The Unix socket is the process boundary; native I/O stays in this module.
 // @effect-diagnostics nodeBuiltinImport:off globalTimers:off
+import * as NodeCrypto from "node:crypto";
 import * as NodeNet from "node:net";
 import * as NodeTimers from "node:timers";
 import {
@@ -150,6 +151,7 @@ export async function startCodexProviderHostServer(options: CodexProviderHostSer
   });
   if (reachable) throw new Error(`A provider host already listens at ${options.socketPath}.`);
   await options.prepareSocket?.();
+  const hostId = NodeCrypto.randomUUID();
   const states = new Map<ProviderInstanceId, InstanceState>();
   const sockets = new Set<NodeNet.Socket>();
   const maxBufferBytes = options.maxBufferBytes ?? Protocol.MAX_BUFFER_BYTES;
@@ -293,8 +295,11 @@ export async function startCodexProviderHostServer(options: CodexProviderHostSer
     try {
       if (state.failed) throw protocolError(state.failed);
       if (command.operation === "configure") {
-        await configure(instanceId, Protocol.decode(Protocol.Configuration, command.payload));
-        return response(Schema.Void, undefined);
+        await configure(
+          instanceId,
+          Protocol.decode(Protocol.Operations.configure.input, command.payload),
+        );
+        return response(Protocol.Operations.configure.output, undefined);
       }
       await state.configuring;
       if (state.pendingConfig && state.sessions.size === 0)
@@ -307,7 +312,7 @@ export async function startCodexProviderHostServer(options: CodexProviderHostSer
       }
       if (command.operation === "capabilities")
         return response(
-          Protocol.Capabilities,
+          Protocol.Operations.capabilities.output,
           await Effect.runPromise(hosted.adapter.getCapabilities()),
         );
       if (command.operation === "listSessions")
@@ -318,7 +323,7 @@ export async function startCodexProviderHostServer(options: CodexProviderHostSer
             .map((session) => sessionDescription(state, session)),
         );
       if (command.operation === "openSession") {
-        const input = Protocol.decode(Protocol.OpenSession, command.payload);
+        const input = Protocol.decode(Protocol.Operations.openSession.input, command.payload);
         // A request asks for the configuration that waits for open sessions to end.
         const configuration = state.pendingConfig ?? state.configuration;
         if (!configuration) throw protocolError("Codex provider host has not been configured.");
@@ -332,7 +337,10 @@ export async function startCodexProviderHostServer(options: CodexProviderHostSer
         };
         const reuse = async (session: HostedSession) => {
           if (sameLaunch(session, launch))
-            return response(Protocol.SessionDescription, sessionDescription(state, session));
+            return response(
+              Protocol.Operations.openSession.output,
+              sessionDescription(state, session),
+            );
           await stopSession(state, input.providerSessionId);
           throw protocolError(
             `Hosted Codex session ${input.providerSessionId} ran on another login, so the host stopped it. Open it again.`,
@@ -408,7 +416,7 @@ export async function startCodexProviderHostServer(options: CodexProviderHostSer
       if (!id) throw protocolError("A provider session id is required.");
       if (command.operation === "closeSession") {
         await stopSession(state, id);
-        return response(Schema.Void, undefined);
+        return response(Protocol.Operations.closeSession.output, undefined);
       }
       const session = state.sessions.get(id);
       if (!session) throw protocolError(`Hosted Codex session ${id} is not alive.`);
@@ -420,21 +428,28 @@ export async function startCodexProviderHostServer(options: CodexProviderHostSer
       switch (command.operation) {
         case "ensureThread":
           return response(
-            Protocol.ProviderThread,
+            Protocol.Operations.ensureThread.output,
             await Effect.runPromise(
-              runtime.ensureThread(Protocol.decode(Protocol.EnsureThread, command.payload)),
+              runtime.ensureThread(
+                Protocol.decode(Protocol.Operations.ensureThread.input, command.payload),
+              ),
             ),
           );
         case "resumeThread":
           return response(
-            Protocol.ProviderThread,
+            Protocol.Operations.resumeThread.output,
             await Effect.runPromise(
-              runtime.resumeThread(Protocol.decode(Protocol.ResumeThread, command.payload)),
+              runtime.resumeThread(
+                Protocol.decode(Protocol.Operations.resumeThread.input, command.payload),
+              ),
             ),
           );
         case "startTurn":
         case "compactThread": {
-          const turn = Protocol.decode(Protocol.Turn, command.payload);
+          const turn = Protocol.decode(
+            Protocol.Operations[command.operation].input,
+            command.payload,
+          );
           const key = `${command.operation}:${turn.attemptId}`;
           let started = session.starts.get(key);
           if (!started) {
@@ -451,52 +466,64 @@ export async function startCodexProviderHostServer(options: CodexProviderHostSer
             session.starts.set(key, started);
           }
           await started;
-          return response(Schema.Void, undefined);
+          return response(Protocol.Operations[command.operation].output, undefined);
         }
         case "steerTurn":
           await Effect.runPromise(
-            runtime.steerTurn(Protocol.decode(Protocol.Steer, command.payload)),
+            runtime.steerTurn(
+              Protocol.decode(Protocol.Operations.steerTurn.input, command.payload),
+            ),
           );
-          break;
+          return response(Protocol.Operations.steerTurn.output, undefined);
         case "interruptTurn":
           await Effect.runPromise(
-            runtime.interruptTurn(Protocol.decode(Protocol.Interrupt, command.payload)),
+            runtime.interruptTurn(
+              Protocol.decode(Protocol.Operations.interruptTurn.input, command.payload),
+            ),
           );
-          break;
+          return response(Protocol.Operations.interruptTurn.output, undefined);
         case "respondToRuntimeRequest":
           await Effect.runPromise(
-            runtime.respondToRuntimeRequest(Protocol.decode(Protocol.Respond, command.payload)),
+            runtime.respondToRuntimeRequest(
+              Protocol.decode(Protocol.Operations.respondToRuntimeRequest.input, command.payload),
+            ),
           );
-          break;
+          return response(Protocol.Operations.respondToRuntimeRequest.output, undefined);
         case "readThreadSnapshot":
           return response(
-            Protocol.ThreadSnapshot,
+            Protocol.Operations.readThreadSnapshot.output,
             await Effect.runPromise(
-              runtime.readThreadSnapshot(Protocol.decode(Protocol.Thread, command.payload)),
+              runtime.readThreadSnapshot(
+                Protocol.decode(Protocol.Operations.readThreadSnapshot.input, command.payload),
+              ),
             ),
           );
         case "rollbackThread":
           return response(
-            Protocol.ThreadSnapshot,
+            Protocol.Operations.rollbackThread.output,
             await Effect.runPromise(
-              runtime.rollbackThread(Protocol.decode(Protocol.Rollback, command.payload)),
+              runtime.rollbackThread(
+                Protocol.decode(Protocol.Operations.rollbackThread.input, command.payload),
+              ),
             ),
           );
         case "forkThread":
           return response(
-            Protocol.ProviderThread,
+            Protocol.Operations.forkThread.output,
             await Effect.runPromise(
-              runtime.forkThread(Protocol.decode(Protocol.Fork, command.payload)),
+              runtime.forkThread(
+                Protocol.decode(Protocol.Operations.forkThread.input, command.payload),
+              ),
             ),
           );
         case "injectHistory":
           return response(
-            Schema.Boolean,
+            Protocol.Operations.injectHistory.output,
             await Effect.runPromise(
               required(
                 runtime.injectHistory,
                 "history injection",
-              )(Protocol.decode(Protocol.InjectHistory, command.payload)),
+              )(Protocol.decode(Protocol.Operations.injectHistory.input, command.payload)),
             ),
           );
         case "unloadThread":
@@ -504,80 +531,86 @@ export async function startCodexProviderHostServer(options: CodexProviderHostSer
             required(
               runtime.unloadThread,
               "unload",
-            )(Protocol.decode(Protocol.Thread, command.payload)),
+            )(Protocol.decode(Protocol.Operations.unloadThread.input, command.payload)),
           );
-          break;
+          return response(Protocol.Operations.unloadThread.output, undefined);
         case "stopTask":
           await Effect.runPromise(
             required(
               runtime.stopTask,
               "task stop",
-            )(Protocol.decode(Protocol.StopTask, command.payload)),
+            )(Protocol.decode(Protocol.Operations.stopTask.input, command.payload)),
           );
-          break;
+          return response(Protocol.Operations.stopTask.output, undefined);
         case "stopSubagent":
           return response(
-            Protocol.SubagentOutcome,
+            Protocol.Operations.stopSubagent.output,
             await Effect.runPromise(
               required(
                 runtime.stopSubagent,
                 "subagent stop",
-              )(Protocol.decode(Protocol.StopSubagent, command.payload)),
+              )(Protocol.decode(Protocol.Operations.stopSubagent.input, command.payload)),
             ),
           );
         case "uploadFeedback":
           return response(
-            Schema.Struct({ feedbackId: Schema.String }),
+            Protocol.Operations.uploadFeedback.output,
             await Effect.runPromise(
               required(
                 runtime.uploadFeedback,
                 "feedback",
-              )(Protocol.decode(Protocol.Feedback, command.payload)),
+              )(Protocol.decode(Protocol.Operations.uploadFeedback.input, command.payload)),
             ),
           );
         case "hasPendingBackgroundWork":
           return response(
-            Schema.Boolean,
+            Protocol.Operations.hasPendingBackgroundWork.output,
             await Effect.runPromise(runtime.hasPendingBackgroundWork ?? Effect.succeed(false)),
           );
         case "hasPendingBackgroundWorkForThread":
           return response(
-            Schema.Boolean,
+            Protocol.Operations.hasPendingBackgroundWorkForThread.output,
             await Effect.runPromise(
               runtime.hasPendingBackgroundWorkForThread?.(
-                Protocol.decode(Protocol.Thread, command.payload).providerThread,
+                Protocol.decode(
+                  Protocol.Operations.hasPendingBackgroundWorkForThread.input,
+                  command.payload,
+                ).providerThread,
               ) ?? Effect.succeed(false),
             ),
           );
         case "mcp.listTools":
           return response(
-            Protocol.McpTools,
+            Protocol.Operations["mcp.listTools"].output,
             await Effect.runPromise(
               required(runtime.mcpApps, "MCP apps").listTools(
-                Protocol.decode(Protocol.McpToolsInput, command.payload),
+                Protocol.decode(Protocol.Operations["mcp.listTools"].input, command.payload),
               ),
             ),
           );
         case "mcp.callTool":
           return response(
-            Protocol.McpResult,
+            Protocol.Operations["mcp.callTool"].output,
             await Effect.runPromise(
               required(runtime.mcpApps, "MCP apps").callTool(
-                Protocol.decode(Protocol.McpCallInput, command.payload),
+                Protocol.decode(Protocol.Operations["mcp.callTool"].input, command.payload),
               ),
             ),
           );
         case "mcp.readResource":
           return response(
-            Protocol.McpResource,
+            Protocol.Operations["mcp.readResource"].output,
             await Effect.runPromise(
               required(runtime.mcpApps, "MCP apps").readResource(
-                Protocol.decode(Protocol.McpResourceInput, command.payload),
+                Protocol.decode(Protocol.Operations["mcp.readResource"].input, command.payload),
               ),
             ),
           );
+        default: {
+          const unknown: never = command.operation;
+          throw protocolError(`Hosted Codex cannot run operation ${String(unknown)}.`);
+        }
       }
-      return response(Schema.Void, undefined);
     } catch (error) {
       return {
         type: "error",
@@ -606,11 +639,21 @@ export async function startCodexProviderHostServer(options: CodexProviderHostSer
         if (newline < 0) break;
         const line = buffer.slice(0, newline);
         buffer = buffer.slice(newline + 1);
+        let raw: unknown;
         let message: Protocol.ClientMessage;
         try {
-          message = Protocol.decode(Protocol.ClientMessage, JSON.parse(line));
+          raw = JSON.parse(line);
+          message = Protocol.decode(Protocol.ClientMessage, raw);
         } catch {
-          socket.destroy();
+          const other = Protocol.otherProtocolVersion(raw);
+          if (other === undefined) socket.destroy();
+          else
+            socket.end(
+              Protocol.encodeServer({
+                type: "fatal",
+                detail: `The Codex provider host runs protocol ${Protocol.PROTOCOL_VERSION}, but this T3 server runs protocol ${other}. Run the provider host and the server from the same release.`,
+              }),
+            );
           return;
         }
         if (message.type === "subscribe") {
@@ -619,7 +662,12 @@ export async function startCodexProviderHostServer(options: CodexProviderHostSer
             return;
           }
           const state = getState(message.instanceId);
-          if (message.previousLease !== undefined && message.previousLease !== state.lease) {
+          const previous = message.previousLease;
+          const claimed = state.lease > 0;
+          const stale =
+            previous !== undefined &&
+            (previous.hostId === hostId ? previous.lease !== state.lease : claimed);
+          if (stale) {
             socket.end(
               Protocol.encodeServer({
                 type: "fatal",
@@ -647,6 +695,7 @@ export async function startCodexProviderHostServer(options: CodexProviderHostSer
           write(socket, {
             type: "subscribed",
             protocolVersion: Protocol.PROTOCOL_VERSION,
+            hostId,
             lease: state.lease,
             committed: state.committedAck,
           });

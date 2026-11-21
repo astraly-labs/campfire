@@ -1920,7 +1920,10 @@ export const createCodexAdapterV2 = Effect.fn("CodexAdapterV2.createCodexAdapter
         new ProviderAdapterDriverCreateError({
           driver: CODEX_DRIVER_KIND,
           instanceId: input.instanceId,
-          detail: "Could not connect to the configured Codex provider host.",
+          detail:
+            cause._tag === "ProviderAdapterProtocolError"
+              ? cause.detail
+              : "Could not connect to the configured Codex provider host.",
           cause,
         }),
     ),

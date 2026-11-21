@@ -31,7 +31,7 @@ import {
 import * as Adapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as Schema from "effect/Schema";
 
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 export const MAX_FRAME_BYTES = 16 * 1024 * 1024;
 export const MAX_BUFFER_BYTES = 64 * 1024 * 1024;
 export const MAX_COMMAND_RECEIPTS = 10_000;
@@ -265,13 +265,52 @@ export const Operation = Schema.Literals([
   "mcp.readResource",
 ]);
 export type Operation = typeof Operation.Type;
+export const FeedbackResult = Schema.Struct({ feedbackId: Schema.String });
+const operation = <const Name extends Operation, A, I, B, J>(
+  name: Name,
+  input: Schema.Codec<A, I>,
+  output: Schema.Codec<B, J>,
+) => ({ name, input, output });
+/** The request and response codecs of each operation, for the host, the client, and the wire pin. */
+export const Operations = {
+  configure: operation("configure", Configuration, Schema.Void),
+  capabilities: operation("capabilities", Schema.Void, Capabilities),
+  listSessions: operation("listSessions", Schema.Void, Sessions),
+  openSession: operation("openSession", OpenSession, SessionDescription),
+  closeSession: operation("closeSession", Schema.Void, Schema.Void),
+  ensureThread: operation("ensureThread", EnsureThread, ProviderThread),
+  resumeThread: operation("resumeThread", ResumeThread, ProviderThread),
+  startTurn: operation("startTurn", Turn, Schema.Void),
+  compactThread: operation("compactThread", Turn, Schema.Void),
+  steerTurn: operation("steerTurn", Steer, Schema.Void),
+  interruptTurn: operation("interruptTurn", Interrupt, Schema.Void),
+  respondToRuntimeRequest: operation("respondToRuntimeRequest", Respond, Schema.Void),
+  readThreadSnapshot: operation("readThreadSnapshot", Thread, ThreadSnapshot),
+  rollbackThread: operation("rollbackThread", Rollback, ThreadSnapshot),
+  forkThread: operation("forkThread", Fork, ProviderThread),
+  injectHistory: operation("injectHistory", InjectHistory, Schema.Boolean),
+  unloadThread: operation("unloadThread", Thread, Schema.Void),
+  stopTask: operation("stopTask", StopTask, Schema.Void),
+  stopSubagent: operation("stopSubagent", StopSubagent, SubagentOutcome),
+  uploadFeedback: operation("uploadFeedback", Feedback, FeedbackResult),
+  hasPendingBackgroundWork: operation("hasPendingBackgroundWork", Schema.Void, Schema.Boolean),
+  hasPendingBackgroundWorkForThread: operation(
+    "hasPendingBackgroundWorkForThread",
+    Thread,
+    Schema.Boolean,
+  ),
+  "mcp.listTools": operation("mcp.listTools", McpToolsInput, McpTools),
+  "mcp.callTool": operation("mcp.callTool", McpCallInput, McpResult),
+  "mcp.readResource": operation("mcp.readResource", McpResourceInput, McpResource),
+} satisfies { readonly [Name in Operation]: { readonly name: Name } };
+const HostLease = Schema.Struct({ hostId: Schema.String, lease: Schema.Number });
 export const ClientMessage = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("subscribe"),
     protocolVersion: Schema.Literal(PROTOCOL_VERSION),
     instanceId: ProviderInstanceId,
     after: Schema.Number,
-    previousLease: Schema.optionalKey(Schema.Number),
+    previousLease: Schema.optionalKey(HostLease),
   }),
   Schema.Struct({ type: Schema.Literal("replay"), lease: Schema.Number }),
   Schema.Struct({ type: Schema.Literal("ack"), lease: Schema.Number, sequence: Schema.Number }),
@@ -292,7 +331,7 @@ export const ServerMessage = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("subscribed"),
     protocolVersion: Schema.Literal(PROTOCOL_VERSION),
-    lease: Schema.Number,
+    ...HostLease.fields,
     committed: Schema.Number,
   }),
   Schema.Struct({
@@ -327,6 +366,17 @@ export const ServerMessage = Schema.Union([
   }),
 ]);
 export type ServerMessage = typeof ServerMessage.Type;
+const isHandshake = Schema.is(
+  Schema.Struct({
+    type: Schema.Literals(["subscribe", "subscribed"]),
+    protocolVersion: Schema.Number,
+  }),
+);
+/** The version that a peer's handshake names when it is not this release's protocol. */
+export const otherProtocolVersion = (message: unknown): number | undefined =>
+  isHandshake(message) && message.protocolVersion !== PROTOCOL_VERSION
+    ? message.protocolVersion
+    : undefined;
 
 export function encode<A, I>(schema: Schema.Codec<A, I>, value: A): unknown {
   const json = Schema.toCodecJson(schema);

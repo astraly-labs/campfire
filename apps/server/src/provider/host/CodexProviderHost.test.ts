@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off - a raw socket client speaks the host protocol like an older server.
+// @effect-diagnostics nodeBuiltinImport:off - raw sockets stand in for other servers on the host protocol.
 import * as NodeNet from "node:net";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -20,6 +20,7 @@ import {
 import * as Adapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -226,6 +227,85 @@ const sendRaw = (socketPath: string, commands: ReadonlyArray<RawCommand>, client
         );
       }),
   );
+type HostLease = { readonly hostId: string; readonly lease: number };
+type Reply = Protocol.ServerMessage | undefined;
+const subscribeRaw = (
+  socketPath: string,
+  fields: { readonly previousLease?: HostLease; readonly protocolVersion?: number } = {},
+) =>
+  Effect.acquireRelease(
+    Effect.promise(
+      () =>
+        new Promise<{ readonly socket: NodeNet.Socket; readonly reply: Reply }>(
+          (resolve, reject) => {
+            const socket = NodeNet.createConnection(socketPath);
+            let buffer = "";
+            socket.setEncoding("utf8");
+            socket.once("error", reject);
+            socket.once("close", () => resolve({ socket, reply: undefined }));
+            socket.on("data", (chunk: string) => {
+              buffer += chunk;
+              const newline = buffer.indexOf("\n");
+              if (newline < 0) return;
+              const reply = Protocol.decode(
+                Protocol.ServerMessage,
+                JSON.parse(buffer.slice(0, newline)),
+              );
+              resolve({ socket, reply });
+            });
+            socket.once("connect", () =>
+              socket.write(
+                JSON.stringify({
+                  type: "subscribe",
+                  protocolVersion: Protocol.PROTOCOL_VERSION,
+                  instanceId,
+                  after: 0,
+                  ...fields,
+                }) + "\n",
+              ),
+            );
+          },
+        ),
+    ),
+    ({ socket }) => Effect.sync(() => socket.destroy()),
+  ).pipe(Effect.map(({ reply }) => reply));
+const leaseOf = (reply: Reply): HostLease => {
+  if (reply?.type !== "subscribed") throw new Error(`Expected a subscription, got ${reply?.type}.`);
+  return { hostId: reply.hostId, lease: reply.lease };
+};
+const remote = (socketPath: string, server: ServerSide = unmanaged) =>
+  makeRemoteCodexAdapter({
+    socketPath,
+    instanceId,
+    ...server,
+    onContinuation: () => Effect.void,
+    canReuseContextUsage: canReuseCodexContextUsage,
+  });
+const fakeHost = (answer: (socket: NodeNet.Socket) => void) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const temp = yield* fs.makeTempDirectoryScoped({ prefix: "campfire-fake-host-" });
+    const socketPath = `${temp}/host.sock`;
+    let markReconnected = () => {};
+    const reconnected = new Promise<void>((resolve) => {
+      markReconnected = resolve;
+    });
+    const sockets = new Set<NodeNet.Socket>();
+    const server = NodeNet.createServer((socket) => {
+      sockets.add(socket);
+      if (sockets.size === 2) markReconnected();
+      socket.once("data", () => answer(socket));
+    });
+    yield* Effect.acquireRelease(
+      Effect.promise(() => new Promise<void>((resolve) => server.listen(socketPath, resolve))),
+      () =>
+        Effect.promise(() => {
+          for (const socket of sockets) socket.destroy();
+          return new Promise<void>((resolve) => server.close(() => resolve()));
+        }),
+    );
+    return { socketPath, reconnected: Effect.promise(() => reconnected) };
+  });
 
 // Sends every command at once and reports each reply as it arrives.
 const sendPipelined = (
@@ -279,6 +359,96 @@ const sendPipelined = (
         );
       }),
   );
+
+// Subscribes the client to a fake host process with this id, then hands each client frame on.
+const acceptAs = (
+  socket: NodeNet.Socket,
+  hostId: string,
+  handle: (message: Protocol.ClientMessage) => void,
+) => {
+  let buffer = "";
+  socket.setEncoding("utf8");
+  socket.on("data", (chunk: string) => {
+    buffer += chunk;
+    for (let end = buffer.indexOf("\n"); end >= 0; end = buffer.indexOf("\n")) {
+      handle(Protocol.decode(Protocol.ClientMessage, JSON.parse(buffer.slice(0, end))));
+      buffer = buffer.slice(end + 1);
+    }
+  });
+  socket.write(
+    Protocol.encodeServer({
+      type: "subscribed",
+      protocolVersion: Protocol.PROTOCOL_VERSION,
+      hostId,
+      lease: 1,
+      committed: 0,
+    }),
+  );
+};
+const answer = (socket: NodeNet.Socket, message: Protocol.ClientMessage) => {
+  if (message.type !== "command") return;
+  socket.write(
+    Protocol.encodeServer({
+      type: "response",
+      requestId: message.requestId,
+      result:
+        message.operation === "capabilities"
+          ? Protocol.encode(Protocol.Capabilities, CodexProviderCapabilitiesV2)
+          : Protocol.encode(Schema.Void, undefined),
+    }),
+  );
+};
+
+const continuation = (sequence: number) =>
+  Protocol.encodeServer({
+    type: "continuation",
+    lease: 1,
+    sequence,
+    request: { threadId, providerThreadId: providerThread.id, driver, detail: null },
+  });
+// Restarts a fake host while the client still runs the first frame of the old host.
+const restartDuringDelivery = (oldDelivery: Promise<void>) =>
+  Effect.gen(function* () {
+    let epoch = 0;
+    const first = Promise.withResolvers<NodeNet.Socket>();
+    const replacement = Promise.withResolvers<NodeNet.Socket>();
+    const delivering = Promise.withResolvers<void>();
+    const acks: Array<number> = [];
+    const acked = Promise.withResolvers<"acked" | "closed">();
+    const host = yield* fakeHost((socket) => {
+      const current = ++epoch;
+      if (current === 1) first.resolve(socket);
+      else socket.once("close", () => acked.resolve("closed"));
+      acceptAs(socket, `host-${current}`, (message) => {
+        if (message.type !== "ack") answer(socket, message);
+        if (current === 1) return;
+        if (message.type === "ack") {
+          acks.push(message.sequence);
+          acked.resolve("acked");
+        } else if (message.type === "command") replacement.resolve(socket);
+      });
+    });
+    let deliveries = 0;
+    yield* makeRemoteCodexAdapter({
+      socketPath: host.socketPath,
+      instanceId,
+      ...unmanaged,
+      onContinuation: () =>
+        ++deliveries === 1
+          ? Effect.promise(() => {
+              delivering.resolve();
+              return oldDelivery;
+            })
+          : Effect.void,
+      canReuseContextUsage: canReuseCodexContextUsage,
+    });
+    const old = yield* Effect.promise(() => first.promise);
+    old.write(continuation(9));
+    yield* Effect.promise(() => delivering.promise);
+    old.destroy();
+    const next = yield* Effect.promise(() => replacement.promise);
+    return { next, acks, acked: Effect.promise(() => acked.promise) };
+  });
 
 const makeFixture = (
   options: {
@@ -346,42 +516,44 @@ const makeFixture = (
           } satisfies Adapter.ProviderAdapterV2SessionRuntime;
         }),
     });
-    const host = yield* Effect.acquireRelease(
-      Effect.promise(() =>
-        startCodexProviderHostServer({
-          socketPath,
-          ...(maxBufferBytes === undefined ? {} : { maxBufferBytes }),
-          checkRuntime: async ({ instanceId, configuration, runtime }) =>
-            checksRuntime
-              ? managedCodexRuntimeProblem(
-                  { instanceId, homePath: configuration.config.homePath || managedHome },
-                  runtime,
-                )
-              : undefined,
-          createAdapter: async (configuration) => ({
-            adapter,
-            setMcpSessions: async () => {},
-            openSession: (input, runtime, scope) =>
-              Effect.sync(() => launches.push({ configuration, runtime })).pipe(
-                Effect.andThen(adapter.openSession(input)),
-                Effect.provideService(Scope.Scope, scope),
-              ),
-            close: async () => {},
-          }),
+    const start = () =>
+      startCodexProviderHostServer({
+        socketPath,
+        ...(maxBufferBytes === undefined ? {} : { maxBufferBytes }),
+        checkRuntime: async ({ instanceId, configuration, runtime }) =>
+          checksRuntime
+            ? managedCodexRuntimeProblem(
+                { instanceId, homePath: configuration.config.homePath || managedHome },
+                runtime,
+              )
+            : undefined,
+        createAdapter: async (configuration) => ({
+          adapter,
+          setMcpSessions: async () => {},
+          openSession: (input, runtime, scope) =>
+            Effect.sync(() => launches.push({ configuration, runtime })).pipe(
+              Effect.andThen(adapter.openSession(input)),
+              Effect.provideService(Scope.Scope, scope),
+            ),
+          close: async () => {},
+        }),
+      });
+    let host = yield* Effect.promise(start);
+    yield* Effect.addFinalizer(() => Effect.promise(() => host.close()));
+    const closeHost = Effect.promise(() => host.close());
+    const restartHost = closeHost.pipe(
+      Effect.andThen(
+        Effect.promise(async () => {
+          host = await start();
         }),
       ),
-      (host) => Effect.promise(() => host.close()),
     );
     const connect = (scope: Scope.Closeable, server: ServerSide = unmanaged) =>
-      makeRemoteCodexAdapter({
-        socketPath,
-        instanceId,
-        ...server,
-        onContinuation: () => Effect.void,
-        canReuseContextUsage: canReuseCodexContextUsage,
-      }).pipe(Effect.provideService(Scope.Scope, scope));
+      remote(socketPath, server).pipe(Effect.provideService(Scope.Scope, scope));
     return {
-      host,
+      socketPath,
+      closeHost,
+      restartHost,
       connect,
       events,
       closed,
@@ -556,7 +728,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, McpProviderSession
         const direct = yield* fixture.connect(scope);
         yield* direct.openSession(openInput).pipe(Effect.provideService(Scope.Scope, scope));
         const next = ProviderSessionId.make("next");
-        const replies = yield* sendRaw(fixture.host.socketPath, [
+        const replies = yield* sendRaw(fixture.socketPath, [
           {
             operation: "configure",
             payload: Protocol.encode(Protocol.Configuration, managed.configuration),
@@ -609,7 +781,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, McpProviderSession
           payload: Protocol.encode(Protocol.OpenSession, openInput),
           ...(effectiveRuntime === undefined ? {} : { effectiveRuntime }),
         });
-        const replies = yield* sendRaw(fixture.host.socketPath, [
+        const replies = yield* sendRaw(fixture.socketPath, [
           {
             operation: "configure",
             payload: Protocol.encode(Protocol.Configuration, managed.configuration),
@@ -638,7 +810,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, McpProviderSession
         yield* owner.openSession(openInput).pipe(Effect.provideService(Scope.Scope, scope));
         const reuse = (config: CodexSettings, client: string) =>
           sendRaw(
-            fixture.host.socketPath,
+            fixture.socketPath,
             [
               {
                 operation: "configure",
@@ -770,7 +942,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, McpProviderSession
           const close: RawCommand = { operation: "closeSession", sessionId, payload: null };
           const closesAtReply = new Map<string, number>();
           yield* sendPipelined(
-            fixture.host.socketPath,
+            fixture.socketPath,
             [
               close,
               close,
@@ -828,7 +1000,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, McpProviderSession
             effectiveRuntime,
           };
         };
-        const replies = yield* sendRaw(fixture.host.socketPath, [
+        const replies = yield* sendRaw(fixture.socketPath, [
           {
             operation: "configure",
             payload: Protocol.encode(Protocol.Configuration, managed.configuration),
@@ -868,6 +1040,278 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, McpProviderSession
         expect(Exit.isFailure(yield* Fiber.join(failedStream))).toBe(true);
         expect(yield* replacement.getCapabilities()).toEqual(CodexProviderCapabilitiesV2);
         expect(fixture.counts().closes).toBe(0);
+      }),
+    );
+    it.effect("takes a fresh lease from a restarted provider host and keeps serving", () =>
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture();
+        const scope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+        const client = yield* fixture.connect(scope);
+        const lost = yield* client
+          .openSession(openInput)
+          .pipe(Effect.provideService(Scope.Scope, scope));
+        const ended = yield* lost.events.pipe(Stream.runDrain, Effect.flip, Effect.forkScoped);
+        yield* fixture.restartHost;
+        expect(yield* Fiber.join(ended)).toMatchObject({
+          _tag: "ProviderAdapterProtocolError",
+          detail: expect.stringContaining("restarted"),
+        });
+        yield* client.openSession(openInput).pipe(Effect.provideService(Scope.Scope, scope));
+        expect(fixture.counts().opens).toBe(2);
+      }),
+    );
+    it.effect("gives a restarted host to its first owner and fences every stale lease", () =>
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture();
+        const superseded = { type: "fatal", detail: "Provider-host owner has been superseded." };
+        const earlier = leaseOf(yield* subscribeRaw(fixture.socketPath));
+        yield* fixture.restartHost;
+        const owner = leaseOf(yield* subscribeRaw(fixture.socketPath, { previousLease: earlier }));
+        expect(owner.hostId).not.toBe(earlier.hostId);
+        expect(owner.lease).toBe(1);
+        expect(yield* subscribeRaw(fixture.socketPath, { previousLease: earlier })).toEqual(
+          superseded,
+        );
+        leaseOf(yield* subscribeRaw(fixture.socketPath));
+        expect(yield* subscribeRaw(fixture.socketPath, { previousLease: owner })).toEqual(
+          superseded,
+        );
+      }),
+    );
+    it.effect("tells a server that speaks another protocol why the host refuses it", () =>
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture();
+        const other = Protocol.PROTOCOL_VERSION + 1;
+        expect(yield* subscribeRaw(fixture.socketPath, { protocolVersion: other })).toMatchObject({
+          type: "fatal",
+          detail: expect.stringContaining(`protocol ${other}`),
+        });
+      }),
+    );
+    it.effect("refuses a provider host that speaks another protocol", () =>
+      Effect.gen(function* () {
+        const other = Protocol.PROTOCOL_VERSION + 1;
+        const host = yield* fakeHost((socket) =>
+          socket.write(
+            JSON.stringify({
+              type: "subscribed",
+              protocolVersion: other,
+              hostId: "other-release",
+              lease: 1,
+              committed: 0,
+            }) + "\n",
+          ),
+        );
+        const scope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+        expect(
+          yield* remote(host.socketPath).pipe(
+            Effect.provideService(Scope.Scope, scope),
+            Effect.flip,
+          ),
+        ).toMatchObject({
+          _tag: "ProviderAdapterProtocolError",
+          detail: expect.stringContaining(`protocol ${other}`),
+        });
+      }),
+    );
+    it.effect("names a provider host that hangs up on the subscription", () =>
+      Effect.gen(function* () {
+        const host = yield* fakeHost((socket) => socket.destroy());
+        const scope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+        const connecting = yield* remote(host.socketPath).pipe(
+          Effect.provideService(Scope.Scope, scope),
+          Effect.flip,
+          Effect.forkScoped,
+        );
+        yield* host.reconnected;
+        yield* TestClock.adjust("10 seconds");
+        expect(yield* Fiber.join(connecting)).toMatchObject({
+          _tag: "ProviderAdapterProtocolError",
+          detail: expect.stringContaining("without an answer"),
+        });
+      }),
+    );
+    it.effect(
+      "finishes startup on the host that answers after a restart during configuration",
+      () =>
+        Effect.gen(function* () {
+          let epoch = 0;
+          const host = yield* fakeHost((socket) => {
+            const current = ++epoch;
+            acceptAs(socket, `host-${current}`, (message) =>
+              current === 1 ? socket.destroy() : answer(socket, message),
+            );
+          });
+          expect(yield* remote(host.socketPath).pipe(Effect.exit)).toMatchObject({
+            _tag: "Success",
+          });
+          expect(epoch).toBe(2);
+        }),
+    );
+    it.effect("keeps serving when a restarted host drops the answer to its configuration", () =>
+      Effect.gen(function* () {
+        let epoch = 0;
+        const first = Promise.withResolvers<NodeNet.Socket>();
+        const thirdConfigured = Promise.withResolvers<void>();
+        const host = yield* fakeHost((socket) => {
+          const current = ++epoch;
+          if (current === 1) first.resolve(socket);
+          acceptAs(socket, `host-${current}`, (message) => {
+            if (current === 2 && message.type === "command") return socket.destroy();
+            answer(socket, message);
+            if (current === 3) thirdConfigured.resolve();
+          });
+        });
+        const client = yield* remote(host.socketPath);
+        (yield* Effect.promise(() => first.promise)).destroy();
+        yield* Effect.promise(() => thirdConfigured.promise);
+        expect(yield* client.getCapabilities().pipe(Effect.exit)).toMatchObject({
+          _tag: "Success",
+          value: CodexProviderCapabilitiesV2,
+        });
+      }),
+    );
+    it.effect("closes cleanly while a restarted host has not answered its configuration", () =>
+      Effect.gen(function* () {
+        let epoch = 0;
+        const first = Promise.withResolvers<NodeNet.Socket>();
+        const configuring = Promise.withResolvers<void>();
+        const host = yield* fakeHost((socket) => {
+          const current = ++epoch;
+          if (current === 1) first.resolve(socket);
+          acceptAs(socket, `host-${current}`, (message) => {
+            if (current === 1) answer(socket, message);
+            else if (message.type === "command") configuring.resolve();
+          });
+        });
+        const scope = yield* Scope.make();
+        yield* remote(host.socketPath).pipe(Effect.provideService(Scope.Scope, scope));
+        (yield* Effect.promise(() => first.promise)).destroy();
+        yield* Effect.promise(() => configuring.promise);
+        expect(yield* Scope.close(scope, Exit.void).pipe(Effect.exit)).toMatchObject({
+          _tag: "Success",
+        });
+      }),
+    );
+    it.effect("never acknowledges a frame of a lost host on its replacement", () =>
+      Effect.gen(function* () {
+        const release = Promise.withResolvers<void>();
+        const restart = yield* restartDuringDelivery(release.promise);
+        release.resolve();
+        restart.next.write(continuation(2));
+        expect(yield* restart.acked).toBe("acked");
+        expect(restart.acks).toEqual([2]);
+      }),
+    );
+    it.effect("keeps serving the new host when a delivery of the lost host fails", () =>
+      Effect.gen(function* () {
+        const release = Promise.withResolvers<void>();
+        const restart = yield* restartDuringDelivery(release.promise);
+        release.reject(new Error("The callback of the lost host failed."));
+        restart.next.write(continuation(2));
+        expect(yield* restart.acked).toBe("acked");
+        expect(restart.acks).toEqual([2]);
+      }),
+    );
+    it.effect("never lets a lost session's handle act on its replacement", () =>
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture();
+        const scope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+        const client = yield* fixture.connect(scope);
+        const lost = yield* client
+          .openSession(openInput)
+          .pipe(Effect.provideService(Scope.Scope, scope));
+        const ended = yield* lost.events.pipe(Stream.runDrain, Effect.flip, Effect.forkScoped);
+        yield* fixture.restartHost;
+        yield* Fiber.join(ended);
+        const replacement = yield* client
+          .openSession(openInput)
+          .pipe(Effect.provideService(Scope.Scope, scope));
+        yield* replacement.startTurn(turn);
+        yield* lost
+          .startTurn({ ...turn, attemptId: RunAttemptId.make("late-attempt") })
+          .pipe(Effect.ignore);
+        yield* lost.externalLifetime!.stop;
+        expect(yield* client.hostedSessions!).toHaveLength(1);
+        expect(fixture.counts()).toEqual({ opens: 2, starts: 1, closes: 1 });
+      }),
+    );
+    it.effect("sends an open that never reached the lost host to its replacement", () =>
+      Effect.gen(function* () {
+        let epoch = 0;
+        const first = Promise.withResolvers<NodeNet.Socket>();
+        const waiting = Promise.withResolvers<NodeNet.Socket>();
+        const outcome = Promise.withResolvers<string>();
+        const host = yield* fakeHost((socket) => {
+          const current = ++epoch;
+          if (current === 1) {
+            first.resolve(socket);
+            acceptAs(socket, "host-1", (message) => answer(socket, message));
+          } else waiting.resolve(socket);
+        });
+        const scope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+        const client = yield* remote(host.socketPath).pipe(
+          Effect.provideService(Scope.Scope, scope),
+        );
+        (yield* Effect.promise(() => first.promise)).destroy();
+        const replacement = yield* Effect.promise(() => waiting.promise);
+        yield* client.openSession(openInput).pipe(
+          Effect.provideService(Scope.Scope, scope),
+          Effect.tapCause((cause) => Effect.sync(() => outcome.resolve(Cause.pretty(cause)))),
+          Effect.forkScoped,
+        );
+        acceptAs(replacement, "host-2", (message) => {
+          if (message.type === "command" && message.operation === "openSession")
+            outcome.resolve("the new host received the open");
+          else answer(replacement, message);
+        });
+        expect(yield* Effect.promise(() => outcome.promise)).toBe("the new host received the open");
+      }),
+    );
+    it.effect("fails waiting commands while a host hangs up, until a host answers again", () =>
+      Effect.gen(function* () {
+        let epoch = 0;
+        let silent = true;
+        const first = Promise.withResolvers<NodeNet.Socket>();
+        const retried = Promise.withResolvers<void>();
+        const answered = Promise.withResolvers<void>();
+        const host = yield* fakeHost((socket) => {
+          const current = ++epoch;
+          if (current === 1) first.resolve(socket);
+          if (current === 3) retried.resolve();
+          if (current > 1 && silent) return socket.destroy();
+          acceptAs(socket, `host-${current === 1 ? 1 : 2}`, (message) => {
+            if (message.type === "ack") return answered.resolve();
+            answer(socket, message);
+            // The client acknowledges this frame only after it reads the answer before it.
+            if (current > 1) socket.write(continuation(1));
+          });
+        });
+        const client = yield* remote(host.socketPath);
+        (yield* Effect.promise(() => first.promise)).destroy();
+        yield* Effect.promise(() => retried.promise);
+        const waiting = yield* client
+          .getCapabilities()
+          .pipe(Effect.flip, Effect.timeoutOption("20 seconds"), Effect.forkScoped);
+        yield* TestClock.adjust("30 seconds");
+        expect(yield* Fiber.join(waiting)).toMatchObject({
+          _tag: "Some",
+          value: {
+            _tag: "ProviderAdapterProtocolError",
+            detail: expect.stringContaining("without an answer"),
+          },
+        });
+        expect(yield* client.getCapabilities().pipe(Effect.flip)).toMatchObject({
+          detail: expect.stringContaining("without an answer"),
+        });
+        silent = false;
+        yield* Effect.promise(() => answered.promise);
+        expect(yield* client.getCapabilities()).toEqual(CodexProviderCapabilitiesV2);
       }),
     );
     it.effect("fails visibly and stops the native runtime when the replay buffer is full", () =>
@@ -917,7 +1361,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, McpProviderSession
         yield* client
           .openSession({ ...openInput, lifetime: "ephemeral" })
           .pipe(Effect.provideService(Scope.Scope, privateScope));
-        yield* Effect.promise(() => fixture.host.close());
+        yield* fixture.closeHost;
         const close = yield* Scope.close(privateScope, Exit.void).pipe(Effect.forkScoped);
         yield* TestClock.adjust("2 seconds");
         yield* Fiber.join(close);
