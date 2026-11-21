@@ -62,6 +62,11 @@ export interface ProviderInstance {
     creditId: string | undefined,
   ) => Effect.Effect<ProviderConsumeResetCreditOutcome, ProviderDriverError>;
   readonly orchestrationAdapter: ProviderAdapter.ProviderAdapterV2["Service"];
+  /**
+   * Names how a session of this instance launches, for example which login it runs on. A live
+   * session opened under another key takes no new work. Undefined keeps sessions across rebuilds.
+   */
+  readonly sessionLaunchKey?: string;
   readonly textGeneration: ProviderTextGeneration;
   readonly auth?: ProviderAuthController;
   readonly acpSessionManagement?: {

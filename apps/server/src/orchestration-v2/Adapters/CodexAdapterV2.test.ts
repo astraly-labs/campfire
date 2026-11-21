@@ -44,6 +44,7 @@ import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
 import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import { MCP_APP_OUTPUT_KEY, readMcpAppReference } from "@t3tools/shared/mcpApp";
 import { toolOutputImages } from "@t3tools/shared/toolOutput";
 import { resolveAttachmentPathById } from "../../attachmentStore.ts";
@@ -76,6 +77,7 @@ import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter"
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as ModelManifest from "../../provider/ModelManifest.ts";
 import * as PortScanner from "../../preview/PortScanner.ts";
+import { managedCodexLaunchArgs } from "../../provider/CodexManagedRuntime.ts";
 import { resolveProviderCompatibility } from "../../provider/providerCompatibility.ts";
 import * as CodexAdapterV2 from "./CodexAdapterV2.ts";
 import { withCodexReplayChildMetadata } from "./CodexAdapterV2.testkit.ts";
@@ -1093,6 +1095,114 @@ describe("CodexAdapterV2 process exit", () => {
       assert.equal(runningAgents, 0);
     }).pipe(Effect.provide(factoryLayer));
   });
+});
+
+describe("CodexAdapterV2 managed runtime", () => {
+  it.effect("spawns a managed app-server only with its own home and token routing", () =>
+    Effect.gen(function* () {
+      const scenario = "managed-runtime";
+      const instanceId = ProviderInstanceId.make("codex-2");
+      const settings = { ...DEFAULT_CODEX_SETTINGS, setupMode: "managed" as const };
+      const serverConfig = yield* ProviderReplayHarness.makeReplayServerConfig(scenario).pipe(
+        Effect.orDie,
+      );
+      const home = (yield* Path.Path).join(
+        serverConfig.stateDir,
+        "providers",
+        "codex",
+        instanceId,
+        "shadow",
+      );
+      const profileKey = "a".repeat(64);
+      const routed = (routedInstanceId: string) =>
+        managedCodexLaunchArgs("/usr/bin/node", [
+          "__managed-chatgpt-token",
+          "/tmp/t3-token-test/s",
+          routedInstanceId,
+          "environment",
+          profileKey,
+        ]);
+      const runtime = (homePath: string, launchArgs: string) =>
+        Effect.succeed({
+          revision: profileKey,
+          config: { ...settings, homePath, launchArgs },
+          environment: { CODEX_HOME: homePath },
+        });
+      const spawnedHomes: Array<string> = [];
+      const open = (
+        resolveRuntime?: CodexAdapterV2.CodexAdapterV2Options["resolveRuntime"],
+        managedIdentity?: CodexAdapterV2.CodexAdapterV2Options["managedIdentity"],
+      ) =>
+        Effect.gen(function* () {
+          const adapter = yield* CodexAdapterV2.makeCodexAdapterV2({
+            instanceId,
+            settings,
+            environment: {},
+            ...(resolveRuntime === undefined ? {} : { resolveRuntime }),
+            ...(managedIdentity === undefined ? {} : { managedIdentity }),
+            clientFactory: {
+              open: (openInput) =>
+                Effect.sync(() => spawnedHomes.push(openInput.settings.homePath)).pipe(
+                  Effect.andThen(
+                    Effect.fail(
+                      new ProviderAdapter.ProviderAdapterOpenSessionError({
+                        driver: CodexAdapterV2.CODEX_DRIVER_KIND,
+                        providerSessionId: openInput.providerSessionId,
+                      }),
+                    ),
+                  ),
+                ),
+            },
+            digest: yield* Digest.Digest,
+            fileSystem: yield* FileSystem.FileSystem,
+            idAllocator: yield* IdAllocator.IdAllocatorV2,
+            serverConfig,
+          });
+          return yield* adapter
+            .openSession({
+              threadId: ThreadId.make(`thread-${scenario}`),
+              providerSessionId: ProviderSessionId.make(`provider-session-${scenario}`),
+              modelSelection: CODEX_TEST_MODEL_SELECTION,
+              runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+            })
+            .pipe(Effect.flip);
+        });
+
+      const ownRoute = Effect.succeed({
+        instanceId,
+        homePath: home,
+        route: { launchArgs: routed(instanceId), profileKey },
+      });
+      const refusals = [
+        yield* open(),
+        yield* open(runtime("", routed(instanceId))),
+        yield* open(runtime("/Users/someone/.codex", routed(instanceId))),
+        yield* open(runtime(home, "")),
+        yield* open(runtime(home, routed("codex"))),
+        yield* open(
+          runtime(home, routed(instanceId).replace("t3-token-test", "t3-token-other")),
+          ownRoute,
+        ),
+      ];
+      yield* open(runtime(home, routed(instanceId)));
+      yield* open(runtime(home, routed(instanceId)), ownRoute);
+      assert.deepStrictEqual(spawnedHomes, [home, home]);
+      for (const refused of refusals) {
+        assert.instanceOf(refused, ProviderAdapter.ProviderAdapterOpenSessionError);
+        assert.instanceOf(refused.cause, ProviderSetupError);
+      }
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
 });
 
 describe("CodexAdapterV2 session initialize", () => {

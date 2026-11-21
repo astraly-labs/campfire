@@ -1,3 +1,5 @@
+// @effect-diagnostics nodeBuiltinImport:off - launch identities hash runtime secrets with node:crypto.
+import * as NodeCrypto from "node:crypto";
 import {
   CheckpointId,
   CodexSettings,
@@ -224,6 +226,8 @@ export const Continuation = Schema.Struct({
 });
 export const SessionDescription = Schema.Struct({
   input: OpenSession,
+  // The launchKey of what the session runs with. Older hosts omit it.
+  launch: Schema.optionalKey(Schema.String),
   session: OrchestrationV2ProviderSession,
   mcpSessions: Schema.Array(McpSession),
   turns: Schema.Array(Turn),
@@ -325,11 +329,33 @@ export const ServerMessage = Schema.Union([
 export type ServerMessage = typeof ServerMessage.Type;
 
 export function encode<A, I>(schema: Schema.Codec<A, I>, value: A): unknown {
-  return Schema.encodeSync(Schema.toCodecJson(schema))(value);
+  const json = Schema.toCodecJson(schema);
+  return Schema.encodeSync(json)(value);
 }
 export function decode<A, I>(schema: Schema.Codec<A, I>, value: unknown): A {
-  return Schema.decodeUnknownSync(Schema.toCodecJson(schema))(value);
+  const json = Schema.toCodecJson(schema);
+  return Schema.decodeUnknownSync(json)(value);
 }
+const sortKeys = (_key: string, value: unknown) =>
+  value === null || typeof value !== "object" || Array.isArray(value)
+    ? value
+    : Object.fromEntries(Object.entries(value).toSorted(([a], [b]) => (a < b ? -1 : 1)));
+/** What a hosted session runs with: its managed runtime, or else its instance configuration. */
+export const launchKey = (
+  launch:
+    | { readonly runtime: typeof EffectiveRuntime.Type }
+    | { readonly configuration: typeof Configuration.Type },
+) =>
+  NodeCrypto.createHash("sha256")
+    .update(
+      JSON.stringify(
+        "runtime" in launch
+          ? { runtime: encode(EffectiveRuntime, launch.runtime) }
+          : { configuration: encode(Configuration, launch.configuration) },
+        sortKeys,
+      ),
+    )
+    .digest("hex");
 export const encodeClient = (value: ClientMessage) =>
   JSON.stringify(encode(ClientMessage, value)) + "\n";
 export const encodeServer = (value: ServerMessage) =>

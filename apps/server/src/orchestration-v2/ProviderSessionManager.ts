@@ -303,6 +303,8 @@ interface LiveSessionEntry {
   /** Scope revocation to recorded credential ids so superseded sessions cannot revoke replacements opened before detach. */
   readonly mcpCredentialIdByThread: ReadonlyMap<ThreadId, string>;
   readonly supportsMultipleProviderThreads: boolean;
+  /** The launch key the session opened under; see `ProviderAdapterRegistryV2Shape.generation`. */
+  readonly providerGeneration: string | null | undefined;
   readonly runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime;
   readonly exposedRuntime: ProviderAdapter.ProviderAdapterV2SessionRuntime;
   readonly eventSubscribers: Ref.Ref<
@@ -3017,6 +3019,27 @@ export const layerWithOptions = (
               const key = sessionKey(input.providerSessionId);
               const live = (yield* Ref.get(sessions)).get(key);
               if (live !== undefined) yield* releaseForLinkedEnvironments(live);
+              const current = (yield* Ref.get(sessions)).get(key);
+              if (current !== undefined && registry.generation !== undefined) {
+                const generation = yield* registry.generation(current.runtime.instanceId);
+                // Another launch key or a missing instance can mean another login: stop the session.
+                if (generation === undefined || generation !== current.providerGeneration) {
+                  yield* releaseEntry({
+                    providerSessionId: input.providerSessionId,
+                    reason: "manual_shutdown",
+                    detail: `Provider instance ${current.runtime.instanceId} changed.`,
+                  }).pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new ProviderSessionOpenError({
+                          instanceId: input.modelSelection.instanceId,
+                          providerSessionId: input.providerSessionId,
+                          cause,
+                        }),
+                    ),
+                  );
+                }
+              }
               const existing = (yield* Ref.get(sessions)).get(key);
               if (existing !== undefined) {
                 const attached = existing.attachedThreadIds.has(input.threadId);
@@ -3037,6 +3060,10 @@ export const layerWithOptions = (
                 return existing.exposedRuntime;
               }
 
+              const providerGeneration =
+                registry.generation === undefined
+                  ? undefined
+                  : yield* registry.generation(input.modelSelection.instanceId);
               const adapter = yield* registry.get(input.modelSelection.instanceId).pipe(
                 Effect.mapError(
                   (cause) =>
@@ -3132,6 +3159,7 @@ export const layerWithOptions = (
                 supportsMultipleProviderThreads:
                   runtime.providerSession.capabilities.sessions
                     .supportsMultipleProviderThreadsPerSession,
+                providerGeneration,
                 runtime,
                 exposedRuntime,
                 eventSubscribers,

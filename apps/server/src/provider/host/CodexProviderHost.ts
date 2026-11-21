@@ -53,14 +53,25 @@ export interface CodexProviderHostServerOptions {
       readonly continuation: (request: typeof Protocol.Continuation.Type) => Effect.Effect<void>;
     },
   ) => Promise<HostedCodexAdapter>;
+  /** Why a runtime cannot run a managed instance, or undefined when it may. */
+  readonly checkRuntime: (input: {
+    readonly instanceId: ProviderInstanceId;
+    readonly configuration: typeof Protocol.Configuration.Type;
+    readonly runtime: typeof Protocol.EffectiveRuntime.Type;
+  }) => Promise<string | undefined>;
   readonly ackCommitGraceMs?: number;
   readonly maxBufferBytes?: number;
   readonly prepareSocket?: () => Promise<void>;
   readonly secureSocket?: () => Promise<void>;
   readonly cleanupSocket?: () => Promise<void>;
 }
+interface Launch {
+  readonly runtime: string | undefined;
+  readonly configuration: string;
+}
 interface HostedSession {
   readonly input: typeof Protocol.OpenSession.Type;
+  readonly launch: Launch;
   readonly runtime: Adapter.ProviderAdapterV2SessionRuntime;
   readonly scope: Scope.Closeable;
   readonly turns: Map<string, typeof Protocol.Turn.Type>;
@@ -72,11 +83,13 @@ interface InstanceState {
   socket?: NodeNet.Socket;
   replay: boolean;
   adapter?: HostedCodexAdapter;
+  configuration?: typeof Protocol.Configuration.Type;
   configuring?: Promise<void>;
   configKey?: string;
   pendingConfig?: typeof Protocol.Configuration.Type;
   readonly sessions: Map<ProviderSessionId, HostedSession>;
   readonly openingSessions: Map<ProviderSessionId, Promise<HostedSession>>;
+  readonly stoppingSessions: Map<ProviderSessionId, Promise<void>>;
   readonly commands: Map<string, Promise<Protocol.ServerMessage>>;
   readonly mcpSessions: Map<string, typeof Protocol.McpSession.Type>;
   readonly outbox: Map<number, { event: HostEvent; bytes: number }>;
@@ -87,9 +100,15 @@ interface InstanceState {
   ackTimer?: NodeJS.Timeout;
   failed?: string;
 }
+// A request asks for the configuration that started the session, and a managed request for its
+// runtime too. Older servers reattach without a runtime.
+const sameLaunch = (session: HostedSession, request: Launch) =>
+  session.launch.configuration === request.configuration &&
+  (request.runtime === undefined || session.launch.runtime === request.runtime);
 function sessionDescription(state: InstanceState, session: HostedSession): SessionDescription {
   return {
     input: session.input,
+    launch: session.launch.runtime ?? session.launch.configuration,
     mcpSessions: Array.from(state.mcpSessions.values()).filter(
       (config) =>
         config.threadId === session.input.threadId ||
@@ -142,6 +161,7 @@ export async function startCodexProviderHostServer(options: CodexProviderHostSer
         replay: false,
         sessions: new Map(),
         openingSessions: new Map(),
+        stoppingSessions: new Map(),
         commands: new Map(),
         mcpSessions: new Map(),
         outbox: new Map(),
@@ -154,14 +174,23 @@ export async function startCodexProviderHostServer(options: CodexProviderHostSer
     }
     return state;
   };
-  const stopSession = async (state: InstanceState, id: ProviderSessionId) => {
-    const session = state.sessions.get(id) ?? (await state.openingSessions.get(id));
-    if (!session) return;
-    state.sessions.delete(id);
-    for (const [threadId, config] of state.mcpSessions)
-      if (config.providerSessionId === id) state.mcpSessions.delete(threadId);
-    if (session.eventFiber) await Effect.runPromise(Fiber.interrupt(session.eventFiber));
-    await Effect.runPromise(Scope.close(session.scope, Exit.void));
+  // A later close or open of the id waits for this one, so one id never runs twice.
+  const stopSession = (state: InstanceState, id: ProviderSessionId): Promise<void> => {
+    const stopping = state.stoppingSessions.get(id);
+    if (stopping) return stopping;
+    const stop = (async () => {
+      const session = state.sessions.get(id) ?? (await state.openingSessions.get(id));
+      if (!session) return;
+      state.sessions.delete(id);
+      for (const [threadId, config] of state.mcpSessions)
+        if (config.providerSessionId === id) state.mcpSessions.delete(threadId);
+      if (session.eventFiber) await Effect.runPromise(Fiber.interrupt(session.eventFiber));
+      await Effect.runPromise(Scope.close(session.scope, Exit.void));
+    })().finally(() => {
+      if (state.stoppingSessions.get(id) === stop) state.stoppingSessions.delete(id);
+    });
+    state.stoppingSessions.set(id, stop);
+    return stop;
   };
   const failInstance = (state: InstanceState, detail: string) => {
     state.failed = detail;
@@ -190,7 +219,11 @@ export async function startCodexProviderHostServer(options: CodexProviderHostSer
   ) => {
     const state = getState(instanceId);
     const key = JSON.stringify(configuration);
-    if (state.configKey === key) return;
+    if (state.configKey === key) {
+      // The newest request supersedes a change that still waits for open sessions to end.
+      delete state.pendingConfig;
+      return;
+    }
     if (state.sessions.size > 0 || state.openingSessions.size > 0) {
       state.pendingConfig = configuration;
       return;
@@ -214,6 +247,7 @@ export async function startCodexProviderHostServer(options: CodexProviderHostSer
           ),
       },
     );
+    state.configuration = configuration;
     state.configKey = key;
     delete state.pendingConfig;
   };
@@ -285,18 +319,47 @@ export async function startCodexProviderHostServer(options: CodexProviderHostSer
         );
       if (command.operation === "openSession") {
         const input = Protocol.decode(Protocol.OpenSession, command.payload);
+        // A request asks for the configuration that waits for open sessions to end.
+        const configuration = state.pendingConfig ?? state.configuration;
+        if (!configuration) throw protocolError("Codex provider host has not been configured.");
+        const effectiveRuntime = command.effectiveRuntime;
+        const launch: Launch = {
+          runtime:
+            effectiveRuntime === undefined
+              ? undefined
+              : Protocol.launchKey({ runtime: effectiveRuntime }),
+          configuration: Protocol.launchKey({ configuration }),
+        };
+        const reuse = async (session: HostedSession) => {
+          if (sameLaunch(session, launch))
+            return response(Protocol.SessionDescription, sessionDescription(state, session));
+          await stopSession(state, input.providerSessionId);
+          throw protocolError(
+            `Hosted Codex session ${input.providerSessionId} ran on another login, so the host stopped it. Open it again.`,
+          );
+        };
+        const problem = effectiveRuntime
+          ? await options.checkRuntime({ instanceId, configuration, runtime: effectiveRuntime })
+          : undefined;
+        if (problem !== undefined) throw protocolError(problem);
+        await state.stoppingSessions.get(input.providerSessionId)?.catch(() => undefined);
         const existing = state.sessions.get(input.providerSessionId);
-        if (existing)
-          return response(Protocol.SessionDescription, sessionDescription(state, existing));
+        if (existing) return await reuse(existing);
         let opening = state.openingSessions.get(input.providerSessionId);
         if (!opening) {
           opening = (async () => {
+            if (configuration.config.setupMode === "managed" && !effectiveRuntime)
+              throw protocolError(
+                `Managed Codex instance ${instanceId} reached the provider host without its own Codex home. The host refuses to run it on the default Codex login.`,
+              );
+            if (!effectiveRuntime && state.pendingConfig)
+              throw protocolError(
+                `Codex instance ${instanceId} applies its new configuration once its open sessions end. Retry after that.`,
+              );
             const scope = await Effect.runPromise(Scope.make());
             let runtime: Adapter.ProviderAdapterV2SessionRuntime;
             try {
-              runtime = await Effect.runPromise(
-                hosted.openSession(input, command.effectiveRuntime, scope),
-              );
+              runtime = await Effect.runPromise(hosted.openSession(input, effectiveRuntime, scope));
               if (state.failed) throw protocolError(state.failed);
               if (input.lifetime === "ephemeral" && command.lease !== state.lease)
                 throw protocolError("The private Codex session owner detached during startup.");
@@ -306,6 +369,7 @@ export async function startCodexProviderHostServer(options: CodexProviderHostSer
             }
             const session: HostedSession = {
               input,
+              launch,
               runtime,
               scope,
               turns: new Map(),
@@ -336,10 +400,9 @@ export async function startCodexProviderHostServer(options: CodexProviderHostSer
           })();
           state.openingSessions.set(input.providerSessionId, opening);
         }
-        const session = await opening.finally(() =>
-          state.openingSessions.delete(input.providerSessionId),
+        return await reuse(
+          await opening.finally(() => state.openingSessions.delete(input.providerSessionId)),
         );
-        return response(Protocol.SessionDescription, sessionDescription(state, session));
       }
       const id = command.sessionId;
       if (!id) throw protocolError("A provider session id is required.");

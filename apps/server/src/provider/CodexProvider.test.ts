@@ -17,11 +17,14 @@ import {
   codexRoutesSpendNativeQuota,
   makeCodexSkillsProbe,
   mapCodexModelCapabilities,
+  probeCodexSkillsForCwd,
 } from "./CodexProvider.ts";
 
 function makeFakeCodexAppServers() {
   const helpers: Array<{
     readonly codexHome: unknown;
+    readonly extendEnv: unknown;
+    readonly env: Readonly<Record<string, unknown>> | undefined;
     readonly crash: Effect.Effect<void>;
     readonly requests: Array<unknown>;
     closed: boolean;
@@ -36,6 +39,8 @@ function makeFakeCodexAppServers() {
       );
       const helper = {
         codexHome: command._tag === "StandardCommand" ? command.options.env?.CODEX_HOME : undefined,
+        extendEnv: command._tag === "StandardCommand" ? command.options.extendEnv : undefined,
+        env: command._tag === "StandardCommand" ? command.options.env : undefined,
         crash,
         requests: [] as Array<unknown>,
         closed: false,
@@ -340,3 +345,22 @@ it("reports native quota only for an OpenAI login on a native route", () => {
   assert.strictEqual(codexCustomEndpoint({ openai_base_url: "https://chatgpt.com/x" }), undefined);
   assert.strictEqual(codexCustomEndpoint({}), undefined);
 });
+
+it.effect(
+  "a managed skills probe spawns with exactly its environment, so a removed login does not return",
+  () =>
+    Effect.gen(function* () {
+      const { helpers, spawner } = makeFakeCodexAppServers();
+      // The managed resolver dropped OPENAI_API_KEY; only extendEnv could bring the server's back.
+      yield* probeCodexSkillsForCwd({
+        binaryPath: "codex",
+        cwd: "/alpha",
+        environment: { PATH: "/usr/bin", CODEX_HOME: "/managed-home" },
+        inheritEnvironment: false,
+      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+      assert.strictEqual(helpers.length, 1);
+      assert.strictEqual(helpers[0]!.extendEnv, false);
+      assert.isUndefined(helpers[0]!.env?.OPENAI_API_KEY);
+      assert.strictEqual(helpers[0]!.env?.PATH, "/usr/bin");
+    }).pipe(Effect.scoped),
+);

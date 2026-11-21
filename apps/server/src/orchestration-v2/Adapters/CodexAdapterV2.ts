@@ -16,7 +16,15 @@ import {
   type CodexTurnTokenUsageState,
 } from "../../provider/CodexTurnTokenUsage.ts";
 import type { ManagedServerProvider } from "@t3tools/provider-core/server/snapshot";
-import type { CodexEffectiveRuntime } from "../../provider/CodexManagedRuntime.ts";
+import {
+  managedCodexRuntimeProblem,
+  type CodexEffectiveRuntime,
+  type ManagedCodexIdentity,
+} from "../../provider/CodexManagedRuntime.ts";
+import {
+  managedCodexHomePath,
+  resolveManagedCodexHomeLayout,
+} from "../../provider/CodexManagedHome.ts";
 import { classifyCodexManagedError } from "../../provider/CodexManagedErrors.ts";
 import {
   buildCodexInitializeParams,
@@ -1835,7 +1843,7 @@ export const createLocalCodexAdapterV2 = Effect.fn("CodexAdapterV2.createLocalCo
     { instanceId, environment, enabled, config }: ProviderAdapterDriverCreateInput<CodexSettings>,
     hooks: Pick<
       CodexAdapterV2Options,
-      "onUsageLimits" | "resolveRuntime" | "compatibility" | "models"
+      "onUsageLimits" | "resolveRuntime" | "managedIdentity" | "compatibility" | "models"
     > = {},
   ) {
     const clientFactory = yield* CodexAppServerClientFactory;
@@ -1888,7 +1896,7 @@ export const createCodexAdapterV2 = Effect.fn("CodexAdapterV2.createCodexAdapter
   input: ProviderAdapterDriverCreateInput<CodexSettings>,
   hooks: Pick<
     CodexAdapterV2Options,
-    "onUsageLimits" | "resolveRuntime" | "compatibility" | "models"
+    "onUsageLimits" | "resolveRuntime" | "managedIdentity" | "compatibility" | "models"
   > = {},
 ) {
   const config = yield* ServerConfig;
@@ -1903,6 +1911,7 @@ export const createCodexAdapterV2 = Effect.fn("CodexAdapterV2.createCodexAdapter
     },
     ...(hooks.onUsageLimits === undefined ? {} : { onUsageLimits: hooks.onUsageLimits }),
     ...(hooks.resolveRuntime === undefined ? {} : { resolveRuntime: hooks.resolveRuntime }),
+    ...(hooks.managedIdentity === undefined ? {} : { managedIdentity: hooks.managedIdentity }),
     onContinuation: continuationRequests.offer,
     canReuseContextUsage: canReuseCodexContextUsage,
   }).pipe(
@@ -1927,6 +1936,8 @@ export interface CodexAdapterV2Options {
   /** The provider's published models, read per turn for catalog defaults. */
   readonly models?: Effect.Effect<ReadonlyArray<ServerProviderModel>>;
   readonly resolveRuntime?: Effect.Effect<CodexEffectiveRuntime, ProviderSetupError, Scope.Scope>;
+  /** The owning server's identity for a managed runtime. Without it, only the home is checked. */
+  readonly managedIdentity?: Effect.Effect<ManagedCodexIdentity, ProviderSetupError>;
   readonly compatibility?: (
     version: string,
   ) => Effect.Effect<ServerProviderCompatibilityAdvisory | undefined>;
@@ -1952,6 +1963,26 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
     threadId === null ? Effect.undefined : mcpSessions.read(threadId);
   const { clientFactory, digest, fileSystem, idAllocator, serverConfig } = adapterOptions;
   const continuationRequests = adapterOptions.continuationRequests;
+  const managedHomePath = managedCodexHomePath(
+    yield* resolveManagedCodexHomeLayout(
+      serverConfig.stateDir,
+      adapterOptions.instanceId,
+      adapterOptions.settings,
+    ),
+  );
+  const managedIdentity =
+    adapterOptions.managedIdentity ??
+    Effect.succeed({ instanceId: adapterOptions.instanceId, homePath: managedHomePath });
+  const managedRuntimeProblem = (runtime: CodexEffectiveRuntime | undefined) =>
+    runtime !== undefined
+      ? managedIdentity.pipe(
+          Effect.map((expected) => managedCodexRuntimeProblem(expected, runtime)),
+        )
+      : Effect.succeed(
+          adapterOptions.settings.setupMode === "managed"
+            ? "Managed Codex has no runtime with its own Codex home, so it does not start on the default Codex login."
+            : undefined,
+        );
 
   return ProviderAdapter.ProviderAdapterV2.of({
     instanceId: adapterOptions.instanceId,
@@ -1978,6 +2009,22 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     }),
                 ),
               );
+        const managedProblem = yield* managedRuntimeProblem(resolvedRuntime).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ProviderAdapter.ProviderAdapterOpenSessionError({
+                driver: CODEX_PROVIDER,
+                providerSessionId: input.providerSessionId,
+                cause,
+              }),
+          ),
+        );
+        if (managedProblem !== undefined)
+          return yield* new ProviderSetupError({
+            instanceId: adapterOptions.instanceId,
+            operation: "runtime",
+            detail: managedProblem,
+          });
         const client = yield* clientFactory.open({
           instanceId: adapterOptions.instanceId,
           threadId: input.threadId,

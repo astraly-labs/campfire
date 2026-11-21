@@ -247,6 +247,7 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
     onUsageLimits: (update) => snapshot.applyUsageLimits(update),
     models,
     resolveRuntime: runtime.resolve,
+    managedIdentity: runtime.identity,
   }).pipe(
     Effect.mapError(
       (cause) =>
@@ -301,6 +302,8 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
     enabled,
     snapshot,
     orchestrationAdapter,
+    // A managed session resolves its own login at each open, and the host checks it.
+    sessionLaunchKey: "managed",
     textGeneration,
     auth: runtime.auth.controller,
     snapshotForCwd: (cwd: string) =>
@@ -322,6 +325,7 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
                   launchArgs: effective.config.launchArgs,
                   cwd,
                   environment: effective.environment,
+                  inheritEnvironment: false,
                 }).pipe(
                   Effect.flatMap((skills) =>
                     snapshot.getSnapshot.pipe(Effect.map((draft) => ({ ...draft, skills }))),

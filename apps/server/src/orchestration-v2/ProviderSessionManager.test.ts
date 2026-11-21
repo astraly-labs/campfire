@@ -619,8 +619,29 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
   });
 });
 
+// The registry's one provider has a build per launch value; undefined makes it unavailable.
+const layerLaunchRegistry = (
+  adapter: ProviderAdapter.ProviderAdapterV2["Service"],
+  launch: Ref.Ref<string | undefined>,
+) =>
+  Layer.succeed(ProviderAdapterRegistry.ProviderAdapterRegistryV2, {
+    get: (instanceId: ProviderInstanceId) =>
+      Ref.get(launch).pipe(
+        Effect.flatMap((build) =>
+          build === undefined
+            ? Effect.fail(
+                new ProviderAdapterRegistry.ProviderAdapterRegistryLookupError({ instanceId }),
+              )
+            : Effect.succeed(adapter),
+        ),
+      ),
+    list: () => Effect.succeed([adapter.instanceId]),
+    generation: () => Ref.get(launch),
+  });
+
 function layerTest(input: {
   readonly state: Ref.Ref<TestProviderRuntimeState>;
+  readonly launch?: Ref.Ref<string | undefined>;
   readonly idleTimeoutMs: number;
   readonly maxIdlePinMs?: number;
   readonly externalLifetime?: NonNullable<
@@ -708,7 +729,13 @@ function layerTest(input: {
       ...(input.scopeCloseReached === undefined
         ? {}
         : { scopeCloseReached: input.scopeCloseReached }),
-    }).pipe(Effect.map(ProviderAdapterRegistry.layerSingle)),
+    }).pipe(
+      Effect.map((adapter) =>
+        input.launch === undefined
+          ? ProviderAdapterRegistry.layerSingle(adapter)
+          : layerLaunchRegistry(adapter, input.launch),
+      ),
+    ),
   );
   const layerConfiguredMcpRegistry =
     input.pauseResolve === undefined
@@ -1104,6 +1131,65 @@ it.effect("ProviderSessionManagerV2 opens independent sessions concurrently", ()
       ),
     );
   }),
+);
+
+const openSharedSession = (threadIds: ReadonlyArray<ThreadId>) =>
+  Effect.gen(function* () {
+    const eventSink = yield* EventSink.EventSinkV2;
+    const idAllocator = yield* IdAllocator.IdAllocatorV2;
+    const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+    const now = yield* DateTime.now;
+    const providerSessionId = yield* idAllocator.allocate.providerSession({
+      providerInstanceId: modelSelection.instanceId,
+      threadId: threadIds[0]!,
+    });
+    yield* eventSink.write({
+      events: yield* Effect.forEach(threadIds, (threadId) =>
+        makeThreadCreatedEvent({ idAllocator, threadId, now }),
+      ),
+    });
+    const open = (threadId: ThreadId) =>
+      manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+    return { manager, providerSessionId, open };
+  });
+
+it.effect(
+  "ProviderSessionManagerV2 never hands a live session to a thread once its provider launch changed",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const launch = yield* Ref.make<string | undefined>("direct");
+      const firstThreadId = ThreadId.make("thread-provider-launch-before");
+      const secondThreadId = ThreadId.make("thread-provider-launch-after");
+      yield* Effect.gen(function* () {
+        const { open } = yield* openSharedSession([firstThreadId, secondThreadId]);
+        const before = yield* open(firstThreadId);
+        yield* Ref.set(launch, "managed");
+        const after = yield* open(secondThreadId);
+        assert.notStrictEqual(after, before);
+        assert.equal((yield* Ref.get(state)).openCount, 2);
+        assert.equal((yield* Ref.get(state)).closeCount, 1);
+      }).pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60_000, launch })));
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 never hands a live session to a thread once its provider is unavailable",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const launch = yield* Ref.make<string | undefined>("direct");
+      const firstThreadId = ThreadId.make("thread-provider-available");
+      const secondThreadId = ThreadId.make("thread-provider-unavailable");
+      yield* Effect.gen(function* () {
+        const { open } = yield* openSharedSession([firstThreadId, secondThreadId]);
+        yield* open(firstThreadId);
+        yield* Ref.set(launch, undefined);
+        const refused = yield* open(secondThreadId).pipe(Effect.flip);
+        assert.instanceOf(refused, ProviderSessionManager.ProviderSessionOpenError);
+        assert.equal((yield* Ref.get(state)).openCount, 1);
+      }).pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60_000, launch })));
+    }),
 );
 
 it.effect("ProviderSessionManagerV2 closes every live session for a provider instance", () =>

@@ -11,12 +11,17 @@ import * as Adapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import type * as Scope from "effect/Scope";
-import type { CodexEffectiveRuntime } from "../CodexManagedRuntime.ts";
+import {
+  managedCodexRuntimeProblem,
+  type CodexEffectiveRuntime,
+  type ManagedCodexIdentity,
+} from "../CodexManagedRuntime.ts";
 import type { ProviderSetupError } from "@t3tools/contracts";
 import * as Protocol from "./Protocol.ts";
 
@@ -42,6 +47,8 @@ export interface RemoteCodexAdapterOptions {
   readonly onUsageLimits?: (update: typeof Protocol.UsageLimits.Type) => Effect.Effect<void>;
   readonly onContinuation: (request: typeof Protocol.Continuation.Type) => Effect.Effect<void>;
   readonly resolveRuntime?: Effect.Effect<CodexEffectiveRuntime, ProviderSetupError, Scope.Scope>;
+  /** A managed instance sends only a runtime that matches its owning server's identity. */
+  readonly managedIdentity?: Effect.Effect<ManagedCodexIdentity, ProviderSetupError>;
   readonly canReuseContextUsage: NonNullable<
     Adapter.ProviderAdapterV2SessionRuntime["canReuseContextUsage"]
   >;
@@ -60,7 +67,12 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
     ProviderSessionId,
     Queue.Queue<Adapter.ProviderAdapterV2Event, Adapter.ProviderAdapterV2Error>
   >();
-  const descriptions = new Map<ProviderSessionId, SessionDescription>();
+  const reattachable = new Map<ProviderSessionId, SessionDescription>();
+  // The last host frame before each fresh session: earlier frames belong to a session it replaced.
+  const freshAfter = new Map<ProviderSessionId, number>();
+  // The launch of each hosted session that this adapter started or verified.
+  const launches = new Map<ProviderSessionId, string>();
+  const managed = options.configuration.config.setupMode === "managed";
   const pending = new Map<string, PendingCommand>();
   let counter = 0;
   let socket: NodeNet.Socket | undefined;
@@ -160,6 +172,7 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
             ? Effect.gen(function* () {
                 const queue = queues.get(message.sessionId);
                 if (queue === undefined) return;
+                if (message.sequence <= (freshAfter.get(message.sessionId) ?? 0)) return;
                 yield* Queue.offer(queue, message.event);
               })
             : message.type === "usage"
@@ -259,14 +272,40 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
       ),
     );
   yield* call("configure", Protocol.Configuration, Schema.Void, options.configuration);
-  const stopSession = (sessionId: ProviderSessionId) =>
-    call("closeSession", Schema.Void, Schema.Void, undefined, sessionId).pipe(
-      Effect.timeout("2 seconds"),
-      Effect.interruptible,
-      Effect.mapError((cause) =>
-        error("Could not confirm the hosted Codex session stopped.", cause),
+  // The host answers a close once the session has stopped, which can be after its caller gave up.
+  const stopping = new Map<
+    ProviderSessionId,
+    Deferred.Deferred<void, Adapter.ProviderAdapterV2Error>
+  >();
+  const stopSession = Effect.fn("RemoteCodexAdapter.stopSession")(
+    function* (sessionId: ProviderSessionId) {
+      launches.delete(sessionId);
+      let stopped = stopping.get(sessionId);
+      if (stopped === undefined) {
+        const close = yield* Deferred.make<void, Adapter.ProviderAdapterV2Error>();
+        stopping.set(sessionId, close);
+        runFork(
+          call("closeSession", Schema.Void, Schema.Void, undefined, sessionId).pipe(
+            Effect.onExit((exit) =>
+              Effect.sync(() => {
+                if (stopping.get(sessionId) === close) stopping.delete(sessionId);
+              }).pipe(Effect.andThen(Deferred.done(close, exit))),
+            ),
+          ),
+        );
+        stopped = close;
+      }
+      return yield* Deferred.await(stopped);
+    },
+    (effect) =>
+      effect.pipe(
+        Effect.timeout("2 seconds"),
+        Effect.interruptible,
+        Effect.mapError((cause) =>
+          error("Could not confirm the hosted Codex session stopped.", cause),
+        ),
       ),
-    );
+  );
   const mcpForThread = (threadId: ThreadId | null) =>
     threadId === null
       ? Effect.succeed([])
@@ -286,13 +325,36 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
     replay = true;
     if (ready && lease !== undefined) send({ type: "replay", lease });
   });
+  // The host writes its whole replay before it answers a later command on the same connection.
+  const receiveBufferedOutput = Effect.gen(function* () {
+    let connection: number | undefined;
+    do {
+      connection = lease;
+      yield* enableReplay;
+      yield* call("capabilities", Schema.Void, Protocol.Capabilities, undefined);
+    } while (lease !== connection);
+  });
+  const configurationLaunch = Protocol.launchKey({ configuration: options.configuration });
   const hostedSessions = call("listSessions", Schema.Void, Protocol.Sessions, undefined).pipe(
-    Effect.tap((sessions) =>
-      Effect.sync(() => {
-        for (const session of sessions) descriptions.set(session.input.providerSessionId, session);
+    Effect.flatMap((sessions) =>
+      Effect.filter(sessions, (session) => {
+        const id = session.input.providerSessionId;
+        // A managed session renews its login through the token broker of the server that opened it.
+        const reusable = managed
+          ? launches.has(id)
+          : (session.launch ?? configurationLaunch) === configurationLaunch;
+        if (!reusable)
+          return stopSession(id).pipe(Effect.ignoreCause({ log: true }), Effect.as(false));
+        return Effect.sync(() => {
+          reattachable.set(id, session);
+          if (!launches.has(id)) launches.set(id, configurationLaunch);
+          return true;
+        });
       }),
     ),
   );
+  // An earlier hosted session of a managed instance can still run on another login.
+  if (managed) yield* hostedSessions;
   return Adapter.ProviderAdapterV2.of({
     instanceId: options.instanceId,
     driver: CODEX,
@@ -314,6 +376,43 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
       ),
     ),
     openSession: Effect.fn("RemoteCodexAdapter.openSession")(function* (input) {
+      if (stopping.has(input.providerSessionId))
+        return yield* error(
+          `Hosted Codex session ${input.providerSessionId} has not confirmed that it stopped. Retry once it stops.`,
+        );
+      const existing = reattachable.get(input.providerSessionId);
+      reattachable.delete(input.providerSessionId);
+      if (managed && (!options.resolveRuntime || !options.managedIdentity))
+        return yield* error(
+          `Managed Codex instance ${options.instanceId} has no runtime with its own Codex home, so it does not start on the default Codex login.`,
+        );
+      const effectiveRuntime = options.resolveRuntime
+        ? yield* options.resolveRuntime.pipe(
+            Effect.mapError((cause) => error("Could not resolve managed Codex runtime.", cause)),
+          )
+        : undefined;
+      // An older provider host spawns what it receives, so the check runs before sending.
+      if (effectiveRuntime !== undefined && options.managedIdentity) {
+        const problem = managedCodexRuntimeProblem(
+          yield* options.managedIdentity.pipe(
+            Effect.mapError((cause) => error("Could not resolve managed Codex runtime.", cause)),
+          ),
+          effectiveRuntime,
+        );
+        if (problem !== undefined) return yield* error(problem);
+      }
+      const launch =
+        effectiveRuntime === undefined
+          ? configurationLaunch
+          : Protocol.launchKey({ runtime: effectiveRuntime });
+      // The host can still run this id with a login that this adapter did not start.
+      if (launches.get(input.providerSessionId) !== launch)
+        yield* stopSession(input.providerSessionId);
+      if (existing) freshAfter.delete(input.providerSessionId);
+      else {
+        if (!replay) yield* receiveBufferedOutput;
+        freshAfter.set(input.providerSessionId, receivedCursor);
+      }
       const queue = yield* Queue.bounded<
         Adapter.ProviderAdapterV2Event,
         Adapter.ProviderAdapterV2Error
@@ -325,13 +424,6 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
           Queue.shutdownUnsafe(queue);
         }),
       );
-      const existing = descriptions.get(input.providerSessionId);
-      const effectiveRuntime =
-        existing || !options.resolveRuntime
-          ? undefined
-          : yield* options.resolveRuntime.pipe(
-              Effect.mapError((cause) => error("Could not resolve managed Codex runtime.", cause)),
-            );
       if (input.lifetime === "ephemeral")
         yield* Effect.addFinalizer(() =>
           stopSession(input.providerSessionId).pipe(Effect.ignoreCause()),
@@ -347,7 +439,7 @@ export const makeRemoteCodexAdapter = Effect.fn("makeRemoteCodexAdapter")(functi
           ...(effectiveRuntime === undefined ? {} : { effectiveRuntime }),
         },
       );
-      descriptions.set(input.providerSessionId, description);
+      launches.set(input.providerSessionId, launch);
       if (!existing) yield* enableReplay;
       const sessionId = input.providerSessionId;
       const supports = (method: string) => description.methods.includes(method);

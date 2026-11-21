@@ -43,6 +43,14 @@ export interface ProviderAdapterRegistryV2Shape {
     instanceId: ProviderInstanceId,
   ) => Effect.Effect<ProviderAdapter.ProviderAdapterV2["Service"], ProviderAdapterRegistryV2Error>;
   readonly list: () => Effect.Effect<ReadonlyArray<ProviderInstanceId>>;
+  /**
+   * The instance's session launch key: null when it declares none, undefined when the instance
+   * is unavailable. A live session opened under another value must not take new work, because it
+   * can run on another login.
+   */
+  readonly generation?: (
+    instanceId: ProviderInstanceId,
+  ) => Effect.Effect<string | null | undefined>;
   readonly getMetadata?: (instanceId: ProviderInstanceId) => Effect.Effect<
     {
       readonly driver: ProviderAdapter.ProviderAdapterV2["Service"]["driver"];
@@ -125,6 +133,10 @@ export const layerFromProviderInstanceRegistry: Layer.Layer<
             } satisfies ProviderAdapter.ProviderAdapterV2["Service"]);
           }),
         );
+      }),
+      generation: Effect.fn("ProviderAdapterRegistryV2.generation")(function* (instanceId) {
+        const instance = yield* instances.getInstance(instanceId);
+        return instance === undefined ? undefined : (instance.sessionLaunchKey ?? null);
       }),
       list: Effect.fn("ProviderAdapterRegistryV2.list")(function () {
         return instances.listInstances.pipe(
