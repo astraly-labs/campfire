@@ -1,6 +1,7 @@
 import { resolveProviderProbeTimeoutMs } from "@t3tools/provider-core/server/snapshotProbe";
 import { CodexSettings, ProviderDriverKind } from "@t3tools/contracts";
 import * as Digest from "effect/crypto/Digest";
+import * as Hex from "effect/encoding/Hex";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import type * as Signature from "effect/crypto/Signature";
 import * as Duration from "effect/Duration";
@@ -125,6 +126,15 @@ function withCodexNativeLatestVersion(
     ),
   };
 }
+
+// The variables that can choose which account a direct Codex session runs on.
+const DIRECT_LOGIN_VARIABLES = [
+  "CODEX_HOME",
+  "ACCESS_TOKEN",
+  "OPENAI_API_KEY",
+  "OPENAI_BASE_URL",
+  "T3CODE_CODEX_LAUNCH_ARGS",
+] as const;
 
 export type CodexDriverEnv =
   | CodexAdapterV2DriverEnv
@@ -412,6 +422,20 @@ export const CodexDriver: ProviderDriver<
         Effect.forkScoped,
       );
     }
+    // The home, binary, arguments and environment decide which login a direct session uses.
+    const sessionLaunchKey = yield* (yield* Digest.Digest)
+      .digest(
+        Digest.sha256,
+        new TextEncoder().encode(
+          [
+            effectiveConfig.homePath,
+            effectiveConfig.binaryPath,
+            effectiveConfig.launchArgs,
+            ...DIRECT_LOGIN_VARIABLES.map((name) => `${name}=${processEnv[name] ?? ""}`),
+          ].join("\n"),
+        ),
+      )
+      .pipe(Effect.map((digest) => `direct:${Hex.encode(digest)}`));
     return {
       instanceId,
       driverKind: DRIVER_KIND,
@@ -423,6 +447,7 @@ export const CodexDriver: ProviderDriver<
       snapshotForCwd,
       consumeResetCredit,
       orchestrationAdapter,
+      sessionLaunchKey,
       textGeneration,
     } satisfies ProviderInstance;
   }),

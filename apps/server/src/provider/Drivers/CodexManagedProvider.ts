@@ -302,6 +302,8 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
     enabled,
     snapshot,
     orchestrationAdapter,
+    // A managed session resolves its own login at each open, and the host checks it.
+    sessionLaunchKey: "managed",
     textGeneration,
     auth: runtime.auth.controller,
     snapshotForCwd: (cwd: string) =>
