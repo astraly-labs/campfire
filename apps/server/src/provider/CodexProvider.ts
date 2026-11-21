@@ -644,20 +644,22 @@ export const withCodexAppServerClient = Effect.fn("withCodexAppServerClient")(fu
   readonly launchArgs?: string | undefined;
   readonly cwd: string;
   readonly environment?: NodeJS.ProcessEnv | undefined;
+  /** False for a managed instance: its environment is complete and drops login overrides. */
+  readonly inheritEnvironment?: boolean | undefined;
 }) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const environment = yield* codexProcessEnvironment(input);
   const spawnCommand = yield* resolveSpawnCommand(
     input.binaryPath,
     codexAppServerArgs(input.launchArgs),
-    { env: environment, extendEnv: true },
+    { env: environment, extendEnv: input.inheritEnvironment ?? true },
   );
   const child = yield* spawner
     .spawn(
       ChildProcess.make(spawnCommand.command, spawnCommand.args, {
         cwd: input.cwd,
         env: environment,
-        extendEnv: true,
+        extendEnv: input.inheritEnvironment ?? true,
         forceKillAfter: CODEX_APP_SERVER_PROBE_FORCE_KILL_AFTER,
         shell: spawnCommand.shell,
       }),
@@ -734,6 +736,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
   readonly cwd: string;
   readonly environment?: NodeJS.ProcessEnv;
   readonly skipNativeUsage?: boolean;
+  readonly inheritEnvironment?: boolean;
 }) {
   const spawnedAtMs = DateTime.toEpochMillis(yield* DateTime.now);
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -833,18 +836,19 @@ const probeCodexCliVersion = Effect.fn("probeCodexCliVersion")(
     readonly homePath?: string | undefined;
     readonly cwd: string;
     readonly environment?: NodeJS.ProcessEnv | undefined;
+    readonly inheritEnvironment?: boolean | undefined;
   }) {
     const environment = yield* codexProcessEnvironment(input);
     const spawnCommand = yield* resolveSpawnCommand(input.binaryPath, ["--version"], {
       env: environment,
-      extendEnv: true,
+      extendEnv: input.inheritEnvironment ?? true,
     });
     const result = yield* spawnAndCollect(
       input.binaryPath,
       ChildProcess.make(spawnCommand.command, spawnCommand.args, {
         cwd: input.cwd,
         env: environment,
-        extendEnv: true,
+        extendEnv: input.inheritEnvironment ?? true,
         forceKillAfter: CODEX_APP_SERVER_PROBE_FORCE_KILL_AFTER,
         shell: spawnCommand.shell,
       }),
@@ -870,6 +874,7 @@ export const probeCodexSkillsForCwd = Effect.fn("probeCodexSkillsForCwd")(functi
   readonly launchArgs?: string;
   readonly cwd: string;
   readonly environment?: NodeJS.ProcessEnv;
+  readonly inheritEnvironment?: boolean;
 }) {
   const { client } = yield* withCodexAppServerClient({
     ...input,
@@ -1019,6 +1024,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     readonly cwd: string;
     readonly environment?: NodeJS.ProcessEnv;
     readonly skipNativeUsage?: boolean;
+    readonly inheritEnvironment?: boolean;
   }) => Effect.Effect<
     CodexAppServerProviderSnapshot,
     CodexErrors.CodexAppServerError,
@@ -1064,7 +1070,8 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     launchArgs: resolveCodexLaunchArgs(codexSettings.launchArgs, resolvedEnvironment),
     cwd: process.cwd(),
     environment: resolvedEnvironment,
-    ...(managedAuth ? { skipNativeUsage: true } : {}),
+    // A managed environment drops login overrides; inheriting would bring them back.
+    ...(managedAuth ? { skipNativeUsage: true, inheritEnvironment: false } : {}),
   }).pipe(
     // Process teardown can outlast the work budget without discarding a completed snapshot.
     Effect.timeoutOption(Duration.millis(probeTimeoutMs)),
@@ -1081,6 +1088,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
           homePath: codexSettings.homePath,
           cwd: process.cwd(),
           environment: resolvedEnvironment,
+          ...(managedAuth ? { inheritEnvironment: false } : {}),
         })
       : null;
     return buildServerProvider({
